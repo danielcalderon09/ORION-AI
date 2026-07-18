@@ -107,6 +107,26 @@ Estos modelos no publican, guardan ni entregan eventos. No son una cola durable 
 La Fase 2 deberá persistir decisión, estado, etapa y eventos de forma atómica antes de que un worker
 produzca el siguiente efecto externo.
 
+## Contrato transaccional de Fase 2
+
+`OrchestrationDecisionStore` es el límite de escritura durable. Recibe el trabajo anterior, una
+`OrchestrationDecision`, comando/resultado procesados opcionales y artefactos registrados. Usa una
+única sesión para guardar todos los componentes y hace commit solamente después del último flush.
+Una excepción revierte la decisión completa.
+
+Las tablas son `production_jobs`, `production_stage_runs`, `stage_commands`, `stage_results`,
+`production_events` y `production_artifacts`. Los modelos SQLAlchemy viven en infraestructura y no
+se exponen al dominio.
+
+`production_jobs.row_version` comienza en 1 y aumenta con cada actualización. Una escritura sobre
+estado obsoleto produce `ProductionConcurrencyError`. La misma decisión puede repetirse cuando
+todos sus IDs y contenidos coinciden; reutilizar ID, clave idempotente, ruta o secuencia con otro
+contenido produce un conflicto explícito.
+
+Los eventos persistidos forman un audit log ordenado y único por trabajo. No son una cola ni
+implican publicación externa. La sesión, el commit, el rollback y el cierre pertenecen a
+`ProductionUnitOfWork`; los repositorios nunca hacen commit por su cuenta.
+
 ## Versionado
 
 - `schema_version` y `version` usan SemVer completo (`major.minor.patch`).

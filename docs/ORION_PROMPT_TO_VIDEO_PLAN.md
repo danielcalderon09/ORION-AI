@@ -184,6 +184,17 @@ configuración, reloj y fábrica de UUID, el orquestador debe producir la misma 
 
 En Fase 2 se propone SQLite con SQLAlchemy/Alembic, adecuado para la aplicación local y ya presente como dependencia. Tablas previstas: `production_jobs`, `production_stage_runs`, `production_artifacts` y `production_events`. JSON de planes y snapshots se guardará versionado; índices cubrirán estado, etapa y siguiente intento.
 
+La Fase 2 materializa además `stage_commands` y `stage_results`. Una
+`OrchestrationDecisionStore` guarda en una sola transacción el trabajo actualizado, el resultado
+procesado, el comando siguiente, las ejecuciones de etapa, artefactos y eventos. Los repositorios
+solo hacen `flush`; el commit pertenece a una unidad de trabajo compartida. Cualquier error causa
+rollback completo.
+
+`production_jobs.row_version` implementa optimistic locking. Los comandos se deduplican por UUID
+y `idempotency_key`, los resultados usan `command_id` como identidad persistente y los eventos son
+únicos por `(job_id, sequence_number)`. El audit log persistido no es un `EventBus`: no publica nada
+fuera de la transacción.
+
 El worker de Fase 3 reclamará un trabajo mediante lease transaccional, registrará heartbeat y ejecutará una etapa por vez. Al reiniciar:
 
 1. libera leases vencidos;
@@ -322,10 +333,12 @@ Cada fase queda detrás de bandera y en módulos nuevos. El rollback operativo c
 ### Fase 2 — Persistencia durable de ProductionJob, etapas y artefactos
 
 - **Objetivo:** hacer durable la fuente de verdad del modo 1.
-- **Alcance:** modelos SQLAlchemy, repositorios, unidad de trabajo y migración inicial aditiva.
+- **Alcance:** modelos SQLAlchemy, mappers explícitos, repositorios, unidad de trabajo,
+  almacenamiento atómico de decisiones y migración inicial aditiva.
 - **Archivos previstos:** `production/infrastructure/persistence/*`, `backend/src/infrastructure/database/*`, `backend/migrations/*`, tests de repositorio.
 - **Dependencias:** contratos Fase 1; SQLAlchemy/Alembic existentes; decisión final de ubicación SQLite.
-- **Aceptación:** CRUD transaccional, concurrencia optimista, eventos/etapas recuperables y migración reversible.
+- **Aceptación:** CRUD transaccional, `row_version`, idempotencia durable, eventos/etapas
+  recuperables, rollback completo y migración reversible.
 - **Pruebas:** SQLite temporal, constraints, rollback transaccional y upgrade/downgrade.
 - **Riesgos:** mezclar `VideoProject` con `ProductionJob` o almacenar paths absolutos.
 - **Rollback:** downgrade de migración antes de publicar trabajos reales; bandera permanece apagada.

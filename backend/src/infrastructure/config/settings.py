@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     ORION_PROMPT_VIDEO_ENABLED: bool = False
 
+    # Database
+    ORION_DATABASE_URL: str | None = None
+    ORION_DATABASE_ECHO: bool = False
+
     # Paths
     ORION_HOME: Path = Path.home() / ".orion"
     MODELS_DIR: Path = Path.home() / ".orion" / "models"
@@ -65,6 +69,16 @@ class Settings(BaseSettings):
         self.MODELS_DIR.mkdir(parents=True, exist_ok=True)
         self.PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
         self.TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def production_database_url(self) -> str:
+        """Return an explicit URL or the safe default under ORION_HOME."""
+
+        if self.ORION_DATABASE_URL:
+            return self.ORION_DATABASE_URL
+        from backend.src.production.infrastructure.persistence.session import sqlite_url_from_path
+
+        return sqlite_url_from_path(self.ORION_HOME / "orion.db")
 
 
 settings = Settings()
