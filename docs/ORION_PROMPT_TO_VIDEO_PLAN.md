@@ -1,6 +1,7 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
-Estado del documento: arquitectura objetivo y plan incremental. Esta ejecución implementa únicamente la Fase 1.
+Estado del documento: arquitectura objetivo y plan incremental. La Fase 1 fijó los contratos
+centrales y la Fase 1.5 añade coordinación pura, estados y eventos sin infraestructura.
 
 ## 1. Objetivo del producto
 
@@ -41,6 +42,12 @@ El sistema se separará en dos bounded contexts y una capa de aplicación común
 
 La API será un plano de control, no el lugar donde ocurre el procesamiento. Los controladores validarán solicitudes y llamarán casos de uso; no acumularán lógica de medios.
 
+`ProductionOrchestrator` será el coordinador determinista del pipeline. Decidirá la siguiente
+etapa, emitirá su comando y aplicará resultados para producir un nuevo estado lógico y eventos.
+No ejecutará capacidades externas. El futuro `ProductionWorker` obtendrá trabajos y ejecutará
+comandos, pero delegará las decisiones de negocio al orquestador y la capacidad concreta a un
+`StageHandler` respaldado por puertos.
+
 ## 5. Diagrama textual
 
 ```text
@@ -52,9 +59,11 @@ Electron / React
   │              ├─ ArtifactStorePort ───────────── registro + filesystem aislado
   │              └─ cola durable local
   │                   └─ ProductionWorker
-  │                        ├─ PlannerPort
-  │                        ├─ ScriptWriterPort
-  │                        ├─ ScenePlannerPort
+  │                        ├─ ProductionOrchestrator (decisiones puras)
+  │                        └─ StageHandler (ejecución de un StageCommand)
+  │                             ├─ PlannerPort
+  │                             ├─ ScriptWriterPort
+  │                             ├─ ScenePlannerPort
   │                        ├─ AssetProviderPort
   │                        ├─ NarrationProviderPort
   │                        ├─ MusicProviderPort
@@ -76,8 +85,11 @@ backend/src/production/
   domain/                 contratos y reglas puras
   application/
     ports/                dependencias abstractas
+    orchestration/        decisiones, transiciones y orden de etapas
+    commands/             StageCommand versionado
+    results/              StageResult versionado
+    events/               eventos de dominio serializables
     services/             casos de uso y máquina de estados (Fase 3)
-    commands/             comandos idempotentes (Fase 3)
   infrastructure/
     persistence/          repositorios SQLAlchemy (Fase 2)
     artifacts/            almacenamiento local seguro (Fase 2)
@@ -156,6 +168,18 @@ Etapas: `created`, `planning`, `scripting`, `scene_planning`, `acquiring_assets`
 
 Las transiciones serán controladas por un servicio de aplicación. `failed` y `cancelled` son estados, no etapas. Cada etapa tendrá en persistencia futura intentos, timestamps, error, progreso y clave de idempotencia.
 
+La división de responsabilidades será:
+
+- `ProductionOrchestrator`: decide transiciones, siguiente etapa, comandos y eventos.
+- `ProductionWorker`: reclama y ejecuta trabajo; no contiene reglas de negocio.
+- `PlannerPort`: produce únicamente `ProductionPlan`.
+- `StageHandler`: traduce un `StageCommand` a la invocación del puerto especializado y devuelve
+  `StageResult`.
+- `ProductionJobRepositoryPort`: abstrae carga y guardado durable; no decide transiciones.
+
+Cada etapa se expresa mediante un comando y un resultado. Con el mismo trabajo, resultado,
+configuración, reloj y fábrica de UUID, el orquestador debe producir la misma decisión.
+
 ## 11. Persistencia, recuperación y worker local
 
 En Fase 2 se propone SQLite con SQLAlchemy/Alembic, adecuado para la aplicación local y ya presente como dependencia. Tablas previstas: `production_jobs`, `production_stage_runs`, `production_artifacts` y `production_events`. JSON de planes y snapshots se guardará versionado; índices cubrirán estado, etapa y siguiente intento.
@@ -168,6 +192,10 @@ El worker de Fase 3 reclamará un trabajo mediante lease transaccional, registra
 4. no repite una salida si su clave y checksum ya son válidos.
 
 DaVinci se tratará como recurso exclusivo por defecto: concurrencia uno para las etapas de edición/render, aunque planificación y adquisición puedan paralelizarse más adelante.
+
+Los eventos de dominio producidos por el orquestador describen hechos, pero no constituyen una
+cola durable ni un `EventBus`. La persistencia atómica de trabajos, comandos, resultados, etapas
+y eventos llegará en Fase 2. Los efectos externos permanecerán detrás de puertos.
 
 ## 12. Adaptador de DaVinci y control sin Codex
 
@@ -276,6 +304,20 @@ Cada fase queda detrás de bandera y en módulos nuevos. El rollback operativo c
 - **Riesgos:** contratos prematuros o deuda existente descubierta por caracterización.
 - **Rollback:** retirar solo módulos/documentos/tests nuevos y la propiedad de settings; no hay datos ni migraciones.
 - **No se hará:** API, persistencia, worker, proveedor, DaVinci, render ni UI.
+
+### Fase 1.5 — Coordinación del pipeline, estados y eventos
+
+- **Objetivo:** fijar decisiones puras antes de diseñar la persistencia.
+- **Alcance:** `ProductionOrchestrator`, comandos/resultados, eventos, política de transiciones y
+  registro ordenado de etapas.
+- **Archivos previstos:** `production/application/{orchestration,commands,results,events}/*` y
+  pruebas unitarias deterministas.
+- **Dependencias:** contratos de Fase 1, Pydantic y biblioteca estándar.
+- **Aceptación:** mismas entradas controladas producen la misma decisión; no hay IO ni adaptadores.
+- **Pruebas:** validación estricta, transiciones, orden, resultados, cancelación y determinismo.
+- **Riesgos:** cerrar prematuramente semántica de reintentos antes del diseño transaccional.
+- **Rollback:** retirar los módulos de aplicación nuevos; no existen datos ni efectos externos.
+- **No se hará:** persistencia, API, worker, `StageHandler` concreto, proveedores o editor.
 
 ### Fase 2 — Persistencia durable de ProductionJob, etapas y artefactos
 

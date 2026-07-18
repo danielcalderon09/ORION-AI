@@ -2,6 +2,9 @@
 
 Este documento describe los contratos introducidos en la Fase 1. Son estructuras de datos y puertos; todavía no están conectados a FastAPI, workers, proveedores ni editores.
 
+La Fase 1.5 incorpora contratos de ejecución y un coordinador de decisiones puro. Tampoco publica
+eventos ni ejecuta capacidades externas.
+
 ## Principios
 
 - El dominio es importable sin FastAPI, OpenCV, FFmpeg, DaVinci o acceso a IO.
@@ -66,6 +69,43 @@ Incluye lienzo, FPS, duración, escenas concretas, inventario de artefactos, ref
 | `ProductionJobRepositoryPort` | repositorio durable | API, worker y servicios |
 
 Todos los métodos con trabajo de infraestructura son asíncronos para no imponer un transporte. Importar un `Protocol` no ejecuta ese trabajo.
+
+## Coordinación y ejecución
+
+- `ProductionOrchestrator` recibe el estado actual y un resultado opcional; decide el nuevo estado,
+  el siguiente `StageCommand` y los eventos. No ejecuta puertos ni contiene lógica de proveedor.
+- `ProductionWorker` será infraestructura de ejecución: reclamará trabajos, entregará comandos a
+  handlers y persistirá la decisión en Fase 2/3. No contendrá reglas de transición.
+- `PlannerPort` tiene una sola capacidad especializada: producir `ProductionPlan`.
+- `StageHandler` será el adaptador de aplicación que ejecute un comando usando el puerto propio de
+  la etapa y devuelva `StageResult`.
+- `ProductionJobRepositoryPort` abstrae persistencia; no selecciona etapas ni interpreta resultados.
+
+El orquestador no depende de FastAPI, SQLite, DaVinci, MCP, FFmpeg, OpenCV o Codex. Los efectos
+externos solo pueden aparecer en futuras implementaciones de puertos y handlers.
+
+## Comandos y resultados de etapa
+
+`StageCommand` describe qué etapa debe ejecutarse: identidad, trabajo, intento, clave de
+idempotencia, artefactos de entrada, snapshot y timestamp UTC. No ejecuta la etapa.
+
+`StageResult` describe el resultado de ese comando. Sus outcomes son `succeeded`,
+`failed_transient`, `failed_permanent`, `needs_user_action` y `cancelled`. La identidad del
+comando, trabajo y etapa se coteja antes de que el orquestador aplique el resultado.
+
+La decisión es determinista cuando se conservan estado, resultado, configuración, reloj, UUID y
+número de secuencia. Una clave de idempotencia identifica el intento; la deduplicación durable de
+resultados llegará con persistencia en Fase 2.
+
+## Eventos de dominio
+
+Los eventos son contratos JSON de hechos ya decididos: creación/cola del trabajo, inicio/progreso/
+éxito/fallo de etapa, reintento, acción requerida, cancelación y finalización. Comparten versión,
+UUID, trabajo, tipo, timestamp UTC, secuencia, correlación, causación y metadata.
+
+Estos modelos no publican, guardan ni entregan eventos. No son una cola durable ni un `EventBus`.
+La Fase 2 deberá persistir decisión, estado, etapa y eventos de forma atómica antes de que un worker
+produzca el siguiente efecto externo.
 
 ## Versionado
 
