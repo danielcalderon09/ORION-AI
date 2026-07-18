@@ -8,6 +8,9 @@ from backend.src.production.infrastructure.persistence.models.production_event_r
 from backend.src.production.infrastructure.persistence.models.production_job_record import (
     ProductionJobRecord,
 )
+from backend.src.production.infrastructure.persistence.models.production_lease_record import (
+    ProductionLeaseRecord,
+)
 from backend.src.production.infrastructure.persistence.models.production_stage_run_record import (
     ProductionStageRunRecord,
     ProductionStageRunStatus,
@@ -24,6 +27,7 @@ __all__ = [
     "ProductionBase",
     "ProductionEventRecord",
     "ProductionJobRecord",
+    "ProductionLeaseRecord",
     "ProductionStageRunRecord",
     "ProductionStageRunStatus",
     "StageCommandRecord",

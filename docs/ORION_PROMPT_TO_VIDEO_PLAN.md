@@ -344,17 +344,23 @@ Cada fase queda detrás de bandera y en módulos nuevos. El rollback operativo c
 - **Rollback:** downgrade de migración antes de publicar trabajos reales; bandera permanece apagada.
 - **No se hará:** endpoints, worker o procesamiento.
 
-### Fase 3 — API de trabajos y worker local con etapas simuladas
+### Fase 3 — Runtime local con etapas simuladas
 
 - **Objetivo:** probar ciclo durable completo sin medios ni servicios externos.
-- **Alcance:** crear/listar/consultar/cancelar/reintentar, leasing, heartbeat y proveedores simulados.
-- **Archivos previstos:** `production/application/services/*`, `production/infrastructure/worker/*`, `api/v1/production_controller.py`, composición y tests.
-- **Dependencias:** repositorios Fase 2 y política de arranque/apagado de Electron/backend.
-- **Aceptación:** trabajo simulado sobrevive reinicio, no duplica etapas y reporta progreso durable.
-- **Pruebas:** API con DB temporal, crash/recovery, lease vencido, cancelación y reintento.
+- **Alcance:** worker local, leasing exclusivo, heartbeat, recuperación, dispatcher, executor de una
+  etapa y `StageHandler` simulados. Cada ciclo reclama un trabajo y persiste exactamente una
+  decisión; `run_until_idle` solo compone varios ciclos explícitos.
+- **Archivos previstos:** `production/runtime/*`, migración aditiva de leases y tests con SQLite
+  temporal. La API se difiere deliberadamente.
+- **Dependencias:** repositorios y `OrchestrationDecisionStore` de Fase 2.
+- **Aceptación:** trabajo simulado sobrevive reinicio, no duplica etapas, respeta leases, reintenta
+  al vencer `retry_at` y termina en `completed`.
+- **Pruebas:** crash/recovery, lease vencido, heartbeat, cancelación, reintento, varios trabajos,
+  dispatcher y handlers simulados.
 - **Riesgos:** doble ejecución y shutdown incompleto.
-- **Rollback:** apagar flags de API/worker y conservar tablas aditivas.
-- **No se hará:** recursos reales, DaVinci o exposición de UI final.
+- **Rollback:** no arrancar el worker y revertir solo la migración de `production_leases`.
+- **No se hará:** API pública, worker conectado al arranque, recursos reales, proveedores, DaVinci,
+  FFmpeg, WebSockets, frontend o exposición de UI.
 
 ### Fase 4 — Integración mínima ORION → DaVinci con recursos locales
 

@@ -129,12 +129,19 @@ Antes de migrar una base real, la aplicación empaquetada deberá detener escrit
 consistente mediante la API de backup de SQLite y registrar versión/checksum. Esa política se
 diseñará en la Fase 12; esta fase no copia ni altera bases del usuario.
 
-## 14. Pendiente para Fase 3
+## 14. Extensión de runtime de Fase 3
 
-- API de creación/consulta/cancelación.
-- Worker local, leases y heartbeat.
-- `StageHandler` y ejecución de puertos simulados.
-- Requeue de reintentos y recuperación al iniciar.
+- La revisión `20260717_0002` añade `production_leases` sin modificar las tablas de Fase 2.
+- La lease usa `job_id` como clave primaria/foránea, un propietario obligatorio, vencimiento,
+  heartbeat y versión positiva.
+- El worker conserva la atomicidad de `OrchestrationDecisionStore`: el executor nunca persiste y
+  cada ciclo guarda una sola decisión completa.
+- Los reintentos vencidos se reencolan mediante una nueva decisión y un evento durable; los jobs
+  `running` con lease vencida conservan su comando no procesado y son reclamables.
+
+Continúan pendientes:
+
+- API de creación/consulta/cancelación y composición con el arranque de la aplicación.
 - Outbox/publicación de eventos.
 - Política de backup y retención.
 - Integración con proveedores, medios o DaVinci.

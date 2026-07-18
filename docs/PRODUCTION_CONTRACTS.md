@@ -127,6 +127,24 @@ Los eventos persistidos forman un audit log ordenado y único por trabajo. No so
 implican publicación externa. La sesión, el commit, el rollback y el cierre pertenecen a
 `ProductionUnitOfWork`; los repositorios nunca hacen commit por su cuenta.
 
+## Contrato del runtime local de Fase 3
+
+`ProductionWorker` reclama mediante `ProductionLeaseManager` un único trabajo en `queued`,
+`running` o `cancel_requested`. Un ciclo del worker produce y persiste exactamente una
+`OrchestrationDecision`; no interpreta creativamente etapas ni reemplaza al
+`ProductionOrchestrator`.
+
+`ProductionExecutor` recibe un solo `StageCommand`, resuelve un `StageHandler` mediante un registro
+por `ProductionStage` y devuelve un `StageExecutionOutput`. No abre sesiones ni persiste. Los
+handlers de esta fase son simuladores deterministas: generan contratos `StageResult` y `Artifact`,
+pero no crean archivos ni llaman puertos externos.
+
+La lease durable tiene propietario, vencimiento, heartbeat y versión. Mientras se ejecuta una
+etapa, `ProductionHeartbeat` renueva la lease. Tras el vencimiento, otro worker puede reclamar el
+trabajo `running` y continuar desde su comando no procesado. Un reintento solo vuelve a `queued`
+cuando el `retry_at` del evento durable ha llegado. La API, el arranque automático y la ejecución
+de proveedores siguen fuera del contrato de esta fase.
+
 ## Versionado
 
 - `schema_version` y `version` usan SemVer completo (`major.minor.patch`).
