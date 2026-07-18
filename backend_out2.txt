@@ -1,0 +1,1 @@
+INFO:     127.0.0.1:54557 - "GET /api/v1/videos/health HTTP/1.1" 200 OK

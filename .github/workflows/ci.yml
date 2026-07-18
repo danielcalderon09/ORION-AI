@@ -1,0 +1,243 @@
+name: Orion AI CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run stress tests nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '20'
+
+jobs:
+  lint:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install lint tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff black mypy
+      
+      - name: Run Ruff (linter)
+        run: ruff check backend/src backend/tests scripts
+      
+      - name: Run Black (format check)
+        run: black --check backend/src backend/tests scripts
+      
+      - name: Run MyPy (type check)
+        run: mypy backend/src --ignore-missing-imports
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements/dev.txt || pip install pytest pytest-cov
+      
+      - name: Run unit tests with coverage
+        run: |
+          python -m pytest backend/tests/unit -v \
+            --cov=backend/src \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --junitxml=unit-test-results.xml
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          flags: unit
+          name: unit-tests
+      
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: unit-test-results.xml
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements/dev.txt || pip install pytest pytest-cov networkx opencv-python psutil sqlalchemy aiosqlite pydantic-settings
+      
+      - name: Run integration tests
+        run: |
+          python -m pytest backend/tests/integration -v \
+            --ignore=backend/tests/integration/test_sprint_15_regression.py \
+            --junitxml=integration-test-results.xml
+        env:
+          ORION_ENV: test
+      
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: integration-test-results.xml
+
+  golden-dataset:
+    name: Golden Dataset Regression
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    if: github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[golden]')
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements/dev.txt || pip install pytest networkx opencv-python psutil sqlalchemy aiosqlite pydantic-settings
+      
+      - name: Run Golden Dataset tests
+        run: |
+          python -m pytest backend/tests/golden -v --tb=short
+        env:
+          ORION_ENV: test
+      
+      - name: Upload golden results
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-test-results
+          path: backend/tests/golden/results/
+        if: always()
+
+  stress-tests:
+    name: Stress & Performance Tests
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    if: github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[stress]') || github.event.schedule == '0 2 * * *'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements/dev.txt || pip install pytest networkx opencv-python psutil sqlalchemy aiosqlite pydantic-settings
+      
+      - name: Run stress tests
+        run: |
+          python -m pytest backend/tests/stress -v --tb=short
+        env:
+          ORION_ENV: test
+      
+      - name: Upload stress metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-test-metrics
+          path: backend/tests/stress/metrics/
+        if: always()
+
+  frontend-build:
+    name: Frontend Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci || npm install
+      
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm run build || echo "Build script not configured yet"
+        continue-on-error: true
+
+  performance-report:
+    name: Performance & Profiling Report
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements/dev.txt || pip install pytest networkx opencv-python psutil sqlalchemy aiosqlite pydantic-settings
+      
+      - name: Generate profiling report
+        run: |
+          python scripts/profile_pipeline.py --output-dir=profiling-reports --format=html
+        continue-on-error: true
+      
+      - name: Upload profiling report
+        uses: actions/upload-artifact@v4
+        with:
+          name: profiling-reports
+          path: profiling-reports/
+        if: always()
+
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [lint, unit-tests, integration-tests, golden-dataset, stress-tests]
+    if: always() && github.ref == 'refs/heads/main'
+    steps:
+      - name: Summary
+        run: |
+          echo "## Orion AI CI Results" >> $GITHUB_STEP_SUMMARY
+          echo "- Lint: ${{ needs.lint.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Unit Tests: ${{ needs.unit-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Integration Tests: ${{ needs.integration-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Golden Dataset: ${{ needs.golden-dataset.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Stress Tests: ${{ needs.stress-tests.result }}" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,38 @@
+{
+  "timestamp": "2026-07-01T10:01:45Z",
+  "overall_duration_seconds": 6.54,
+  "summary": {
+    "total_passed": 64,
+    "total_failed": 0,
+    "total_error": 0,
+    "total_skipped": 7,
+    "total_tests": 71,
+    "success": true
+  },
+  "stages": [
+    {
+      "label": "unit",
+      "path": "backend\\tests\\unit",
+      "returncode": 0,
+      "duration_seconds": 1.41,
+      "passed": 22,
+      "failed": 0,
+      "error": 0,
+      "skipped": 0,
+      "stdout": "it/test_reframe_providers.py::TestMediaPipeFaceDetectionProvider::test_detect_faces_with_synthetic_face PASSED [ 54%]\nbackend/tests/unit/test_reframe_providers.py::TestMediaPipeFaceDetectionProvider::test_provider_init PASSED [ 59%]\nbackend/tests/unit/test_reframe_providers.py::TestMediaPipeFaceDetectionProvider::test_detect_faces_grayscale_does_not_crash PASSED [ 63%]\nbackend/tests/unit/test_reframe_providers.py::TestModule1RegressionCases::test_tracker_state_isolation_between_clips PASSED [ 68%]\nbackend/tests/unit/test_reframe_providers.py::TestModule1RegressionCases::test_tracker_memory_no_frame_buffering PASSED [ 72%]\nbackend/tests/unit/test_reframe_providers.py::TestModule1RegressionCases::test_invalid_target_dimensions_raises_valueerror PASSED [ 77%]\nbackend/tests/unit/test_reframe_providers.py::TestModule1RegressionCases::test_fallback_center_crop_on_zero_target_height PASSED [ 81%]\nbackend/tests/unit/test_reframe_providers.py::TestModule1RegressionCases::test_multiple_subjects_priority_selection PASSED [ 86%]\nbackend/tests/unit/test_reframe_providers.py::TestModule1RegressionCases::test_subject_movement_trajectory PASSED [ 90%]\nbackend/tests/unit/test_reframe_providers.py::TestModule1RegressionCases::test_empty_face_boxes_returns_empty_tracks PASSED [ 95%]\nbackend/tests/unit/test_reframe_providers.py::TestModule1RegressionCases::test_exception_not_swallowed_on_keyboard_interrupt PASSED [100%]\n\n============================== warnings summary ===============================\n..\\..\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pytest\\config\\__init__.py:1441\n  C:\\Users\\Daniel Calderon\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pytest\\config\\__init__.py:1441: PytestConfigWarning: Unknown config option: asyncio_mode\n  \n    self._warn_or_fail_if_strict(f\"Unknown config option: {key}\\n\")\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n======================== 22 passed, 1 warning in 0.72s ========================\n",
+      "stderr": ""
+    },
+    {
+      "label": "integration",
+      "path": "backend\\tests\\integration",
+      "returncode": 0,
+      "duration_seconds": 5.14,
+      "passed": 42,
+      "failed": 0,
+      "error": 0,
+      "skipped": 7,
+      "stdout": "ackend\\tests\\integration\\test_sprint_2.py:370\n  C:\\Users\\Daniel Calderon\\Desktop\\ORION AI\\backend\\tests\\integration\\test_sprint_2.py:370: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html\n    @pytest.mark.asyncio\n\nbackend\\tests\\integration\\test_sprint_3.py:328\n  C:\\Users\\Daniel Calderon\\Desktop\\ORION AI\\backend\\tests\\integration\\test_sprint_3.py:328: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html\n    @pytest.mark.asyncio\n\nbackend\\tests\\integration\\test_sprint_4.py:352\n  C:\\Users\\Daniel Calderon\\Desktop\\ORION AI\\backend\\tests\\integration\\test_sprint_4.py:352: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html\n    @pytest.mark.asyncio\n\nbackend/tests/integration/test_sprint_2.py::TestSprint2Orchestrator::test_sprint2_orchestrator_runs_full_pipeline\nbackend/tests/integration/test_sprint_3.py::TestSprint3Integration::test_sprint3_orchestrator_runs\nbackend/tests/integration/test_sprint_4.py::TestSprint4Integration::test_sprint4_orchestrator_runs\n  C:\\Users\\Daniel Calderon\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pytest\\python.py:148: PytestUnhandledCoroutineWarning: async def functions are not natively supported and have been skipped.\n  You need to install a suitable plugin for your async framework, for example:\n    - anyio\n    - pytest-asyncio\n    - pytest-tornasync\n    - pytest-trio\n    - pytest-twisted\n    warnings.warn(PytestUnhandledCoroutineWarning(msg.format(nodeid)))\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n================== 42 passed, 7 skipped, 8 warnings in 4.20s ==================\n",
+      "stderr": ""
+    }
+  ]
+}

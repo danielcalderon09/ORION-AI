@@ -1,0 +1,92 @@
+{
+  "generated_at": "2026-06-30T01:56:19Z",
+  "summary": {
+    "total_stages": 8,
+    "total_time_sec": 0.082,
+    "peak_memory_mb": 34.8,
+    "total_io_read_mb": 0.0,
+    "total_io_write_mb": 0.0,
+    "stages": [
+      {
+        "stage": "vision",
+        "agent": "vision_agent",
+        "duration_sec": 0.01,
+        "cpu_percent": 0.0,
+        "mem_peak_mb": 34.8,
+        "mem_delta_mb": 0.0,
+        "io_read_mb": 0.0,
+        "io_write_mb": 0.0
+      },
+      {
+        "stage": "audio",
+        "agent": "audio_agent",
+        "duration_sec": 0.011,
+        "cpu_percent": 0.0,
+        "mem_peak_mb": 34.8,
+        "mem_delta_mb": 0.0,
+        "io_read_mb": 0.0,
+        "io_write_mb": 0.0
+      },
+      {
+        "stage": "speech",
+        "agent": "speech_agent",
+        "duration_sec": 0.01,
+        "cpu_percent": 0.0,
+        "mem_peak_mb": 34.8,
+        "mem_delta_mb": 0.0,
+        "io_read_mb": 0.0,
+        "io_write_mb": 0.0
+      },
+      {
+        "stage": "video_understanding",
+        "agent": "video_understanding",
+        "duration_sec": 0.01,
+        "cpu_percent": 0.0,
+        "mem_peak_mb": 34.8,
+        "mem_delta_mb": 0.0,
+        "io_read_mb": 0.0,
+        "io_write_mb": 0.0
+      },
+      {
+        "stage": "viral_score",
+        "agent": "viral_score",
+        "duration_sec": 0.01,
+        "cpu_percent": 0.0,
+        "mem_peak_mb": 34.8,
+        "mem_delta_mb": 0.0,
+        "io_read_mb": 0.0,
+        "io_write_mb": 0.0
+      },
+      {
+        "stage": "creative_director",
+        "agent": "creative_director",
+        "duration_sec": 0.01,
+        "cpu_percent": 0.0,
+        "mem_peak_mb": 34.8,
+        "mem_delta_mb": 0.0,
+        "io_read_mb": 0.0,
+        "io_write_mb": 0.0
+      },
+      {
+        "stage": "consensus",
+        "agent": "consensus_engine",
+        "duration_sec": 0.01,
+        "cpu_percent": 0.0,
+        "mem_peak_mb": 34.8,
+        "mem_delta_mb": 0.0,
+        "io_read_mb": 0.0,
+        "io_write_mb": 0.0
+      },
+      {
+        "stage": "export",
+        "agent": "exporter",
+        "duration_sec": 0.01,
+        "cpu_percent": 0.0,
+        "mem_peak_mb": 34.8,
+        "mem_delta_mb": 0.0,
+        "io_read_mb": 0.0,
+        "io_write_mb": 0.0
+      }
+    ]
+  }
+}

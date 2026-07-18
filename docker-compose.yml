@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  # Optional: PostgreSQL for future migration from SQLite
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: orion
+      POSTGRES_PASSWORD: orion
+      POSTGRES_DB: orion_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    profiles:
+      - future
+
+  # Optional: Redis for distributed queue (future)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    profiles:
+      - future
+
+volumes:
+  postgres_data:

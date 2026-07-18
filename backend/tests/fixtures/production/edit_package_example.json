@@ -1,0 +1,158 @@
+{
+  "schema_version": "1.0.0",
+  "job_id": "10000000-0000-4000-8000-000000000001",
+  "project_name": "ORION Vertical Demo",
+  "timeline_name": "Vertical Short 01",
+  "width": 1080,
+  "height": 1920,
+  "fps": 30.0,
+  "duration_seconds": 20.0,
+  "scenes": [
+    {
+      "schema_version": "1.0.0",
+      "scene_id": "20000000-0000-4000-8000-000000000001",
+      "order": 0,
+      "duration_seconds": 5.0,
+      "asset_artifact_id": "30000000-0000-4000-8000-000000000001",
+      "asset_type": "image",
+      "narration_text": "Una idea puede convertirse en una historia.",
+      "motion": "slow_zoom_in",
+      "transition": "cut",
+      "on_screen_text": "De idea a historia"
+    },
+    {
+      "schema_version": "1.0.0",
+      "scene_id": "20000000-0000-4000-8000-000000000002",
+      "order": 1,
+      "duration_seconds": 5.0,
+      "asset_artifact_id": "30000000-0000-4000-8000-000000000002",
+      "asset_type": "image",
+      "narration_text": "Cada escena tiene un propósito claro.",
+      "motion": "pan_right",
+      "transition": "cross_dissolve",
+      "on_screen_text": null
+    },
+    {
+      "schema_version": "1.0.0",
+      "scene_id": "20000000-0000-4000-8000-000000000003",
+      "order": 2,
+      "duration_seconds": 5.0,
+      "asset_artifact_id": "30000000-0000-4000-8000-000000000003",
+      "asset_type": "image",
+      "narration_text": "La narración guía el ritmo visual.",
+      "motion": "slow_zoom_out",
+      "transition": "cross_dissolve",
+      "on_screen_text": "Ritmo y claridad"
+    },
+    {
+      "schema_version": "1.0.0",
+      "scene_id": "20000000-0000-4000-8000-000000000004",
+      "order": 3,
+      "duration_seconds": 5.0,
+      "asset_artifact_id": "30000000-0000-4000-8000-000000000004",
+      "asset_type": "image",
+      "narration_text": "El resultado está listo para publicar.",
+      "motion": "static",
+      "transition": "fade_to_black",
+      "on_screen_text": "Listo para publicar"
+    }
+  ],
+  "artifacts": [
+    {
+      "schema_version": "1.0.0",
+      "artifact_id": "30000000-0000-4000-8000-000000000001",
+      "job_id": "10000000-0000-4000-8000-000000000001",
+      "artifact_type": "source_image",
+      "relative_path": "assets/scene_01.png",
+      "mime_type": "image/png",
+      "status": "ready",
+      "width": 1080,
+      "height": 1920,
+      "provider": "local",
+      "metadata": {}
+    },
+    {
+      "schema_version": "1.0.0",
+      "artifact_id": "30000000-0000-4000-8000-000000000002",
+      "job_id": "10000000-0000-4000-8000-000000000001",
+      "artifact_type": "source_image",
+      "relative_path": "assets/scene_02.png",
+      "mime_type": "image/png",
+      "status": "ready",
+      "width": 1080,
+      "height": 1920,
+      "provider": "local",
+      "metadata": {}
+    },
+    {
+      "schema_version": "1.0.0",
+      "artifact_id": "30000000-0000-4000-8000-000000000003",
+      "job_id": "10000000-0000-4000-8000-000000000001",
+      "artifact_type": "source_image",
+      "relative_path": "assets/scene_03.png",
+      "mime_type": "image/png",
+      "status": "ready",
+      "width": 1080,
+      "height": 1920,
+      "provider": "local",
+      "metadata": {}
+    },
+    {
+      "schema_version": "1.0.0",
+      "artifact_id": "30000000-0000-4000-8000-000000000004",
+      "job_id": "10000000-0000-4000-8000-000000000001",
+      "artifact_type": "source_image",
+      "relative_path": "assets/scene_04.png",
+      "mime_type": "image/png",
+      "status": "ready",
+      "width": 1080,
+      "height": 1920,
+      "provider": "local",
+      "metadata": {}
+    },
+    {
+      "schema_version": "1.0.0",
+      "artifact_id": "40000000-0000-4000-8000-000000000001",
+      "job_id": "10000000-0000-4000-8000-000000000001",
+      "artifact_type": "narration",
+      "relative_path": "audio/narration.wav",
+      "mime_type": "audio/wav",
+      "status": "ready",
+      "duration_seconds": 20.0,
+      "provider": "local",
+      "metadata": {}
+    },
+    {
+      "schema_version": "1.0.0",
+      "artifact_id": "40000000-0000-4000-8000-000000000002",
+      "job_id": "10000000-0000-4000-8000-000000000001",
+      "artifact_type": "music",
+      "relative_path": "audio/music.wav",
+      "mime_type": "audio/wav",
+      "status": "ready",
+      "duration_seconds": 20.0,
+      "provider": "local",
+      "metadata": {}
+    },
+    {
+      "schema_version": "1.0.0",
+      "artifact_id": "40000000-0000-4000-8000-000000000003",
+      "job_id": "10000000-0000-4000-8000-000000000001",
+      "artifact_type": "subtitles",
+      "relative_path": "subtitles/main.srt",
+      "mime_type": "application/x-subrip",
+      "status": "ready",
+      "duration_seconds": 20.0,
+      "provider": "local",
+      "metadata": {}
+    }
+  ],
+  "narration_artifact": "40000000-0000-4000-8000-000000000001",
+  "music_artifact": "40000000-0000-4000-8000-000000000002",
+  "subtitle_artifact": "40000000-0000-4000-8000-000000000003",
+  "output_relative_path": "renders/orion_vertical_short.mp4",
+  "render_preset": "orion_vertical_h264",
+  "metadata": {
+    "purpose": "phase_1_contract_fixture"
+  }
+}
