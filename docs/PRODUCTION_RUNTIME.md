@@ -1,5 +1,13 @@
 # Runtime local de Production Pipeline
 
+## Composición HTTP y lifecycle (Fase 4)
+
+`production/composition/container.py` construye el runtime sin service locator global.
+`ProductionWorker` se inicia solo dentro del lifespan con el feature flag activo. Startup
+valida revisión, ejecuta recovery y crea una única task; shutdown señaliza, espera hasta el
+timeout, cancela si es necesario y dispone el engine. La creación HTTP deja el job en
+`QUEUED`; el worker sigue siendo el único generador y ejecutor de comandos.
+
 ## Alcance
 
 La Fase 3 ejecuta el pipeline durable con handlers simulados. No registra rutas, no arranca el

@@ -29,6 +29,12 @@ class ProductionJob(ContractModel):
     error_message: str | None = None
     long_form_artifact_id: UUID | None = None
     clip_project_id: UUID | None = None
+    client_request_id: str | None = Field(default=None, max_length=255)
+    request_fingerprint: str | None = Field(
+        default=None,
+        pattern=r"^[a-f0-9]{64}$",
+        exclude=True,
+    )
 
     @model_validator(mode="after")
     def validate_timestamps(self) -> "ProductionJob":

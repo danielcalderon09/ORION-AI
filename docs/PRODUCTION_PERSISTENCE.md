@@ -1,5 +1,13 @@
 # Persistencia durable de Production
 
+## Idempotencia de requests y consultas (Fase 4)
+
+La migración `20260718_0003` agrega `client_request_id` nullable/unique y
+`request_fingerprint` a `production_jobs`. El SHA-256 usa JSON canónico y excluye IDs y
+timestamps generados. Un conflicto de unicidad se relee: coincidencia exacta es replay;
+fingerprint distinto es conflicto. Query repositories no hacen commit; las mutaciones
+continúan en `OrchestrationDecisionStore` de forma atómica.
+
 ## 1. Alcance
 
 La Fase 2 persiste una `OrchestrationDecision` de forma atómica usando SQLAlchemy 2, SQLite y

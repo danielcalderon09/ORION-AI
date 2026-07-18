@@ -75,7 +75,7 @@ class ClaimedJobProcessor:
         )
         decision = self._orchestrator.decide(
             job,
-            self._configuration,
+            self._configuration_for(job),
             next_sequence_number=next_sequence,
             next_attempt_number=next_attempt,
         )
@@ -93,7 +93,7 @@ class ClaimedJobProcessor:
             next_sequence = await self._next_sequence(job)
             decision = self._orchestrator.decide(
                 job,
-                self._configuration,
+                self._configuration_for(job),
                 next_sequence_number=next_sequence,
             )
             await self._decision_store.persist_decision(previous_job=job, decision=decision)
@@ -103,7 +103,7 @@ class ClaimedJobProcessor:
         current_job = await self._reload(job)
         decision = self._orchestrator.decide(
             current_job,
-            self._configuration,
+            self._configuration_for(current_job),
             next_sequence_number=await self._next_sequence(current_job),
         )
         await self._decision_store.persist_decision(
@@ -130,7 +130,7 @@ class ClaimedJobProcessor:
         current_job = await self._reload(job)
         decision = self._orchestrator.decide(
             current_job,
-            self._configuration,
+            self._configuration_for(current_job),
             last_command=command,
             last_result=execution.result,
             next_sequence_number=await self._next_sequence(current_job),
@@ -184,4 +184,14 @@ class ClaimedJobProcessor:
             updated_stage=updated.current_stage,
             command_id=command.command_id if command else None,
             reason="decision_persisted",
+        )
+
+    def _configuration_for(self, job: ProductionJob) -> PipelineConfiguration:
+        """Overlay the durable per-job clip choice on runtime policy defaults."""
+
+        generate_clips = job.configuration_snapshot.get("generate_clips_after_render")
+        if not isinstance(generate_clips, bool):
+            return self._configuration
+        return self._configuration.model_copy(
+            update={"generate_clips_after_render": generate_clips}
         )

@@ -48,6 +48,8 @@ class ProductionJobMapper:
                 canonical_uuid(job.long_form_artifact_id) if job.long_form_artifact_id else None
             ),
             clip_project_id=canonical_uuid(job.clip_project_id) if job.clip_project_id else None,
+            client_request_id=job.client_request_id,
+            request_fingerprint=job.request_fingerprint,
             row_version=row_version,
             created_db_at=db_now,
             updated_db_at=db_now,
@@ -79,6 +81,8 @@ class ProductionJobMapper:
             canonical_uuid(job.long_form_artifact_id) if job.long_form_artifact_id else None
         )
         record.clip_project_id = canonical_uuid(job.clip_project_id) if job.clip_project_id else None
+        record.client_request_id = job.client_request_id
+        record.request_fingerprint = job.request_fingerprint
         record.updated_db_at = db_now
 
     @staticmethod
@@ -102,6 +106,8 @@ class ProductionJobMapper:
                     UUID(record.long_form_artifact_id) if record.long_form_artifact_id else None
                 ),
                 clip_project_id=UUID(record.clip_project_id) if record.clip_project_id else None,
+                client_request_id=record.client_request_id,
+                request_fingerprint=record.request_fingerprint,
             )
         except (ValidationError, ValueError, TypeError) as exc:
             raise ProductionRecordIntegrityError(

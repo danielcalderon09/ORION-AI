@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -17,6 +18,14 @@ class Settings(BaseSettings):
     # Database
     ORION_DATABASE_URL: str | None = None
     ORION_DATABASE_ECHO: bool = False
+    ORION_PRODUCTION_AUTO_MIGRATE: bool = False
+    ORION_PRODUCTION_WORKER_ENABLED: bool = True
+    ORION_PRODUCTION_WORKER_OWNER_ID: str | None = None
+    ORION_PRODUCTION_POLL_INTERVAL_SECONDS: float = 0.5
+    ORION_PRODUCTION_LEASE_DURATION_SECONDS: float = 30.0
+    ORION_PRODUCTION_HEARTBEAT_INTERVAL_SECONDS: float = 10.0
+    ORION_PRODUCTION_SHUTDOWN_TIMEOUT_SECONDS: float = 10.0
+    ORION_PRODUCTION_MAX_CYCLES: int | None = None
 
     # Paths
     ORION_HOME: Path = Path.home() / ".orion"
@@ -69,6 +78,26 @@ class Settings(BaseSettings):
         self.MODELS_DIR.mkdir(parents=True, exist_ok=True)
         self.PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
         self.TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+    @model_validator(mode="after")
+    def validate_production_runtime(self) -> "Settings":
+        positive = {
+            "ORION_PRODUCTION_POLL_INTERVAL_SECONDS": self.ORION_PRODUCTION_POLL_INTERVAL_SECONDS,
+            "ORION_PRODUCTION_LEASE_DURATION_SECONDS": self.ORION_PRODUCTION_LEASE_DURATION_SECONDS,
+            "ORION_PRODUCTION_HEARTBEAT_INTERVAL_SECONDS": self.ORION_PRODUCTION_HEARTBEAT_INTERVAL_SECONDS,
+            "ORION_PRODUCTION_SHUTDOWN_TIMEOUT_SECONDS": self.ORION_PRODUCTION_SHUTDOWN_TIMEOUT_SECONDS,
+        }
+        for name, value in positive.items():
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
+        if (
+            self.ORION_PRODUCTION_HEARTBEAT_INTERVAL_SECONDS
+            >= self.ORION_PRODUCTION_LEASE_DURATION_SECONDS
+        ):
+            raise ValueError("production heartbeat interval must be shorter than lease duration")
+        if self.ORION_PRODUCTION_MAX_CYCLES is not None and self.ORION_PRODUCTION_MAX_CYCLES < 1:
+            raise ValueError("ORION_PRODUCTION_MAX_CYCLES must be positive")
+        return self
 
     @property
     def production_database_url(self) -> str:

@@ -1,5 +1,13 @@
 # Contratos del bounded context `production`
 
+## Contratos públicos de Fase 4
+
+Los contratos HTTP son traducciones explícitas, no records ORM. `client_request_id` y el
+fingerprint representan una petición durable y están separados de la idempotencia por
+etapa. La respuesta expone configuración sanitizada, progreso, versión optimista y
+timestamps, pero nunca el fingerprint. Query ports read-only devuelven modelos de
+aplicación mediante sesiones cortas.
+
 Este documento describe los contratos introducidos en la Fase 1. Son estructuras de datos y puertos; todavía no están conectados a FastAPI, workers, proveedores ni editores.
 
 La Fase 1.5 incorpora contratos de ejecución y un coordinador de decisiones puro. Tampoco publica

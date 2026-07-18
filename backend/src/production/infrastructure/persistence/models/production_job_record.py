@@ -30,6 +30,10 @@ class ProductionJobRecord(ProductionBase):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     long_form_artifact_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     clip_project_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    client_request_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, unique=True
+    )
+    request_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     row_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_db_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     updated_db_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)

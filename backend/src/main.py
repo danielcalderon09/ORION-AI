@@ -1,4 +1,5 @@
 """FastAPI application entry point."""
+# ruff: noqa: F401, I001
 
 from contextlib import asynccontextmanager
 
@@ -8,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.src.api.v1.router import api_router
 from backend.src.api.websocket.progress_socket import setup_websocket
 from backend.src.infrastructure.di.container import Container
-from backend.src.infrastructure.config.settings import settings
+from backend.src.infrastructure.config.settings import Settings, settings
 
 
 @asynccontextmanager
@@ -154,11 +155,26 @@ async def lifespan(app: FastAPI):
     container.shutdown_resources()
 
 
-def create_app() -> FastAPI:
+def create_app(app_settings: Settings | None = None) -> FastAPI:
+    selected_settings = app_settings or settings
+
+    @asynccontextmanager
+    async def app_lifespan(app: FastAPI):
+        async with lifespan(app):
+            if selected_settings.ORION_PROMPT_VIDEO_ENABLED:
+                from backend.src.production.composition.lifecycle import (
+                    production_lifespan,
+                )
+
+                async with production_lifespan(app, selected_settings):
+                    yield
+            else:
+                yield
+
     app = FastAPI(
-        title=settings.APP_NAME,
-        version=settings.APP_VERSION,
-        lifespan=lifespan,
+        title=selected_settings.APP_NAME,
+        version=selected_settings.APP_VERSION,
+        lifespan=app_lifespan,
     )
 
     app.add_middleware(
@@ -170,6 +186,10 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(api_router, prefix="/api/v1")
+    if selected_settings.ORION_PROMPT_VIDEO_ENABLED:
+        from backend.src.production.api.router import router as production_router
+
+        app.include_router(production_router, prefix="/api/v1")
     # setup_websocket is now called inside the async lifespan to allow awaiting
 
     return app

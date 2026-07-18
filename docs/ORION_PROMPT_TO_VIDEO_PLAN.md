@@ -1,5 +1,13 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado de Fase 4
+
+La API interna, casos de uso, query repositories y composition root están implementados
+detrás de `ORION_PROMPT_VIDEO_ENABLED`. El lifecycle controla recovery, una task local y
+shutdown. El pipeline conserva handlers simulados. La siguiente fase puede incorporar un
+primer provider intercambiable detrás de los puertos existentes, preservando el simulador
+como rollback y sin alterar controllers ni persistencia.
+
 Estado del documento: arquitectura objetivo y plan incremental. La Fase 1 fijó los contratos
 centrales y la Fase 1.5 añade coordinación pura, estados y eventos sin infraestructura.
 
