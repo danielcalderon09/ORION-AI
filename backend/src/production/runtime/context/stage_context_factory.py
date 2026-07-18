@@ -28,6 +28,7 @@ class StageContextFactory:
             command_id=command.command_id,
             stage=command.stage,
             attempt_number=command.attempt_number,
+            job_prompt=job.prompt,
             job_configuration=dict(command.configuration_snapshot),
             input_artifact_ids=command.input_artifact_ids,
             workspace_relative_path=(

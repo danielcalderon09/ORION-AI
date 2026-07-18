@@ -1,5 +1,12 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado de Fase 5A
+
+PLANNING dispone de un puerto intercambiable, simulador determinista y un único adaptador
+real OpenAI sobre HTTP async. Produce un JSON físico validado y registrado como artefacto.
+Las demás etapas continúan simuladas; no existe integración con imágenes, TTS, música,
+subtítulos, render o DaVinci.
+
 ## Estado de Fase 4
 
 La API interna, casos de uso, query repositories y composition root están implementados

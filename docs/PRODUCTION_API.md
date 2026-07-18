@@ -1,5 +1,12 @@
 # Production Jobs API interna (Fase 4)
 
+## Compatibilidad con Planning de Fase 5A
+
+No se agregan rutas ni campos secretos. `configuration` puede transportar las opciones
+públicas de planificación documentadas, pero no provider, modelo, URL, headers, timeout,
+credenciales o path. El endpoint de artefactos expone metadata segura y checksum, nunca el
+contenido completo de `production-plan.json`.
+
 ## Alcance y activación
 
 La API se registra únicamente con `ORION_PROMPT_VIDEO_ENABLED=True`. Su valor predeterminado

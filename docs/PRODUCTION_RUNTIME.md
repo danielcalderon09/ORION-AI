@@ -1,5 +1,12 @@
 # Runtime local de Production Pipeline
 
+## Planning configurable (Fase 5A)
+
+El registry recibe un único `PlanningHandler` dependiente de `PlanningProvider`; todos los
+demás handlers permanecen simulados. El container selecciona `simulated` u `openai`,
+inyecta el writer local y cierra uniformemente el provider antes de disponer el engine.
+No se crea cliente real al importar ni con el feature principal apagado.
+
 ## Composición HTTP y lifecycle (Fase 4)
 
 `production/composition/container.py` construye el runtime sin service locator global.

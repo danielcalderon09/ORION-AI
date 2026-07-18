@@ -20,6 +20,7 @@ class StageContext(ContractModel):
     command_id: UUID
     stage: ProductionStage
     attempt_number: int = Field(ge=1)
+    job_prompt: str = Field(default="", max_length=10_000)
     job_configuration: dict[str, Any] = Field(default_factory=dict)
     input_artifact_ids: tuple[UUID, ...] = ()
     workspace_relative_path: str

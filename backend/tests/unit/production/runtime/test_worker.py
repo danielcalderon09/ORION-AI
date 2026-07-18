@@ -8,7 +8,6 @@ from backend.src.production.application.orchestration import (
     PipelineConfiguration,
     ProductionOrchestrator,
 )
-from backend.src.production.application.results import StageOutcome
 from backend.src.production.domain.enums import ProductionJobStatus, ProductionStage
 from backend.src.production.domain.production_job import ProductionJob
 from backend.src.production.infrastructure.persistence.models import (
@@ -21,6 +20,9 @@ from backend.src.production.infrastructure.persistence.models import (
 from backend.src.production.infrastructure.persistence.transactions import (
     OrchestrationDecisionStore,
 )
+from backend.src.production.planning.artifact_writer import InMemoryPlanningArtifactWriter
+from backend.src.production.planning.exceptions import PlanningProviderTimeoutError
+from backend.src.production.planning.providers import SimulatedPlanningProvider
 from backend.src.production.runtime import (
     ProductionExecutor,
     ProductionLeaseManager,
@@ -126,12 +128,24 @@ async def test_worker_pipeline_with_clip_handoff_completes(runtime_database) -> 
 
 def retry_executor(clock, uuids) -> ProductionExecutor:
     common = {"clock": clock, "uuid_factory": uuids}
+
+    class RetryOncePlanningProvider(SimulatedPlanningProvider):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate_plan(self, request):
+            self.calls += 1
+            if self.calls == 1:
+                raise PlanningProviderTimeoutError("simulated timeout")
+            return await super().generate_plan(request)
+
     return ProductionExecutor(
         StageHandlerRegistry(
             (
                 PlanningHandler(
                     **common,
-                    outcomes=(StageOutcome.FAILED_TRANSIENT, StageOutcome.SUCCEEDED),
+                    provider=RetryOncePlanningProvider(),
+                    artifact_writer=InMemoryPlanningArtifactWriter(),
                 ),
                 ScriptHandler(**common),
                 ScenePlanningHandler(**common),
@@ -231,10 +245,15 @@ async def test_cancellation_during_stage_persists_result_before_cancelling(
             return await super().execute(command, context)
 
     common = {"clock": clock, "uuid_factory": uuids}
+    planning_common = {
+        **common,
+        "provider": SimulatedPlanningProvider(),
+        "artifact_writer": InMemoryPlanningArtifactWriter(),
+    }
     executor = ProductionExecutor(
         StageHandlerRegistry(
             (
-                CancellingPlanningHandler(**common),
+                CancellingPlanningHandler(**planning_common),
                 ScriptHandler(**common),
                 ScenePlanningHandler(**common),
                 AssetHandler(**common),

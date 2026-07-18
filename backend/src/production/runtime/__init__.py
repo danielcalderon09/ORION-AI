@@ -23,7 +23,10 @@ from backend.src.production.runtime.executor import (
     ProductionExecutor,
     StageExecutionContractError,
 )
-from backend.src.production.runtime.handler_factory import create_simulated_handler_registry
+from backend.src.production.runtime.handler_factory import (
+    create_handler_registry,
+    create_simulated_handler_registry,
+)
 from backend.src.production.runtime.heartbeat import ProductionHeartbeat
 from backend.src.production.runtime.job_dispatcher import (
     StageHandlerNotFoundError,
@@ -92,4 +95,5 @@ __all__ = [
     "ThreadedRuntimeDecisionPersister",
     "WorkerRunResult",
     "create_simulated_handler_registry",
+    "create_handler_registry",
 ]

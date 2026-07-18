@@ -43,8 +43,11 @@ async def start_production_runtime(
         app.state.production_container = built
         app.state.production_stop_event = stop_event
         app.state.production_worker_task = task
-    except BaseException:
-        built.shutdown()
+    except asyncio.CancelledError:
+        await built.aclose()
+        raise
+    except Exception:
+        await built.aclose()
         raise
 
 
@@ -66,7 +69,7 @@ async def stop_production_runtime(app: FastAPI, settings: Settings) -> None:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
-    container.shutdown()
+    await container.aclose()
     for name in (
         "production_worker_task",
         "production_stop_event",

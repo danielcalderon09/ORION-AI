@@ -1,5 +1,12 @@
 # Contratos del bounded context `production`
 
+## Contrato ejecutable de planificación (Fase 5A)
+
+`production.planning.ProductionPlan` y `ProductionScenePlan` son contratos estrictos para
+la salida de PLANNING. Se distinguen del plan histórico de Fase 1 por namespace. El puerto
+`PlanningProvider` intercambia únicamente `PlanningProviderRequest/Response`; el writer
+intercambia contenido canónico por ruta relativa, checksum y tamaño, sin persistir estados.
+
 ## Contratos públicos de Fase 4
 
 Los contratos HTTP son traducciones explícitas, no records ORM. `client_request_id` y el

@@ -6,6 +6,8 @@ import pytest
 from backend.src.production.application.commands import StageCommand
 from backend.src.production.application.results import StageOutcome
 from backend.src.production.domain.enums import ProductionStage
+from backend.src.production.planning.artifact_writer import InMemoryPlanningArtifactWriter
+from backend.src.production.planning.providers import SimulatedPlanningProvider
 from backend.src.production.runtime import (
     ProductionExecutor,
     StageContext,
@@ -36,6 +38,7 @@ def make_context(command: StageCommand) -> StageContext:
         command_id=command.command_id,
         stage=command.stage,
         attempt_number=command.attempt_number,
+        job_prompt="Plan a short test video",
         job_configuration={},
         input_artifact_ids=command.input_artifact_ids,
         workspace_relative_path=(
@@ -65,7 +68,12 @@ async def test_dispatcher_and_all_simulated_handlers_are_executable() -> None:
 
 
 def test_dispatcher_rejects_missing_and_duplicate_registration() -> None:
-    handler = PlanningHandler(clock=lambda: NOW, uuid_factory=lambda: UUID(int=1))
+    handler = PlanningHandler(
+        provider=SimulatedPlanningProvider(),
+        artifact_writer=InMemoryPlanningArtifactWriter(),
+        clock=lambda: NOW,
+        uuid_factory=lambda: UUID(int=1),
+    )
     registry = StageHandlerRegistry((handler,))
     with pytest.raises(StageHandlerNotFoundError):
         registry.resolve(ProductionStage.SCRIPTING)

@@ -35,3 +35,16 @@ def test_import_and_app_creation_do_not_start_tasks(tmp_path) -> None:
         return len(set(asyncio.all_tasks()) - before)
 
     assert asyncio.run(inspect()) == 0
+
+
+def test_main_flag_off_does_not_validate_real_provider_credentials(tmp_path) -> None:
+    configured = _settings(tmp_path, False).model_copy(
+        update={"ORION_PLANNING_PROVIDER": "openai", "ORION_PLANNING_API_KEY": None}
+    )
+    app = create_app(configured)
+    assert "/api/v1/production/jobs" not in app.openapi()["paths"]
+    assert not hasattr(app.state, "production_container")
+
+
+def test_planning_provider_defaults_to_simulated(tmp_path) -> None:
+    assert _settings(tmp_path, True).ORION_PLANNING_PROVIDER == "simulated"

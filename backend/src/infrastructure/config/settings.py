@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from pydantic import model_validator
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     ORION_PRODUCTION_HEARTBEAT_INTERVAL_SECONDS: float = 10.0
     ORION_PRODUCTION_SHUTDOWN_TIMEOUT_SECONDS: float = 10.0
     ORION_PRODUCTION_MAX_CYCLES: int | None = None
+    ORION_PLANNING_PROVIDER: str = "simulated"
+    ORION_PLANNING_MODEL: str = "gpt-4.1-mini"
+    ORION_PLANNING_API_KEY: SecretStr | None = None
+    ORION_PLANNING_BASE_URL: str = "https://api.openai.com/v1"
+    ORION_PLANNING_TIMEOUT_SECONDS: float = 30.0
+    ORION_PLANNING_MAX_TRANSPORT_ATTEMPTS: int = 2
+    ORION_PLANNING_RETRY_BASE_DELAY_SECONDS: float = 0.25
+    ORION_PLANNING_MAX_OUTPUT_TOKENS: int = 4096
+    ORION_PLANNING_TEMPERATURE: float = 0.2
 
     # Paths
     ORION_HOME: Path = Path.home() / ".orion"
@@ -86,6 +95,8 @@ class Settings(BaseSettings):
             "ORION_PRODUCTION_LEASE_DURATION_SECONDS": self.ORION_PRODUCTION_LEASE_DURATION_SECONDS,
             "ORION_PRODUCTION_HEARTBEAT_INTERVAL_SECONDS": self.ORION_PRODUCTION_HEARTBEAT_INTERVAL_SECONDS,
             "ORION_PRODUCTION_SHUTDOWN_TIMEOUT_SECONDS": self.ORION_PRODUCTION_SHUTDOWN_TIMEOUT_SECONDS,
+            "ORION_PLANNING_TIMEOUT_SECONDS": self.ORION_PLANNING_TIMEOUT_SECONDS,
+            "ORION_PLANNING_RETRY_BASE_DELAY_SECONDS": self.ORION_PLANNING_RETRY_BASE_DELAY_SECONDS,
         }
         for name, value in positive.items():
             if value <= 0:
@@ -97,6 +108,12 @@ class Settings(BaseSettings):
             raise ValueError("production heartbeat interval must be shorter than lease duration")
         if self.ORION_PRODUCTION_MAX_CYCLES is not None and self.ORION_PRODUCTION_MAX_CYCLES < 1:
             raise ValueError("ORION_PRODUCTION_MAX_CYCLES must be positive")
+        if not 1 <= self.ORION_PLANNING_MAX_TRANSPORT_ATTEMPTS <= 5:
+            raise ValueError("ORION_PLANNING_MAX_TRANSPORT_ATTEMPTS must be between 1 and 5")
+        if not 1 <= self.ORION_PLANNING_MAX_OUTPUT_TOKENS <= 100_000:
+            raise ValueError("ORION_PLANNING_MAX_OUTPUT_TOKENS is outside safe limits")
+        if not 0 <= self.ORION_PLANNING_TEMPERATURE <= 2:
+            raise ValueError("ORION_PLANNING_TEMPERATURE must be between 0 and 2")
         return self
 
     @property
