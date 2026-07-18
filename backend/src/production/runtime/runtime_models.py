@@ -5,10 +5,12 @@ from uuid import UUID
 
 from pydantic import Field, field_validator
 
+from backend.src.production.application.events import ProductionRetryScheduled
 from backend.src.production.application.results.stage_result import StageResult
 from backend.src.production.domain.artifact import Artifact
 from backend.src.production.domain.base import ContractModel
 from backend.src.production.domain.enums import ProductionJobStatus, ProductionStage
+from backend.src.production.domain.production_job import ProductionJob
 
 
 class ProductionLease(ContractModel):
@@ -44,3 +46,9 @@ class WorkerRunResult(ContractModel):
 class RuntimeRecoveryResult(ContractModel):
     requeued_job_ids: tuple[UUID, ...] = ()
     expired_lease_job_ids: tuple[UUID, ...] = ()
+
+
+class RuntimeRetryCandidate(ContractModel):
+    job: ProductionJob
+    retry_event: ProductionRetryScheduled
+    next_sequence_number: int = Field(ge=0)

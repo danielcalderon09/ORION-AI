@@ -8,6 +8,7 @@ from backend.src.production.application.results import StageOutcome
 from backend.src.production.domain.enums import ProductionStage
 from backend.src.production.runtime import (
     ProductionExecutor,
+    StageContext,
     StageHandlerNotFoundError,
     StageHandlerRegistrationError,
     StageHandlerRegistry,
@@ -29,6 +30,21 @@ def make_command(stage: ProductionStage) -> StageCommand:
     )
 
 
+def make_context(command: StageCommand) -> StageContext:
+    return StageContext(
+        job_id=command.job_id,
+        command_id=command.command_id,
+        stage=command.stage,
+        attempt_number=command.attempt_number,
+        job_configuration={},
+        input_artifact_ids=command.input_artifact_ids,
+        workspace_relative_path=(
+            f"production/{command.job_id}/{command.stage.value}/attempt-1"
+        ),
+        correlation_id=command.job_id,
+    )
+
+
 @pytest.mark.asyncio
 async def test_dispatcher_and_all_simulated_handlers_are_executable() -> None:
     ids = iter(UUID(int=value) for value in range(1, 100))
@@ -40,7 +56,8 @@ async def test_dispatcher_and_all_simulated_handlers_are_executable() -> None:
     assert registry.registered_stages == executable
     executor = ProductionExecutor(registry)
     for stage in sorted(executable, key=lambda item: item.value):
-        output = await executor.execute(make_command(stage))
+        command = make_command(stage)
+        output = await executor.execute(command, make_context(command))
         assert output.result.outcome is StageOutcome.SUCCEEDED
         assert output.result.progress_percent == 100
         assert len(output.artifacts) == 1

@@ -24,6 +24,7 @@ from backend.src.production.infrastructure.persistence.transactions import (
 from backend.src.production.runtime import (
     ProductionExecutor,
     ProductionLeaseManager,
+    SQLAlchemyLeaseRepository,
     StageHandlerRegistry,
 )
 from backend.src.production.runtime.handlers import (
@@ -102,6 +103,25 @@ async def test_worker_processes_multiple_jobs(runtime_database) -> None:
         ProductionJobStatus.COMPLETED,
         ProductionJobStatus.COMPLETED,
     ]
+
+
+@pytest.mark.asyncio
+async def test_worker_pipeline_with_clip_handoff_completes(runtime_database) -> None:
+    _, session_factory = runtime_database
+    clock, uuids = MutableClock(), UUIDSequence(9)
+    job_id = UUID("10000000-0000-4000-8000-000000000318")
+    await enqueue_job(session_factory, clock, uuids, job_id)
+    worker = build_worker(
+        session_factory,
+        clock,
+        uuids,
+        owner_id="worker-with-clips",
+        generate_clips=True,
+    )
+    await worker.run_until_idle(max_cycles=20)
+    assert job_status(session_factory, job_id) is ProductionJobStatus.COMPLETED
+    with session_factory() as session:
+        assert session.scalar(select(func.count(StageResultRecord.command_id))) == 12
 
 
 def retry_executor(clock, uuids) -> ProductionExecutor:
@@ -197,7 +217,7 @@ async def test_cancellation_during_stage_persists_result_before_cancelling(
     await enqueue_job(session_factory, clock, uuids, job_id)
 
     class CancellingPlanningHandler(PlanningHandler):
-        async def execute(self, command) -> StageExecutionOutput:
+        async def execute(self, command, context) -> StageExecutionOutput:
             with session_factory() as session:
                 session.execute(
                     update(ProductionJobRecord)
@@ -208,7 +228,7 @@ async def test_cancellation_during_stage_persists_result_before_cancelling(
                     )
                 )
                 session.commit()
-            return await super().execute(command)
+            return await super().execute(command, context)
 
     common = {"clock": clock, "uuid_factory": uuids}
     executor = ProductionExecutor(
@@ -252,7 +272,9 @@ async def test_new_worker_recovers_expired_running_lease(runtime_database) -> No
     first_worker = build_worker(session_factory, clock, uuids, owner_id="worker-before-restart")
     await first_worker.run_once()
     abandoned = ProductionLeaseManager(
-        session_factory, clock=clock, lease_duration=timedelta(seconds=5)
+        SQLAlchemyLeaseRepository(session_factory),
+        clock=clock,
+        lease_duration=timedelta(seconds=5),
     )
     assert abandoned.acquire_next(
         owner_id="dead-worker", statuses={ProductionJobStatus.RUNNING}

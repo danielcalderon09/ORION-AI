@@ -12,6 +12,7 @@ from backend.src.production.runtime import (
     ProductionHeartbeat,
     ProductionLeaseManager,
     ProductionLeaseOwnershipError,
+    SQLAlchemyLeaseRepository,
 )
 
 
@@ -39,10 +40,14 @@ async def test_lease_is_unique_and_expired_lease_can_be_reclaimed(
     job_id = UUID("10000000-0000-4000-8000-000000000301")
     await add_queued_job(session_factory, clock, job_id)
     first = ProductionLeaseManager(
-        session_factory, clock=clock, lease_duration=timedelta(seconds=5)
+        SQLAlchemyLeaseRepository(session_factory),
+        clock=clock,
+        lease_duration=timedelta(seconds=5),
     )
     second = ProductionLeaseManager(
-        session_factory, clock=clock, lease_duration=timedelta(seconds=5)
+        SQLAlchemyLeaseRepository(session_factory),
+        clock=clock,
+        lease_duration=timedelta(seconds=5),
     )
     assert first.acquire_next(owner_id="worker-a", statuses={ProductionJobStatus.QUEUED})
     assert second.acquire_next(
@@ -66,7 +71,9 @@ async def test_heartbeat_renews_only_owned_active_lease(runtime_database) -> Non
     job_id = UUID("10000000-0000-4000-8000-000000000302")
     await add_queued_job(session_factory, clock, job_id)
     manager = ProductionLeaseManager(
-        session_factory, clock=clock, lease_duration=timedelta(seconds=5)
+        SQLAlchemyLeaseRepository(session_factory),
+        clock=clock,
+        lease_duration=timedelta(seconds=5),
     )
     original = manager.acquire_next(
         owner_id="worker-a", statuses={ProductionJobStatus.QUEUED}
@@ -82,3 +89,29 @@ async def test_heartbeat_renews_only_owned_active_lease(runtime_database) -> Non
     assert renewed.lease_until > original.lease_until
     with pytest.raises(ProductionLeaseOwnershipError):
         heartbeat.beat(job_id=job_id, owner_id="worker-b")
+    assert manager.release(job_id=job_id, owner_id="worker-b") is False
+
+
+@pytest.mark.asyncio
+async def test_claim_order_is_deterministic(runtime_database) -> None:
+    _, session_factory = runtime_database
+    from backend.tests.unit.production.runtime.conftest import MutableClock
+
+    clock = MutableClock()
+    ids = (
+        UUID("10000000-0000-4000-8000-000000000304"),
+        UUID("10000000-0000-4000-8000-000000000303"),
+    )
+    for job_id in ids:
+        await add_queued_job(session_factory, clock, job_id)
+    manager = ProductionLeaseManager(
+        SQLAlchemyLeaseRepository(session_factory),
+        clock=clock,
+        lease_duration=timedelta(seconds=5),
+    )
+    first = manager.acquire_next(owner_id="worker-order-a", statuses={ProductionJobStatus.QUEUED})
+    second = manager.acquire_next(
+        owner_id="worker-order-b", statuses={ProductionJobStatus.QUEUED}
+    )
+    assert first is not None and first.job_id == ids[1]
+    assert second is not None and second.job_id == ids[0]

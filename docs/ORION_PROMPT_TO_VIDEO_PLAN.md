@@ -362,6 +362,22 @@ Cada fase queda detrás de bandera y en módulos nuevos. El rollback operativo c
 - **No se hará:** API pública, worker conectado al arranque, recursos reales, proveedores, DaVinci,
   FFmpeg, WebSockets, frontend o exposición de UI.
 
+### Fase 3.5 — Refactor arquitectónico del runtime local
+
+- **Objetivo:** estabilizar límites internos antes de exponer API o conectar capacidades reales.
+- **Alcance:** separar `ProductionWorker`, `ClaimedJobProcessor`, `RuntimeStateReader`,
+  `LeaseRepository`, manager de leases, `StageContext`, factory y política de aislamiento síncrono.
+- **Archivos previstos:** `production/runtime/*` y pruebas de contratos/runtime; sin cambios de
+  esquema ni migración.
+- **Dependencias:** runtime y persistencia atómica de Fases 2–3.
+- **Aceptación:** mismo pipeline y estados finales; worker sin SQL/records, manager sin SQLAlchemy,
+  recovery independiente, handlers context-aware y sesiones nunca compartidas entre threads.
+- **Pruebas:** delegación/liberación, corrupción de comandos pendientes, contexto/path, lease
+  repository, recovery independiente, retry, cancelación, reinicio y pipelines con/sin clips.
+- **Riesgos:** más objetos de composición y persistencia síncrona todavía limitada por SQLite.
+- **Rollback:** revertir el refactor; no existe migración ni dato nuevo que reconciliar.
+- **No se hará:** API, providers, EventBus/outbox, procesos distribuidos, medios reales o editor.
+
 ### Fase 4 — Integración mínima ORION → DaVinci con recursos locales
 
 - **Objetivo:** validar `EditorPort` con imágenes/audio locales y un render controlado.

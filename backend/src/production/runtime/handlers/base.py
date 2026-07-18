@@ -14,6 +14,7 @@ from backend.src.production.domain.enums import (
     ArtifactType,
     ProductionStage,
 )
+from backend.src.production.runtime.context import StageContext
 from backend.src.production.runtime.runtime_models import StageExecutionOutput
 
 
@@ -22,7 +23,11 @@ class StageHandler(Protocol):
 
     supported_stages: frozenset[ProductionStage]
 
-    async def execute(self, command: StageCommand) -> StageExecutionOutput: ...
+    async def execute(
+        self,
+        command: StageCommand,
+        context: StageContext,
+    ) -> StageExecutionOutput: ...
 
 
 class SimulatedStageHandler:
@@ -47,9 +52,15 @@ class SimulatedStageHandler:
         self._outcomes = outcomes
         self._execution_count = 0
 
-    async def execute(self, command: StageCommand) -> StageExecutionOutput:
+    async def execute(
+        self,
+        command: StageCommand,
+        context: StageContext,
+    ) -> StageExecutionOutput:
         if command.stage not in self.supported_stages:
             raise ValueError(f"handler does not support stage {command.stage.value}")
+        if context.command_id != command.command_id:
+            raise ValueError("StageContext does not belong to StageCommand")
         started_at = self._aware_now()
         await asyncio.sleep(0)
         outcome = self._outcomes[min(self._execution_count, len(self._outcomes) - 1)]
@@ -104,7 +115,11 @@ class SimulatedStageHandler:
             error_code=error_code,
             error_message=error_message,
             retry_after_seconds=retry_after_seconds,
-            metadata={"handler": type(self).__name__, "simulated": True},
+            metadata={
+                "handler": type(self).__name__,
+                "simulated": True,
+                "workspace": context.workspace_relative_path,
+            },
         )
         return StageExecutionOutput(result=result, artifacts=artifacts)
 

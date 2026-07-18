@@ -6,23 +6,59 @@ La Fase 3 ejecuta el pipeline durable con handlers simulados. No registra rutas,
 worker desde FastAPI y no usa proveedores, multimedia ni editor. Su propósito es validar la
 coordinación local antes de conectar capacidades reales.
 
-## Flujo de un ciclo
+## Auditoría previa a Fase 3.5
+
+La implementación de Fase 3 era funcional, pero `ProductionWorker` acumulaba claim, cuatro
+lecturas SQL, selección por estado, heartbeat, ejecución y persistencia. `ProductionRecoveryService`
+repetía consultas de job/eventos y `ProductionLeaseManager` mezclaba política de ownership con
+upsert/update/delete SQL. La lectura de comando usaba `LIMIT 1`, por lo que dos comandos pendientes
+se habrían ocultado.
+
+Sin contar las consultas internas de `OrchestrationDecisionStore`, un ciclo sin retries hacía una
+consulta de candidatos de recovery; el claim hacía selección, upsert y recarga; y el procesamiento
+añadía entre dos y tres lecturas según estado. Con `N` retries, recovery añadía dos consultas por
+candidato. Fase 3.5 encapsula y hace comprobables esas lecturas; no promete todavía optimización o
+batching.
+
+## Flujo de un ciclo refactorizado
 
 ```text
 ProductionWorker.run_once
-  -> recupera reintentos cuyo retry_at venció
-  -> ProductionLeaseManager.acquire_next
-  -> carga ProductionJob durable
-  -> ProductionOrchestrator.decide
-       queued  -> crea StageCommand
-       running -> consume un StageResult
-       cancel_requested -> cancela de forma segura
-  -> OrchestrationDecisionStore.persist_decision (transacción única)
-  -> libera lease
+  -> ProductionRecoveryService.requeue_due_retries
+  -> ProductionLeaseManager -> LeaseRepository.acquire_next
+  -> ClaimedJobProcessor.process
+       -> RuntimeStateReader carga contratos durables
+       -> ProductionOrchestrator.decide
+       -> StageContextFactory crea StageContext
+       -> ProductionExecutor ejecuta un StageHandler
+       -> RuntimeDecisionPersister -> OrchestrationDecisionStore (transacción única)
+  -> ProductionLeaseManager -> LeaseRepository.release (finally)
 ```
 
-Un job `running` ejecuta exactamente un handler antes de decidir. `run_until_idle` repite ciclos
-de forma explícita para pruebas y futura composición local; no cambia la semántica de un ciclo.
+`ProductionWorker` es una fachada: recupera, solicita claim, delega y libera. `ProductionWorkerLoop`
+contiene `run_until_idle` y `run_forever`. `ClaimedJobProcessor` procesa exactamente una decisión
+durable y maneja `queued`, `running` y `cancel_requested` sin adquirir ni liberar leases.
+
+## Lecturas y sesiones
+
+`RuntimeStateReader` es el único lector de jobs, comandos, secuencias, intentos y retries. Abre y
+cierra una sesión por operación, nunca hace commit y devuelve únicamente contratos validados. Dos
+comandos pendientes producen `MultiplePendingStageCommandsError`.
+
+`SQLAlchemyLeaseRepository` posee las sesiones/transacciones cortas y el SQL de lease.
+`ProductionLeaseManager` solo valida owner, reloj, duración y ownership. No importa SQLAlchemy ni
+records. El esquema `production_leases` no cambia y no se añade migración.
+
+## StageContext y executor
+
+`StageContext` es inmutable, versionado y serializable. Contiene identidades, configuración,
+artefactos de entrada, correlación y un workspace POSIX relativo estable:
+`production/<job>/<stage>/attempt-<n>`. Rechaza paths absolutos/traversal y claves con apariencia de
+credencial. No contiene sesiones ni servicios.
+
+`StageContextFactory` valida coincidencia job/comando y no realiza IO. `ProductionExecutor` valida
+contexto, ejecuta exactamente un handler, comprueba resultado/artefactos/paths y detecta mutación
+del comando o contexto.
 
 ## Lease y heartbeat
 
@@ -56,11 +92,24 @@ un comando de la etapa actual todavía no procesado, termina esa etapa y persist
 artefactos y cancelación en una única decisión. Si la solicitud aparece durante la ejecución, el
 worker vuelve a cargar el job antes de decidir y aplica la misma regla.
 
+Recovery es independiente del worker: `recover`, `requeue_due_retries` e
+`inspect_expired_leases` no adquieren leases ni ejecutan handlers. Una carrera de requeue ganada por
+otro proceso se reconoce por optimistic locking; errores reales de integridad se propagan.
+
+## Política de SQLAlchemy síncrono
+
+No se migra a SQLAlchemy async. Claim, heartbeat y release son transacciones breves y síncronas.
+Las lecturas pueden aislarse con `ThreadedRuntimeBlockingExecutor`, que usa `asyncio.to_thread` y
+ejecuta una operación que crea/cierra su propia sesión. La persistencia atómica puede aislarse con
+`ThreadedRuntimeDecisionPersister` bajo la misma regla. Las pruebas usan implementaciones
+inmediatas y deterministas. Nunca se comparte una `Session` entre threads y no existe un
+`ThreadPoolExecutor` global propio.
+
 ## Límites deliberados
 
 - No hay API, WebSockets, frontend ni composición en el arranque.
 - No hay procesos separados ni ejecución distribuida.
-- SQLAlchemy sigue siendo síncrono; el runtime local deberá aislar el trabajo bloqueante cuando se
-  integre con el ciclo de vida de la aplicación.
+- La composición con el ciclo de vida del backend sigue pendiente; los adaptadores threaded están
+  disponibles pero el worker no se inicia automáticamente.
 - No hay proveedores reales, editor, render real, archivos multimedia ni publicación de eventos.
 - La creación de jobs sigue siendo responsabilidad de un futuro servicio de aplicación/API.

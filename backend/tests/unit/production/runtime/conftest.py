@@ -19,11 +19,17 @@ from backend.src.production.infrastructure.persistence.transactions import (
     OrchestrationDecisionStore,
 )
 from backend.src.production.runtime import (
+    ClaimedJobProcessor,
+    ImmediateRuntimeBlockingExecutor,
+    ImmediateRuntimeDecisionPersister,
     ProductionExecutor,
     ProductionHeartbeat,
     ProductionLeaseManager,
     ProductionRecoveryService,
     ProductionWorker,
+    RuntimeStateReader,
+    SQLAlchemyLeaseRepository,
+    StageContextFactory,
     create_simulated_handler_registry,
 )
 
@@ -71,32 +77,41 @@ def build_worker(
     generate_clips: bool = False,
 ) -> ProductionWorker:
     store = OrchestrationDecisionStore(session_factory, clock=clock)
+    persister = ImmediateRuntimeDecisionPersister(store)
+    state_reader = RuntimeStateReader(session_factory)
+    blocking_executor = ImmediateRuntimeBlockingExecutor()
     leases = ProductionLeaseManager(
-        session_factory,
+        SQLAlchemyLeaseRepository(session_factory),
         clock=clock,
         lease_duration=timedelta(seconds=10),
     )
-    return ProductionWorker(
-        session_factory,
-        owner_id=owner_id,
+    stage_executor = executor or ProductionExecutor(
+        create_simulated_handler_registry(clock=clock, uuid_factory=uuids)
+    )
+    recovery = ProductionRecoveryService(
+        state_reader,
+        persister,
+        leases,
+        blocking_executor,
+        clock=clock,
+        uuid_factory=uuids,
+    )
+    processor = ClaimedJobProcessor(
+        state_reader=state_reader,
+        blocking_executor=blocking_executor,
         orchestrator=ProductionOrchestrator(clock=clock, uuid_factory=uuids),
         configuration=PipelineConfiguration(
             generate_clips_after_render=generate_clips,
             default_retry_after_seconds=1,
         ),
-        decision_store=store,
-        lease_manager=leases,
+        decision_store=persister,
         heartbeat=ProductionHeartbeat(leases, interval=timedelta(seconds=1)),
-        executor=executor
-        or ProductionExecutor(
-            create_simulated_handler_registry(clock=clock, uuid_factory=uuids)
-        ),
-        recovery=ProductionRecoveryService(
-            session_factory,
-            store,
-            leases,
-            clock=clock,
-            uuid_factory=uuids,
-        ),
-        clock=clock,
+        executor=stage_executor,
+        context_factory=StageContextFactory(),
+    )
+    return ProductionWorker(
+        owner_id=owner_id,
+        lease_manager=leases,
+        recovery=recovery,
+        processor=processor,
     )
