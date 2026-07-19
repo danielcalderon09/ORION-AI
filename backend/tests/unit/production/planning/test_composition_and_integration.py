@@ -18,7 +18,10 @@ from backend.src.production.infrastructure.persistence.session import (
     sqlite_url_from_path,
 )
 from backend.src.production.planning.artifact_writer import LocalPlanningArtifactWriter
-from backend.src.production.planning.exceptions import PlanningProviderConfigurationError
+from backend.src.production.planning.exceptions import (
+    PlanningProviderConfigurationError,
+    PlanningProviderDependencyError,
+)
 from backend.src.production.planning.prompt_builder import PlanningPromptBuilder
 from backend.src.production.planning.providers.openai_provider import OpenAIPlanningProvider
 from backend.src.production.runtime import ProductionExecutor, create_handler_registry
@@ -105,6 +108,67 @@ def test_invalid_real_configuration_fails_safely(tmp_path, provider: str) -> Non
     with pytest.raises(PlanningProviderConfigurationError) as captured:
         build_production_container(settings(tmp_path, ORION_PLANNING_PROVIDER=provider))
     assert "API" not in str(captured.value)
+
+
+def test_missing_optional_dependency_has_no_simulated_fallback(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    def unavailable():
+        raise PlanningProviderDependencyError(
+            "OpenAI planning support is not installed. Install the planning-openai extra."
+        )
+
+    monkeypatch.setattr(
+        "backend.src.production.composition.container.load_openai_planning_provider",
+        unavailable,
+    )
+    configured = settings(
+        tmp_path,
+        ORION_PLANNING_PROVIDER="openai",
+        ORION_PLANNING_API_KEY="not-a-real-key",
+    )
+    with pytest.raises(PlanningProviderDependencyError, match="planning-openai"):
+        build_production_container(configured)
+
+
+def test_missing_dependency_disposes_partially_created_engine(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class FakeEngine:
+        disposed = False
+
+        def dispose(self) -> None:
+            self.disposed = True
+
+    engine = FakeEngine()
+
+    def unavailable():
+        raise PlanningProviderDependencyError(
+            "OpenAI planning support is not installed. Install the planning-openai extra."
+        )
+
+    monkeypatch.setattr(
+        "backend.src.production.composition.container.create_production_engine",
+        lambda *args, **kwargs: engine,
+    )
+    monkeypatch.setattr(
+        "backend.src.production.composition.container.create_production_session_factory",
+        lambda value: object(),
+    )
+    monkeypatch.setattr(
+        "backend.src.production.composition.container.load_openai_planning_provider",
+        unavailable,
+    )
+    configured = settings(
+        tmp_path,
+        ORION_PLANNING_PROVIDER="openai",
+        ORION_PLANNING_API_KEY="not-a-real-key",
+    )
+    with pytest.raises(PlanningProviderDependencyError):
+        build_production_container(configured)
+    assert engine.disposed is True
 
 
 @pytest.mark.asyncio

@@ -55,6 +55,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements/dev.txt || pip install pytest pytest-cov
+
+      - name: Verify planning installation profiles
+        run: |
+          pip install -e . --no-deps
+          python scripts/smoke_planning_minimal.py
+          pip install -e ".[planning-openai]" --no-deps
+          python scripts/smoke_planning_openai.py
+          python scripts/verify_planning_install_profiles.py
+
+      - name: Run Planning tests without network
+        run: python -m pytest backend/tests/unit/production/planning -q
       
       - name: Run unit tests with coverage
         run: |

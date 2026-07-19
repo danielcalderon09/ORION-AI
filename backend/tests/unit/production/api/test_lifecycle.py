@@ -78,3 +78,93 @@ async def test_missing_schema_fails_and_cleans_partial_container(tmp_path) -> No
     with pytest.raises(ProductionRuntimeUnavailableError, match="not migrated"):
         await start_production_runtime(app, settings)
     assert not hasattr(app.state, "production_container")
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciles_before_recovery_and_worker(monkeypatch, tmp_path) -> None:
+    calls: list[str] = []
+
+    class Reconciler:
+        async def reconcile(self):
+            calls.append("reconcile")
+
+    class Recovery:
+        async def recover(self):
+            calls.append("recovery")
+
+    class Container:
+        engine = object()
+        planning_artifact_reconciler = Reconciler()
+        recovery = Recovery()
+
+        async def aclose(self):
+            calls.append("close")
+
+    async def schema(settings, engine):
+        calls.append("schema")
+
+    monkeypatch.setattr(
+        "backend.src.production.composition.lifecycle.ensure_production_schema",
+        schema,
+    )
+    settings = Settings(
+        _env_file=None,
+        ORION_HOME=tmp_path / "home",
+        MODELS_DIR=tmp_path / "models",
+        PROJECTS_DIR=tmp_path / "projects",
+        TEMP_DIR=tmp_path / "temp",
+        ORION_PROMPT_VIDEO_ENABLED=True,
+        ORION_PRODUCTION_WORKER_ENABLED=False,
+    )
+    app = FastAPI()
+    await start_production_runtime(app, settings, container=Container())
+    assert calls == ["schema", "reconcile", "recovery"]
+    await stop_production_runtime(app, settings)
+    assert calls[-1] == "close"
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_failure_prevents_worker_and_closes_container(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    calls: list[str] = []
+
+    class Reconciler:
+        async def reconcile(self):
+            calls.append("reconcile")
+            raise RuntimeError("workspace integrity failure")
+
+    class Recovery:
+        async def recover(self):
+            calls.append("recovery")
+
+    class Container:
+        engine = object()
+        planning_artifact_reconciler = Reconciler()
+        recovery = Recovery()
+
+        async def aclose(self):
+            calls.append("close")
+
+    async def schema(settings, engine):
+        calls.append("schema")
+
+    monkeypatch.setattr(
+        "backend.src.production.composition.lifecycle.ensure_production_schema",
+        schema,
+    )
+    settings = Settings(
+        _env_file=None,
+        ORION_HOME=tmp_path / "home",
+        MODELS_DIR=tmp_path / "models",
+        PROJECTS_DIR=tmp_path / "projects",
+        TEMP_DIR=tmp_path / "temp",
+        ORION_PROMPT_VIDEO_ENABLED=True,
+        ORION_PRODUCTION_WORKER_ENABLED=True,
+    )
+    app = FastAPI()
+    with pytest.raises(RuntimeError, match="workspace integrity failure"):
+        await start_production_runtime(app, settings, container=Container())
+    assert calls == ["schema", "reconcile", "close"]
+    assert not hasattr(app.state, "production_worker_task")

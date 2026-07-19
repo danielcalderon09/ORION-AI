@@ -182,10 +182,13 @@ class OpenAIPlanningProvider:
             ) from exc
         raw_usage = body.get("usage")
         usage: dict[str, Any] = raw_usage if isinstance(raw_usage, dict) else {}
+        reported_model = self._safe_string(body.get("model"))
         return PlanningProviderResponse(
             plan=plan,
             provider="openai",
-            model=str(body.get("model") or self._model),
+            model=reported_model or self._model,
+            requested_model=self._model,
+            reported_model=reported_model,
             request_id=response.headers.get("x-request-id") or self._safe_string(body.get("id")),
             input_tokens=self._safe_int(usage.get("input_tokens")),
             output_tokens=self._safe_int(usage.get("output_tokens")),

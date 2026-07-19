@@ -20,6 +20,9 @@ from backend.src.production.application.services.production_jobs import (
     ListProductionJobsService,
     RetryProductionJobService,
 )
+from backend.src.production.infrastructure.persistence.planning_artifact_reader import (
+    SQLAlchemyRegisteredPlanningArtifactReader,
+)
 from backend.src.production.infrastructure.persistence.query_repositories import (
     SQLAlchemyProductionArtifactQueryRepository,
     SQLAlchemyProductionEventQueryRepository,
@@ -32,6 +35,9 @@ from backend.src.production.infrastructure.persistence.session import (
 from backend.src.production.infrastructure.persistence.transactions import (
     OrchestrationDecisionStore,
 )
+from backend.src.production.infrastructure.planning_artifact_reconciler import (
+    LocalPlanningArtifactReconciler,
+)
 from backend.src.production.planning.artifact_writer import LocalPlanningArtifactWriter
 from backend.src.production.planning.exceptions import (
     PlanningProviderConfigurationError,
@@ -39,6 +45,10 @@ from backend.src.production.planning.exceptions import (
 from backend.src.production.planning.ports import PlanningProvider
 from backend.src.production.planning.prompt_builder import PlanningPromptBuilder
 from backend.src.production.planning.providers import SimulatedPlanningProvider
+from backend.src.production.planning.providers.availability import (
+    load_openai_planning_provider,
+)
+from backend.src.production.planning.reconciliation import PlanningArtifactReconciler
 from backend.src.production.runtime import (
     ClaimedJobProcessor,
     ProductionExecutor,
@@ -75,6 +85,7 @@ class ProductionContainer:
     recovery: ProductionRecoveryService
     worker: ProductionWorker
     planning_provider: PlanningProvider
+    planning_artifact_reconciler: PlanningArtifactReconciler
 
     def shutdown(self) -> None:
         self.engine.dispose()
@@ -111,6 +122,14 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         artifact_writer=LocalPlanningArtifactWriter(settings.PROJECTS_DIR),
         clock=clock,
         uuid_factory=uuid4,
+    )
+    planning_artifact_reconciler = LocalPlanningArtifactReconciler(
+        workspace_root=settings.PROJECTS_DIR,
+        registered_reader=SQLAlchemyRegisteredPlanningArtifactReader(sessions),
+        minimum_age_seconds=settings.ORION_PLANNING_ORPHAN_MIN_AGE_SECONDS,
+        action=settings.ORION_PLANNING_ORPHAN_ACTION,
+        quarantine_relative_path=settings.ORION_PLANNING_QUARANTINE_DIR,
+        clock=clock,
     )
 
     leases = ProductionLeaseManager(
@@ -189,6 +208,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         recovery=recovery,
         worker=worker,
         planning_provider=planning_provider,
+        planning_artifact_reconciler=planning_artifact_reconciler,
     )
 
 
@@ -200,13 +220,11 @@ def _build_planning_provider(settings: Settings) -> PlanningProvider:
         raise PlanningProviderConfigurationError(
             f"unsupported planning provider: {provider_name!r}"
         )
+    openai_provider_factory = load_openai_planning_provider()
     if settings.ORION_PLANNING_API_KEY is None:
         raise PlanningProviderConfigurationError("planning provider credential is missing")
-    from backend.src.production.planning.providers.openai_provider import (
-        OpenAIPlanningProvider,
-    )
 
-    return OpenAIPlanningProvider(
+    return openai_provider_factory(
         api_key=settings.ORION_PLANNING_API_KEY.get_secret_value(),
         model=settings.ORION_PLANNING_MODEL,
         prompt_builder=PlanningPromptBuilder(),

@@ -113,8 +113,26 @@ async def test_real_provider_sends_structured_request_and_converts_usage(
     assert captured["store"] is False
     assert response.total_tokens == 30
     assert response.request_id == "request-safe"
+    assert response.requested_model == "gpt-test"
+    assert response.reported_model == "gpt-test"
     await provider.close()
     assert client.is_closed
+
+
+@pytest.mark.asyncio
+async def test_real_provider_preserves_requested_and_different_reported_model(
+    planning_request,
+) -> None:
+    body = response_body()
+    body["model"] = "gpt-test-2026-07-01"
+    provider, _ = real_provider(
+        lambda request: httpx.Response(200, json=body, request=request)
+    )
+    response = await provider.generate_plan(planning_request)
+    assert response.model == "gpt-test-2026-07-01"
+    assert response.requested_model == "gpt-test"
+    assert response.reported_model == "gpt-test-2026-07-01"
+    await provider.close()
 
 
 @pytest.mark.asyncio

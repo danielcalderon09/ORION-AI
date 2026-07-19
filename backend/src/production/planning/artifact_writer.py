@@ -51,7 +51,10 @@ class LocalPlanningArtifactWriter:
     """Write canonical JSON atomically beneath an injected workspace root."""
 
     def __init__(self, workspace_root: Path) -> None:
-        self._root = workspace_root.expanduser().resolve()
+        expanded_root = workspace_root.expanduser()
+        if expanded_root.is_symlink():
+            raise ValueError("planning workspace root cannot be a symbolic link")
+        self._root = expanded_root.resolve()
 
     async def write_plan(
         self,
@@ -65,12 +68,16 @@ class LocalPlanningArtifactWriter:
         return _written(relative_path, content)
 
     def _write_atomic(self, relative_path: str, content: bytes) -> None:
-        target = (self._root / Path(*PurePosixPath(relative_path).parts)).resolve()
+        relative = Path(*PurePosixPath(relative_path).parts)
+        target = self._root / relative
+        resolved_target = target.resolve(strict=False)
         try:
-            target.relative_to(self._root)
+            resolved_target.relative_to(self._root)
         except ValueError as exc:
             raise ValueError("planning artifact escaped workspace root") from exc
+        _reject_symlink_components(self._root, target)
         target.parent.mkdir(parents=True, exist_ok=True)
+        _reject_symlink_components(self._root, target)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{target.name}.",
             suffix=".tmp",
@@ -82,6 +89,7 @@ class LocalPlanningArtifactWriter:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
+            _reject_symlink_components(self._root, target)
             os.replace(temporary, target)
         except Exception:
             temporary.unlink(missing_ok=True)
@@ -102,3 +110,17 @@ def _written(relative_path: str, content: bytes) -> WrittenPlanningArtifact:
         size_bytes=len(content),
         sha256=hashlib.sha256(content).hexdigest(),
     )
+
+
+def _reject_symlink_components(root: Path, target: Path) -> None:
+    """Reject existing symlink components without following them."""
+
+    try:
+        relative = target.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("planning artifact escaped workspace root") from exc
+    current = root
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink():
+            raise ValueError("planning artifact path contains a symbolic link")

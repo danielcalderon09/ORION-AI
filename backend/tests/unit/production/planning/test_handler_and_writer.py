@@ -85,6 +85,9 @@ async def test_handler_writes_exact_canonical_artifact() -> None:
     assert artifact.sha256 == hashlib.sha256(content).hexdigest()
     assert output.result.output_artifact_ids == (artifact.artifact_id,)
     assert json.loads(content)["language"] == "en"
+    assert artifact.metadata["requested_model"] == "planning-simulator-v1"
+    assert artifact.metadata["reported_model"] == "planning-simulator-v1"
+    assert artifact.metadata["model_mismatch"] is False
     assert provider.calls == 1
 
 
@@ -99,6 +102,43 @@ async def test_local_writer_creates_real_file_beneath_workspace(tmp_path) -> Non
     assert target.is_file()
     assert hashlib.sha256(target.read_bytes()).hexdigest() == artifact.sha256
     assert not list(target.parent.glob("*.tmp"))
+
+
+@pytest.mark.asyncio
+async def test_local_writer_rejects_symlinked_directory_outside_workspace(tmp_path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-writer-outside"
+    outside.mkdir()
+    production_link = tmp_path / "production"
+    try:
+        production_link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlink creation is not available")
+    command, context = command_and_context()
+    output = await handler(
+        SimulatedPlanningProvider(), LocalPlanningArtifactWriter(tmp_path)
+    ).execute(command, context)
+    assert output.result.outcome is StageOutcome.FAILED_PERMANENT
+    assert not list(outside.rglob("production-plan.json"))
+
+
+@pytest.mark.asyncio
+async def test_local_writer_rejects_symlinked_target(tmp_path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-writer-target"
+    outside.write_text("outside", encoding="utf-8")
+    command, context = command_and_context()
+    target = tmp_path.joinpath(
+        *f"{context.workspace_relative_path}/production-plan.json".split("/")
+    )
+    target.parent.mkdir(parents=True)
+    try:
+        target.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink creation is not available")
+    output = await handler(
+        SimulatedPlanningProvider(), LocalPlanningArtifactWriter(tmp_path)
+    ).execute(command, context)
+    assert output.result.outcome is StageOutcome.FAILED_PERMANENT
+    assert outside.read_text(encoding="utf-8") == "outside"
 
 
 @pytest.mark.asyncio

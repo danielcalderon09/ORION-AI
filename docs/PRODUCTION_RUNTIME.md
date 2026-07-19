@@ -7,6 +7,17 @@ demás handlers permanecen simulados. El container selecciona `simulated` u `ope
 inyecta el writer local y cierra uniformemente el provider antes de disponer el engine.
 No se crea cliente real al importar ni con el feature principal apagado.
 
+Fase 5A.1 formaliza `httpx` en el extra `planning-openai` y añade reconciliación conservadora
+del JSON de planificación. El orden de startup con el feature activo es: construir container,
+validar esquema, reconciliar artifacts, ejecutar recovery e iniciar el worker. Un fallo de
+integridad durante reconciliación cierra recursos parciales y evita crear la task. La consulta
+SQL y el recorrido de filesystem se ejecutan en un thread con sesión propia; no se comparte una
+`Session` con el event loop.
+
+La reconciliación solo inspecciona rutas contractuales de PLANNING, no sigue symlinks y mantiene
+una edad mínima para no competir con intentos activos. Cuarentena es la acción predeterminada.
+El feature principal apagado no construye el reconciliador ni toca DB/workspace.
+
 ## Composición HTTP y lifecycle (Fase 4)
 
 `production/composition/container.py` construye el runtime sin service locator global.

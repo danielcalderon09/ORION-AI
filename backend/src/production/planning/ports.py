@@ -29,6 +29,8 @@ class PlanningProviderResponse(ContractModel):
     plan: ProductionPlan
     provider: str = Field(min_length=1, max_length=100)
     model: str = Field(min_length=1, max_length=200)
+    requested_model: str | None = Field(default=None, min_length=1, max_length=200)
+    reported_model: str | None = Field(default=None, min_length=1, max_length=200)
     request_id: str | None = Field(default=None, max_length=200)
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)

@@ -9,6 +9,10 @@ class PlanningProviderConfigurationError(PlanningProviderError):
     pass
 
 
+class PlanningProviderDependencyError(PlanningProviderConfigurationError):
+    """The selected optional provider support is not installed."""
+
+
 class PlanningProviderAuthenticationError(PlanningProviderError):
     pass
 

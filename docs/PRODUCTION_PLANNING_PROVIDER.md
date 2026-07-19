@@ -112,3 +112,56 @@ prompt, token counts, latencia y request ID seguro.
 
 Las pruebas automatizadas usan transports falsos, SQLite/workspaces temporales y ninguna
 llamada facturable.
+
+## Endurecimiento de instalación (Fase 5A.1)
+
+La instalación mínima es `pip install -e .` y conserva el provider `simulated` sin cargar
+`httpx` ni el módulo del adaptador real. El soporte opcional se instala con
+`pip install -e ".[planning-openai]"`; el extra declara directamente `httpx>=0.27,<1.0`.
+El requirements histórico de desarrollo conserva el mismo rango porque sus tests usan
+`MockTransport`.
+
+Solo la selección efectiva de `openai`, con el feature principal activo y durante la
+construcción del container, intenta importar el adaptador. Si falta el extra se lanza
+`PlanningProviderDependencyError` con el mensaje accionable “OpenAI planning support is not
+installed. Install the planning-openai extra.” No existe fallback silencioso. Con el feature
+principal apagado no se construye container ni se valida dependencia o credencial.
+
+`scripts/verify_planning_install_profiles.py` instala el árbol construido en dos venvs
+temporales, ejecuta el perfil mínimo con `httpx` bloqueado y construye/cierra el adaptador con
+cliente falso en el perfil opcional. No hace requests. CI ejecuta el mismo verificador y la
+suite Planning sin red.
+
+## Reproducibilidad del modelo
+
+`ORION_PLANNING_MODEL` conserva el alias compatible `gpt-4.1-mini`. Para despliegues
+reproducibles se recomienda configurar un identificador versionado cuando el catálogo del
+proveedor lo permita. La API por job nunca acepta modelo. El artefacto conserva por separado
+`requested_model` y `reported_model`; `model_version` usa el valor reportado cuando existe.
+Una diferencia queda indicada con `model_mismatch`, sin registrar prompts ni respuestas.
+
+## Reconciliación de artefactos huérfanos
+
+El archivo se publica antes de que `OrchestrationDecisionStore` pueda confirmar su transacción.
+No se añadió rollback al handler porque este no conoce persistencia y esa dependencia rompería
+la frontera de ejecución. `LocalPlanningArtifactReconciler` resuelve el hueco antes de recovery:
+
+1. consulta las rutas `production_plan` registradas con una sesión corta;
+2. recorre sin seguir symlinks únicamente `production/<uuid>/planning/attempt-<n>`;
+3. conserva archivos registrados y huérfanos recientes;
+4. mueve huérfanos antiguos a cuarentena por defecto, o los elimina solo con configuración
+   explícita;
+5. limpia únicamente directorios vacíos bajo `production`.
+
+Settings nuevos:
+
+- `ORION_PLANNING_RECONCILE_ARTIFACTS=true`
+- `ORION_PLANNING_ORPHAN_MIN_AGE_SECONDS=300`
+- `ORION_PLANNING_ORPHAN_ACTION=quarantine` (`delete` es opt-in)
+- `ORION_PLANNING_QUARANTINE_DIR=production-quarantine` (POSIX relativo)
+
+La operación es idempotente. Writer y reconciliador rechazan symlinks, traversal y rutas
+absolutas mediante resolución del filesystem y relación real con `PROJECTS_DIR`. Un symlink,
+fallo de consulta o error de cleanup produce `PlanningArtifactReconciliationError`; el
+lifecycle cierra provider/engine y no inicia el worker. Logs y reportes contienen solo
+contadores, nunca paths absolutos. No se toca ninguna otra etapa ni archivo fuera del workspace.

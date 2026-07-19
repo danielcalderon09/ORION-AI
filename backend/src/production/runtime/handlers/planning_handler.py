@@ -113,6 +113,13 @@ class PlanningHandler:
             "output_tokens": response.output_tokens,
             "total_tokens": response.total_tokens,
             "request_id": response.request_id,
+            "requested_model": response.requested_model,
+            "reported_model": response.reported_model,
+            "model_mismatch": (
+                response.reported_model is not None
+                and response.requested_model is not None
+                and response.reported_model != response.requested_model
+            ),
         }
         public_metadata = {
             key: value for key, value in public_metadata.items() if value is not None
@@ -139,6 +146,8 @@ class PlanningHandler:
                 "attempt_number": command.attempt_number,
                 "provider": response.provider,
                 "model": response.model,
+                "requested_model": response.requested_model,
+                "reported_model": response.reported_model,
                 "latency_ms": response.latency_ms,
                 "scene_count": len(response.plan.scenes),
                 "artifact_size": written.size_bytes,
@@ -159,6 +168,8 @@ class PlanningHandler:
                 "handler": type(self).__name__,
                 "provider": response.provider,
                 "model": response.model,
+                "requested_model": response.requested_model,
+                "reported_model": response.reported_model,
                 "scene_count": len(response.plan.scenes),
             },
         )

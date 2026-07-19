@@ -54,6 +54,8 @@ class SimulatedPlanningProvider:
             plan=plan,
             provider="orion-simulated",
             model="planning-simulator-v1",
+            requested_model="planning-simulator-v1",
+            reported_model="planning-simulator-v1",
             latency_ms=0,
             finish_reason="simulated",
             metadata={"deterministic": True, "simulated": True},

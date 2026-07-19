@@ -29,6 +29,8 @@ async def start_production_runtime(
     built = container or build_production_container(settings)
     try:
         await ensure_production_schema(settings, built.engine)
+        if settings.ORION_PLANNING_RECONCILE_ARTIFACTS:
+            await built.planning_artifact_reconciler.reconcile()
         await built.recovery.recover()
         stop_event = asyncio.Event()
         task = None

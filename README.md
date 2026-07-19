@@ -53,10 +53,16 @@ python scripts/batch_processor.py --videos=./samples --profile=balanced --max-wo
 
 ### Backend
 ```bash
-cd backend
 pip install -e ".[dev]"
-python -m src.main
+python -m backend.src.main
+
+# Soporte opcional del proveedor OpenAI de PLANNING
+pip install -e ".[planning-openai]"
 ```
+
+La instalación base conserva `SimulatedPlanningProvider` y no necesita `httpx`. El extra
+`planning-openai` habilita el único adaptador HTTP real. Los perfiles pueden verificarse sin
+llamadas externas con `python scripts/verify_planning_install_profiles.py`.
 
 ### Frontend
 ```bash

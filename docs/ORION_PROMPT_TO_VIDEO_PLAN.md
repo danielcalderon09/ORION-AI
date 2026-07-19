@@ -1,5 +1,13 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado de Fase 5A.1
+
+El soporte HTTP real está formalizado como extra `planning-openai`; la instalación mínima
+mantiene el simulador sin importar infraestructura opcional. Startup reconcilia de forma
+conservadora planes físicos no registrados antes de recovery, con antigüedad mínima, cuarentena
+y rechazo de symlinks. Requested/reported model quedan diferenciados en metadata segura. No hay
+migración, ruta o etapa real adicional.
+
 ## Estado de Fase 5A
 
 PLANNING dispone de un puerto intercambiable, simulador determinista y un único adaptador

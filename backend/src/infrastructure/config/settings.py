@@ -1,6 +1,7 @@
 """Application settings and configuration."""
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Any, Literal
 
 from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings
@@ -35,6 +36,10 @@ class Settings(BaseSettings):
     ORION_PLANNING_RETRY_BASE_DELAY_SECONDS: float = 0.25
     ORION_PLANNING_MAX_OUTPUT_TOKENS: int = 4096
     ORION_PLANNING_TEMPERATURE: float = 0.2
+    ORION_PLANNING_RECONCILE_ARTIFACTS: bool = True
+    ORION_PLANNING_ORPHAN_MIN_AGE_SECONDS: float = 300.0
+    ORION_PLANNING_ORPHAN_ACTION: Literal["delete", "quarantine"] = "quarantine"
+    ORION_PLANNING_QUARANTINE_DIR: str = "production-quarantine"
 
     # Paths
     ORION_HOME: Path = Path.home() / ".orion"
@@ -80,7 +85,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         # Ensure directories exist
         self.ORION_HOME.mkdir(parents=True, exist_ok=True)
@@ -114,6 +119,20 @@ class Settings(BaseSettings):
             raise ValueError("ORION_PLANNING_MAX_OUTPUT_TOKENS is outside safe limits")
         if not 0 <= self.ORION_PLANNING_TEMPERATURE <= 2:
             raise ValueError("ORION_PLANNING_TEMPERATURE must be between 0 and 2")
+        if self.ORION_PLANNING_ORPHAN_MIN_AGE_SECONDS < 0:
+            raise ValueError("ORION_PLANNING_ORPHAN_MIN_AGE_SECONDS cannot be negative")
+        quarantine = self.ORION_PLANNING_QUARANTINE_DIR.strip()
+        posix_path = PurePosixPath(quarantine)
+        windows_path = PureWindowsPath(quarantine)
+        if (
+            not quarantine
+            or "\\" in quarantine
+            or posix_path.is_absolute()
+            or windows_path.is_absolute()
+            or ".." in posix_path.parts
+        ):
+            raise ValueError("ORION_PLANNING_QUARANTINE_DIR must be a safe relative POSIX path")
+        self.ORION_PLANNING_QUARANTINE_DIR = posix_path.as_posix()
         return self
 
     @property
