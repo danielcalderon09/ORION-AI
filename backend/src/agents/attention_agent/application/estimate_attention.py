@@ -89,6 +89,28 @@ class HeuristicAttentionProvider:
         return timeline
 
 
+class DummyAttentionProvider:
+    """Deterministic attention timeline for offline contract tests."""
+
+    async def estimate_attention(self, features: dict[str, Any]) -> list[dict]:
+        return [
+            {
+                "time": 2.0,
+                "attention_score": 0.9,
+                "audio_energy": 0.8,
+                "scene_change": 0.8,
+                "speech_active": 0.0,
+            },
+            {
+                "time": 7.0,
+                "attention_score": 0.5,
+                "audio_energy": 0.4,
+                "scene_change": 0.0,
+                "speech_active": 0.0,
+            },
+        ]
+
+
 class AttentionAgent(IAgent):
     """Agent responsible for attention curve estimation."""
 
@@ -125,7 +147,7 @@ class AttentionAgent(IAgent):
         # Find peaks and valleys
         peaks = []
         valleys = []
-        for i, point in enumerate(timeline):
+        for point in timeline:
             score = point["attention_score"]
             if score > 0.7:
                 peaks.append(point)

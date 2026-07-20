@@ -23,7 +23,9 @@ from backend.src.production.planning.exceptions import (
     PlanningProviderDependencyError,
 )
 from backend.src.production.planning.prompt_builder import PlanningPromptBuilder
-from backend.src.production.planning.providers.openai_provider import OpenAIPlanningProvider
+from backend.src.production.planning.providers.openrouter_provider import (
+    OpenRouterPlanningProvider,
+)
 from backend.src.production.runtime import ProductionExecutor, create_handler_registry
 from backend.src.production.runtime.handlers import PlanningHandler
 from backend.tests.unit.production.runtime.conftest import MutableClock, UUIDSequence, build_worker
@@ -84,15 +86,9 @@ def fake_response_payload() -> dict:
         "metadata": {},
     }
     return {
-        "id": "resp_fake",
-        "model": "gpt-fake",
-        "status": "completed",
-        "output": [
-            {
-                "type": "message",
-                "content": [{"type": "output_text", "text": json.dumps(plan)}],
-            }
-        ],
+        "id": "generation-fake",
+        "model": "openai/fake-model",
+        "choices": [{"message": {"content": json.dumps(plan)}, "finish_reason": "stop"}],
         "usage": {},
     }
 
@@ -103,7 +99,7 @@ def test_composition_defaults_to_simulated_without_key(tmp_path) -> None:
     container.shutdown()
 
 
-@pytest.mark.parametrize("provider", ["unknown", "openai"])
+@pytest.mark.parametrize("provider", ["unknown", "openai", "openrouter"])
 def test_invalid_real_configuration_fails_safely(tmp_path, provider: str) -> None:
     with pytest.raises(PlanningProviderConfigurationError) as captured:
         build_production_container(settings(tmp_path, ORION_PLANNING_PROVIDER=provider))
@@ -116,19 +112,19 @@ def test_missing_optional_dependency_has_no_simulated_fallback(
 ) -> None:
     def unavailable():
         raise PlanningProviderDependencyError(
-            "OpenAI planning support is not installed. Install the planning-openai extra."
+            "OpenRouter planning support is not installed. Install the production-llm extra."
         )
 
     monkeypatch.setattr(
-        "backend.src.production.composition.container.load_openai_planning_provider",
+        "backend.src.production.composition.container.load_openrouter_planning_provider",
         unavailable,
     )
     configured = settings(
         tmp_path,
-        ORION_PLANNING_PROVIDER="openai",
+        ORION_PLANNING_PROVIDER="openrouter",
         ORION_PLANNING_API_KEY="not-a-real-key",
     )
-    with pytest.raises(PlanningProviderDependencyError, match="planning-openai"):
+    with pytest.raises(PlanningProviderDependencyError, match="production-llm"):
         build_production_container(configured)
 
 
@@ -146,7 +142,7 @@ def test_missing_dependency_disposes_partially_created_engine(
 
     def unavailable():
         raise PlanningProviderDependencyError(
-            "OpenAI planning support is not installed. Install the planning-openai extra."
+            "OpenRouter planning support is not installed. Install the production-llm extra."
         )
 
     monkeypatch.setattr(
@@ -158,12 +154,12 @@ def test_missing_dependency_disposes_partially_created_engine(
         lambda value: object(),
     )
     monkeypatch.setattr(
-        "backend.src.production.composition.container.load_openai_planning_provider",
+        "backend.src.production.composition.container.load_openrouter_planning_provider",
         unavailable,
     )
     configured = settings(
         tmp_path,
-        ORION_PLANNING_PROVIDER="openai",
+        ORION_PLANNING_PROVIDER="openrouter",
         ORION_PLANNING_API_KEY="not-a-real-key",
     )
     with pytest.raises(PlanningProviderDependencyError):
@@ -184,11 +180,11 @@ async def test_pipeline_with_fake_real_provider_persists_matching_file(
                 200, json=fake_response_payload(), request=request
             )
         ),
-        base_url="https://api.openai.com/v1",
+        base_url="https://openrouter.ai/api/v1",
     )
-    provider = OpenAIPlanningProvider(
+    provider = OpenRouterPlanningProvider(
         api_key="fake-only",
-        model="gpt-fake",
+        model="openai/fake-model",
         prompt_builder=PlanningPromptBuilder(),
         client=client,
         max_transport_attempts=1,

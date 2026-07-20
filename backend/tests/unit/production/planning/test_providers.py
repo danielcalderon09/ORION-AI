@@ -15,8 +15,8 @@ from backend.src.production.planning.exceptions import (
 )
 from backend.src.production.planning.prompt_builder import PlanningPromptBuilder
 from backend.src.production.planning.providers import SimulatedPlanningProvider
-from backend.src.production.planning.providers.openai_provider import (
-    OpenAIPlanningProvider,
+from backend.src.production.planning.providers.openrouter_provider import (
+    OpenRouterPlanningProvider,
 )
 
 
@@ -52,29 +52,27 @@ def valid_plan_payload() -> dict:
 def response_body(plan: dict | str | None = None) -> dict:
     text = json.dumps(plan or valid_plan_payload()) if not isinstance(plan, str) else plan
     return {
-        "id": "resp_safe",
-        "model": "gpt-test",
-        "status": "completed",
-        "output": [
-            {"type": "message", "content": [{"type": "output_text", "text": text}]}
-        ],
-        "usage": {"input_tokens": 10, "output_tokens": 20, "total_tokens": 30},
+        "id": "generation-safe",
+        "model": "openai/test-model",
+        "choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
     }
 
 
-def real_provider(handler, *, attempts: int = 1, sleeper=None):
+def real_provider(handler, *, attempts: int = 1, sleeper=None, **provider_options):
     client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler),
-        base_url="https://api.openai.com/v1",
+        base_url="https://openrouter.ai/api/v1",
     )
-    provider = OpenAIPlanningProvider(
+    provider = OpenRouterPlanningProvider(
         api_key="test-key-not-real",
-        model="gpt-test",
+        model="openai/test-model",
         prompt_builder=PlanningPromptBuilder(),
         client=client,
         max_transport_attempts=attempts,
         sleeper=sleeper or asyncio.sleep,
         monotonic_clock=lambda: 1.0,
+        **provider_options,
     )
     return provider, client
 
@@ -109,12 +107,16 @@ async def test_real_provider_sends_structured_request_and_converts_usage(
 
     provider, client = real_provider(handler)
     response = await provider.generate_plan(planning_request)
-    assert captured["text"]["format"]["type"] == "json_schema"
+    assert captured["response_format"]["type"] == "json_schema"
+    assert captured["response_format"]["json_schema"]["strict"] is True
+    assert captured["provider"] == {"require_parameters": True, "data_collection": "deny"}
+    assert captured["model"] == "openai/test-model"
     assert captured["store"] is False
+    assert captured["stream"] is False
     assert response.total_tokens == 30
     assert response.request_id == "request-safe"
-    assert response.requested_model == "gpt-test"
-    assert response.reported_model == "gpt-test"
+    assert response.requested_model == "openai/test-model"
+    assert response.reported_model == "openai/test-model"
     await provider.close()
     assert client.is_closed
 
@@ -124,14 +126,42 @@ async def test_real_provider_preserves_requested_and_different_reported_model(
     planning_request,
 ) -> None:
     body = response_body()
-    body["model"] = "gpt-test-2026-07-01"
+    body["model"] = "anthropic/reported-model"
     provider, _ = real_provider(
         lambda request: httpx.Response(200, json=body, request=request)
     )
     response = await provider.generate_plan(planning_request)
-    assert response.model == "gpt-test-2026-07-01"
-    assert response.requested_model == "gpt-test"
-    assert response.reported_model == "gpt-test-2026-07-01"
+    assert response.model == "anthropic/reported-model"
+    assert response.requested_model == "openai/test-model"
+    assert response.reported_model == "anthropic/reported-model"
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_openrouter_optional_headers_and_missing_telemetry(planning_request) -> None:
+    captured_headers = {}
+    body = response_body()
+    body.pop("model")
+    body.pop("usage")
+    body.pop("id")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured_headers.update(request.headers)
+        return httpx.Response(200, json=body, request=request)
+
+    provider, _ = real_provider(
+        handler,
+        http_referer="https://orion.example/app",
+        app_title="ORION AI",
+    )
+    response = await provider.generate_plan(planning_request)
+    assert captured_headers["authorization"] == "Bearer test-key-not-real"
+    assert captured_headers["http-referer"] == "https://orion.example/app"
+    assert captured_headers["x-title"] == "ORION AI"
+    assert response.reported_model is None
+    assert response.request_id is None
+    assert response.total_tokens is None
+    assert "test-key-not-real" not in response.model_dump_json()
     await provider.close()
 
 

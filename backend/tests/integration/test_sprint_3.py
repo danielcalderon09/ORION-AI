@@ -2,13 +2,9 @@
 
 import asyncio
 import subprocess
-from pathlib import Path
-from uuid import uuid4
 
 import numpy as np
 import pytest
-
-from backend.src.infrastructure.config.settings import settings
 
 
 class TestPhase1ViralScoreEngine:
@@ -16,8 +12,10 @@ class TestPhase1ViralScoreEngine:
 
     def test_viral_score_composite_calculation(self):
         """ViralScoreEngine produces composite score from multiple factors."""
-        from backend.src.viral_intelligence.viral_score_engine.application.viral_score_agent import ViralScoreEngineAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.viral_intelligence.viral_score_engine.application.viral_score_agent import (
+            ViralScoreEngineAgent,
+        )
 
         engine = ViralScoreEngineAgent()
 
@@ -62,8 +60,10 @@ class TestPhase1ViralScoreEngine:
 
     def test_viral_score_factors_present(self):
         """Viral score includes all 7 factors."""
-        from backend.src.viral_intelligence.viral_score_engine.application.viral_score_agent import ViralScoreEngineAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.viral_intelligence.viral_score_engine.application.viral_score_agent import (
+            ViralScoreEngineAgent,
+        )
 
         engine = ViralScoreEngineAgent()
         result = asyncio.run(engine.execute(AgentInput(
@@ -92,8 +92,10 @@ class TestPhase2HookOptimizer:
 
     def test_hook_optimizer_selects_strategy(self):
         """HookOptimizer selects best strategy for each clip."""
-        from backend.src.viral_intelligence.hook_optimizer.application.hook_optimizer_agent import HookOptimizerAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.viral_intelligence.hook_optimizer.application.hook_optimizer_agent import (
+            HookOptimizerAgent,
+        )
 
         optimizer = HookOptimizerAgent()
 
@@ -128,8 +130,10 @@ class TestPhase2HookOptimizer:
 
     def test_hook_optimizer_limits_shift(self):
         """HookOptimizer does not shift start more than 3 seconds."""
-        from backend.src.viral_intelligence.hook_optimizer.application.hook_optimizer_agent import HookOptimizerAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.viral_intelligence.hook_optimizer.application.hook_optimizer_agent import (
+            HookOptimizerAgent,
+        )
 
         optimizer = HookOptimizerAgent()
 
@@ -158,8 +162,10 @@ class TestPhase3RetentionSimulator:
 
     def test_retention_curve_generated(self):
         """RetentionSimulator generates a curve with points."""
-        from backend.src.viral_intelligence.retention_simulator.application.retention_simulator_agent import RetentionSimulatorAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.viral_intelligence.retention_simulator.application.retention_simulator_agent import (
+            RetentionSimulatorAgent,
+        )
 
         sim = RetentionSimulatorAgent()
 
@@ -194,18 +200,17 @@ class TestPhase3RetentionSimulator:
 
     def test_retention_detects_drops(self):
         """RetentionSimulator detects critical drop points."""
-        from backend.src.viral_intelligence.retention_simulator.application.retention_simulator_agent import RetentionSimulatorAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.viral_intelligence.retention_simulator.application.retention_simulator_agent import (
+            RetentionSimulatorAgent,
+        )
 
         sim = RetentionSimulatorAgent()
 
         # Create a timeline with a sudden attention drop
         timeline = []
         for t in range(60):
-            if t < 30:
-                score = 0.8
-            else:
-                score = 0.2  # sudden drop
+            score = 0.8 if t < 30 else 0.2  # sudden drop
             timeline.append({"time": float(t), "attention_score": score})
 
         context = {
@@ -235,8 +240,10 @@ class TestPhase4AudienceAndCreativeDirector:
 
     def test_audience_model_generates_platform_brief(self):
         """AudienceDirector generates platform-specific briefs."""
-        from backend.src.viral_intelligence.audience_director.application.audience_director_agent import AudienceDirectorAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.viral_intelligence.audience_director.application.audience_director_agent import (
+            AudienceDirectorAgent,
+        )
 
         director = AudienceDirectorAgent()
 
@@ -265,8 +272,10 @@ class TestPhase4AudienceAndCreativeDirector:
 
     def test_creative_director_optimizes_for_viral(self):
         """CreativeDirector selects clips based on viral score."""
-        from backend.src.viral_intelligence.creative_director_ai.application.creative_director_agent import CreativeDirectorAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.viral_intelligence.creative_director_ai.application.creative_director_agent import (
+            CreativeDirectorAgent,
+        )
 
         cd = CreativeDirectorAgent()
 
@@ -310,7 +319,9 @@ class TestPhase4AudienceAndCreativeDirector:
 
     def test_platform_specific_clip_count(self):
         """Different platforms recommend different clip counts."""
-        from backend.src.viral_intelligence.audience_model.infrastructure.default_audience_model import DefaultAudienceModel
+        from backend.src.viral_intelligence.audience_model.infrastructure.default_audience_model import (
+            DefaultAudienceModel,
+        )
 
         model = DefaultAudienceModel()
         tiktok_count = model.recommend_clip_count(120, "tiktok")
@@ -328,31 +339,53 @@ class TestSprint3Integration:
     @pytest.mark.asyncio
     async def test_sprint3_orchestrator_runs(self, tmp_path):
         """Sprint 3 orchestrator processes video end-to-end."""
-        from backend.src.core.domain.entities.video_project import VideoProject
-        from backend.src.core.application.services.sprint3_orchestrator import Sprint3Orchestrator
-        from backend.src.infrastructure.media.ffmpeg_adapter import FFmpegMediaAdapter
-        from backend.src.infrastructure.learning.feature_store import FileSystemFeatureStore
-        from backend.src.infrastructure.telemetry.telemetry_service import TelemetryService
-        from backend.src.infrastructure.benchmark.benchmark_suite import BenchmarkSuite
-        from backend.src.infrastructure.messaging.event_bus import EventBus
-
-        from backend.src.agents.vision_agent.application.extract_visual_features import VisionAgent
-        from backend.src.agents.audio_agent.application.extract_audio_features import AudioAgent
-        from backend.src.agents.speech_agent.application.transcribe_speech import SpeechAgent
-        from backend.src.agents.attention_agent.application.estimate_attention import AttentionAgent
-        from backend.src.agents.narrative_intelligence_agent.application.analyze_narrative import NarrativeIntelligenceAgent
+        from backend.src.agents.attention_agent.application.estimate_attention import (
+            AttentionAgent,
+            DummyAttentionProvider,
+        )
+        from backend.src.agents.audio_agent.application.extract_audio_features import (
+            AudioAgent,
+            DummyAudioProvider,
+        )
         from backend.src.agents.dop_agent.application.dop_service import DoPAgent
         from backend.src.agents.exporter_agent.application.export_clip import ExporterAgent
+        from backend.src.agents.narrative_intelligence_agent.application.analyze_narrative import (
+            NarrativeIntelligenceAgent,
+        )
         from backend.src.agents.qa_agent.application.qa_service import QAAgent
-
-        from backend.src.cognition.video_understanding.application.video_understanding_agent import VideoUnderstandingAgent
-        from backend.src.cognition.video_understanding.i_video_understanding_provider import DummyVideoUnderstandingProvider
-
-        from backend.src.viral_intelligence.viral_score_engine.application.viral_score_agent import ViralScoreEngineAgent
-        from backend.src.viral_intelligence.hook_optimizer.application.hook_optimizer_agent import HookOptimizerAgent
-        from backend.src.viral_intelligence.retention_simulator.application.retention_simulator_agent import RetentionSimulatorAgent
-        from backend.src.viral_intelligence.audience_director.application.audience_director_agent import AudienceDirectorAgent
-        from backend.src.viral_intelligence.creative_director_ai.application.creative_director_agent import CreativeDirectorAgent
+        from backend.src.agents.speech_agent.application.transcribe_speech import (
+            DummySpeechProvider,
+            SpeechAgent,
+        )
+        from backend.src.agents.vision_agent.application.extract_visual_features import VisionAgent
+        from backend.src.cognition.video_understanding.application.video_understanding_agent import (
+            VideoUnderstandingAgent,
+        )
+        from backend.src.cognition.video_understanding.i_video_understanding_provider import (
+            DummyVideoUnderstandingProvider,
+        )
+        from backend.src.core.application.services.sprint3_orchestrator import Sprint3Orchestrator
+        from backend.src.core.domain.entities.video_project import VideoProject
+        from backend.src.infrastructure.benchmark.benchmark_suite import BenchmarkSuite
+        from backend.src.infrastructure.learning.feature_store import FileSystemFeatureStore
+        from backend.src.infrastructure.media.ffmpeg_adapter import FFmpegMediaAdapter
+        from backend.src.infrastructure.messaging.event_bus import EventBus
+        from backend.src.infrastructure.telemetry.telemetry_service import TelemetryService
+        from backend.src.viral_intelligence.audience_director.application.audience_director_agent import (
+            AudienceDirectorAgent,
+        )
+        from backend.src.viral_intelligence.creative_director_ai.application.creative_director_agent import (
+            CreativeDirectorAgent,
+        )
+        from backend.src.viral_intelligence.hook_optimizer.application.hook_optimizer_agent import (
+            HookOptimizerAgent,
+        )
+        from backend.src.viral_intelligence.retention_simulator.application.retention_simulator_agent import (
+            RetentionSimulatorAgent,
+        )
+        from backend.src.viral_intelligence.viral_score_engine.application.viral_score_agent import (
+            ViralScoreEngineAgent,
+        )
 
         # Create test video
         video_path = tmp_path / "test.mp4"
@@ -373,9 +406,9 @@ class TestSprint3Integration:
             telemetry=TelemetryService(),
             benchmark=BenchmarkSuite(),
             vision_agent=VisionAgent(media),
-            audio_agent=AudioAgent(media),
-            speech_agent=SpeechAgent(),
-            attention_agent=AttentionAgent(),
+            audio_agent=AudioAgent(media, DummyAudioProvider()),
+            speech_agent=SpeechAgent(DummySpeechProvider()),
+            attention_agent=AttentionAgent(DummyAttentionProvider()),
             narrative_agent=NarrativeIntelligenceAgent(),
             video_understanding_agent=vu_agent,
             viral_score_agent=ViralScoreEngineAgent(),

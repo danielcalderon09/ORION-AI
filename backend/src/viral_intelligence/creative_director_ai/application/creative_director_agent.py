@@ -1,7 +1,6 @@
 """Creative Director AI — optimizes clips for engagement and shareability."""
 
 from dataclasses import dataclass
-from typing import Any
 from uuid import uuid4
 
 from backend.src.agents.base.i_agent import AgentCapability, AgentInput, AgentResult, IAgent
@@ -80,7 +79,6 @@ class CreativeDirectorAgent(IAgent):
         )
 
     def _generate_creative_brief(self, context: dict) -> dict:
-        viral = context.get("viral_score_map", {})
         genre = context.get("video_understanding", {}).get("genre", "general")
         audience = context.get("creative_constraints", {})
 
@@ -156,13 +154,12 @@ class CreativeDirectorAgent(IAgent):
             if self.config.auto_trim_drops and retention:
                 # Find retention curve for this time range and trim at critical drop
                 for rc in retention:
-                    if abs(rc["clip_id"], f"clip_{t:.1f}") or True:  # simplified matching
-                        drops = rc.get("critical_drop_points", [])
-                        for drop in drops:
-                            if hook_start < drop < end:
-                                end = drop - 0.5  # cut just before drop
-                                break
-                        break
+                    drops = rc.get("critical_drop_points", [])
+                    for drop in drops:
+                        if hook_start < drop < end:
+                            end = drop - 0.5  # cut just before drop
+                            break
+                    break
 
             clip = {
                 "clip_id": str(uuid4()),

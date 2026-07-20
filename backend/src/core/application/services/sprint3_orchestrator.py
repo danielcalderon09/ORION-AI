@@ -1,33 +1,45 @@
 """Sprint 3 Orchestrator with Viral Intelligence layer."""
 
-import asyncio
 from pathlib import Path
 
+from backend.src.agents.attention_agent.application.estimate_attention import AttentionAgent
+from backend.src.agents.audio_agent.application.extract_audio_features import AudioAgent
+from backend.src.agents.base.i_agent import AgentInput
+from backend.src.agents.dop_agent.application.dop_service import DoPAgent
+from backend.src.agents.exporter_agent.application.export_clip import ExporterAgent
+from backend.src.agents.narrative_intelligence_agent.application.analyze_narrative import (
+    NarrativeIntelligenceAgent,
+)
+from backend.src.agents.qa_agent.application.qa_service import QAAgent
+from backend.src.agents.speech_agent.application.transcribe_speech import SpeechAgent
+from backend.src.agents.vision_agent.application.extract_visual_features import VisionAgent
+from backend.src.cognition.event_graph.infrastructure.networkx_event_graph import NetworkXEventGraph
+from backend.src.cognition.video_understanding.application.video_understanding_agent import (
+    VideoUnderstandingAgent,
+)
 from backend.src.core.domain.entities.video_project import ProjectStatus, VideoClip, VideoProject
+from backend.src.infrastructure.benchmark.benchmark_suite import BenchmarkSuite
 from backend.src.infrastructure.config.settings import settings
 from backend.src.infrastructure.messaging.event_bus import EventBus
 from backend.src.infrastructure.telemetry.telemetry_service import TelemetryService
-from backend.src.infrastructure.benchmark.benchmark_suite import BenchmarkSuite
-from backend.src.agents.base.i_agent import AgentInput
-
-from backend.src.agents.vision_agent.application.extract_visual_features import VisionAgent
-from backend.src.agents.audio_agent.application.extract_audio_features import AudioAgent
-from backend.src.agents.speech_agent.application.transcribe_speech import SpeechAgent
-from backend.src.agents.attention_agent.application.estimate_attention import AttentionAgent
-from backend.src.agents.narrative_intelligence_agent.application.analyze_narrative import NarrativeIntelligenceAgent
-from backend.src.agents.dop_agent.application.dop_service import DoPAgent
-from backend.src.agents.exporter_agent.application.export_clip import ExporterAgent
-from backend.src.agents.qa_agent.application.qa_service import QAAgent
-
-from backend.src.cognition.video_understanding.application.video_understanding_agent import VideoUnderstandingAgent
-from backend.src.cognition.event_graph.infrastructure.networkx_event_graph import NetworkXEventGraph
-from backend.src.production.explainability.infrastructure.explainability_engine import ExplainabilityEngine
-
-from backend.src.viral_intelligence.viral_score_engine.application.viral_score_agent import ViralScoreEngineAgent
-from backend.src.viral_intelligence.hook_optimizer.application.hook_optimizer_agent import HookOptimizerAgent
-from backend.src.viral_intelligence.retention_simulator.application.retention_simulator_agent import RetentionSimulatorAgent
-from backend.src.viral_intelligence.audience_director.application.audience_director_agent import AudienceDirectorAgent
-from backend.src.viral_intelligence.creative_director_ai.application.creative_director_agent import CreativeDirectorAgent
+from backend.src.production.explainability.infrastructure.explainability_engine import (
+    ExplainabilityEngine,
+)
+from backend.src.viral_intelligence.audience_director.application.audience_director_agent import (
+    AudienceDirectorAgent,
+)
+from backend.src.viral_intelligence.creative_director_ai.application.creative_director_agent import (
+    CreativeDirectorAgent,
+)
+from backend.src.viral_intelligence.hook_optimizer.application.hook_optimizer_agent import (
+    HookOptimizerAgent,
+)
+from backend.src.viral_intelligence.retention_simulator.application.retention_simulator_agent import (
+    RetentionSimulatorAgent,
+)
+from backend.src.viral_intelligence.viral_score_engine.application.viral_score_agent import (
+    ViralScoreEngineAgent,
+)
 
 
 class Sprint3Orchestrator:
@@ -98,21 +110,36 @@ class Sprint3Orchestrator:
             speech = await self._run("speech", project, video_path, stages)
 
             # Cognition stages
-            vu = await self._run_with_context("video_understanding", project, {"vision": vision, "audio": audio, "speech": speech}, stages)
-            attention = await self._run_with_context("attention", project, {"vision": vision, "audio": audio, "speech": speech}, stages)
-            narrative = await self._run_with_context("narrative", project, {"vision": vision, "audio": audio, "attention": attention}, stages)
+            base_features = {
+                "vision_features": vision.features,
+                "audio_features": audio.features,
+                "speech_features": speech.features,
+            }
+            vu = await self._run_with_context("video_understanding", project, base_features, stages)
+            attention = await self._run_with_context("attention", project, base_features, stages)
+            narrative = await self._run_with_context("narrative", project, {
+                "vision_features": vision.features,
+                "audio_features": audio.features,
+                "attention_features": attention.features,
+            }, stages)
 
             # Populate event graph
             self._populate_event_graph(vision, audio, attention, narrative)
 
             # Sprint 3: Viral Intelligence layer
             viral = await self._run_with_context("viral_score", project, {
-                "vision": vision, "audio": audio, "speech": speech, "attention": attention, "narrative": narrative
+                **base_features,
+                "attention_features": attention.features,
+                "narrative_features": narrative.features,
             }, stages)
 
             # Audience Director generates platform-specific constraints
             audience = await self._run_with_context("audience_director", project, {
-                "content_features": {"vision": vision, "audio": audio, "viral": viral},
+                "content_features": {
+                    "vision_features": vision.features,
+                    "audio_features": audio.features,
+                    "viral_score_map": viral.features.get("viral_score_map", {}),
+                },
                 "target_platform": platform,
             }, stages)
             creative_constraints = audience.features.get("creative_constraints", {})
@@ -120,21 +147,30 @@ class Sprint3Orchestrator:
             # Hook Optimizer
             hooks = await self._run_with_context("hook_optimizer", project, {
                 "selected_clips": [],  # will be refined by creative director
-                "features": {"vision": vision, "audio": audio, "attention": attention},
+                "features": {
+                    "vision_features": vision.features,
+                    "audio_features": audio.features,
+                    "attention_features": attention.features,
+                },
             }, stages)
 
             # Retention Simulator
             retention = await self._run_with_context("retention_simulator", project, {
                 "selected_clips": [],
-                "features": {"vision": vision, "audio": audio, "attention": attention},
+                "features": {
+                    "vision_features": vision.features,
+                    "audio_features": audio.features,
+                    "attention_features": attention.features,
+                },
                 "target_platform": platform,
             }, stages)
 
             # Creative Director (Viral Optimized)
             creative = await self._run_with_context("creative_director", project, {
-                "attention": attention,
-                "narrative": narrative,
-                "speech": speech,
+                "attention_features": attention.features,
+                "narrative_features": narrative.features,
+                "speech_features": speech.features,
+                "vision_features": vision.features,
                 "viral_score_map": viral.features.get("viral_score_map", {}),
                 "retention_curves": retention.features.get("retention_curves", []),
                 "optimized_hooks": hooks.features.get("optimized_hooks", []),
@@ -147,21 +183,30 @@ class Sprint3Orchestrator:
             selected_clips = creative.features.get("selected_clips", [])
             hooks_final = await self._run_with_context("hook_optimizer", project, {
                 "selected_clips": selected_clips,
-                "features": {"vision": vision, "audio": audio, "attention": attention},
+                "features": {
+                    "vision_features": vision.features,
+                    "audio_features": audio.features,
+                    "attention_features": attention.features,
+                },
             }, stages)
 
             # Re-run retention simulator with actual clips
             retention_final = await self._run_with_context("retention_simulator", project, {
                 "selected_clips": selected_clips,
-                "features": {"vision": vision, "audio": audio, "attention": attention},
+                "features": {
+                    "vision_features": vision.features,
+                    "audio_features": audio.features,
+                    "attention_features": attention.features,
+                },
                 "target_platform": platform,
             }, stages)
 
             # Update creative director with final hooks and retention
             creative_final = await self._run_with_context("creative_director", project, {
-                "attention": attention,
-                "narrative": narrative,
-                "speech": speech,
+                "attention_features": attention.features,
+                "narrative_features": narrative.features,
+                "speech_features": speech.features,
+                "vision_features": vision.features,
                 "viral_score_map": viral.features.get("viral_score_map", {}),
                 "retention_curves": retention_final.features.get("retention_curves", []),
                 "optimized_hooks": hooks_final.features.get("optimized_hooks", []),
@@ -171,7 +216,10 @@ class Sprint3Orchestrator:
             }, stages)
 
             # DoP and Export
-            dop = await self._run_with_context("dop", project, {"vision": vision, "edit_decisions": creative_final.features.get("edit_decisions", [])}, stages)
+            dop = await self._run_with_context("dop", project, {
+                "vision_features": vision.features,
+                "edit_decisions": creative_final.features.get("edit_decisions", []),
+            }, stages)
             exports = await self._run_export(project, video_path, creative_final, dop)
 
             # Explanations

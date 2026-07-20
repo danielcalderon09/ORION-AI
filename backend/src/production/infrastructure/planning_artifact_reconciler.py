@@ -5,6 +5,7 @@ import errno
 import logging
 import os
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from uuid import UUID
@@ -19,6 +20,20 @@ from backend.src.production.planning.reconciliation import (
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class JsonArtifactReconciliationPolicy:
+    stage: str
+    filename: str
+
+
+PLANNING_POLICY = JsonArtifactReconciliationPolicy(
+    stage="planning", filename="production-plan.json"
+)
+SCRIPTING_POLICY = JsonArtifactReconciliationPolicy(
+    stage="scripting", filename="production-script.json"
+)
+
+
 class LocalPlanningArtifactReconciler:
     """Quarantine or delete old, unregistered planning artifacts only."""
 
@@ -31,6 +46,7 @@ class LocalPlanningArtifactReconciler:
         action: str = "quarantine",
         quarantine_relative_path: str = "production-quarantine",
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        policies: tuple[JsonArtifactReconciliationPolicy, ...] = (PLANNING_POLICY,),
     ) -> None:
         if minimum_age_seconds < 0:
             raise ValueError("planning orphan minimum age cannot be negative")
@@ -47,6 +63,9 @@ class LocalPlanningArtifactReconciler:
         if "\\" in self._quarantine_relative:
             raise ValueError("planning quarantine path must use POSIX separators")
         self._clock = clock
+        if not policies:
+            raise ValueError("artifact reconciliation policies must not be empty")
+        self._policies = policies
 
     async def reconcile(self) -> PlanningArtifactReconciliationReport:
         return await asyncio.to_thread(self._reconcile_sync)
@@ -92,7 +111,7 @@ class LocalPlanningArtifactReconciler:
                         safe_directories.append(name)
                 directory_names[:] = safe_directories
                 for name in sorted(file_names):
-                    if name != "production-plan.json":
+                    if name not in {policy.filename for policy in self._policies}:
                         continue
                     candidate = current / name
                     counts["scanned"] += 1
@@ -142,7 +161,7 @@ class LocalPlanningArtifactReconciler:
         resolved.relative_to(production_root.resolve())
         relative = candidate.relative_to(self._root)
         relative_posix = PurePosixPath(*relative.parts).as_posix()
-        if not _is_planning_artifact_path(relative):
+        if not _is_contractual_artifact_path(relative, self._policies):
             return
         if relative_posix in registered:
             counts["registered"] += 1
@@ -175,21 +194,51 @@ class LocalPlanningArtifactReconciler:
         return destination
 
 
-def _is_planning_artifact_path(relative: Path) -> bool:
+def _is_contractual_artifact_path(
+    relative: Path,
+    policies: tuple[JsonArtifactReconciliationPolicy, ...],
+) -> bool:
     parts = relative.parts
     if len(parts) != 5:
         return False
-    if parts[0] != "production" or parts[2] != "planning":
+    if parts[0] != "production":
         return False
     if not parts[3].startswith("attempt-") or not parts[3][8:].isdigit():
         return False
-    if int(parts[3][8:]) < 1 or parts[4] != "production-plan.json":
+    if int(parts[3][8:]) < 1:
         return False
     try:
         UUID(parts[1])
     except ValueError:
         return False
-    return True
+    return any(
+        parts[2] == policy.stage and parts[4] == policy.filename
+        for policy in policies
+    )
+
+
+class LocalProductionArtifactReconciler(LocalPlanningArtifactReconciler):
+    """Conservative reconciler for the two durable JSON stage artifacts."""
+
+    def __init__(
+        self,
+        *,
+        workspace_root: Path,
+        registered_reader: RegisteredPlanningArtifactReader,
+        minimum_age_seconds: float = 300,
+        action: str = "quarantine",
+        quarantine_relative_path: str = "production-quarantine",
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        super().__init__(
+            workspace_root=workspace_root,
+            registered_reader=registered_reader,
+            minimum_age_seconds=minimum_age_seconds,
+            action=action,
+            quarantine_relative_path=quarantine_relative_path,
+            clock=clock,
+            policies=(PLANNING_POLICY, SCRIPTING_POLICY),
+        )
 
 
 def _reject_symlink_path(root: Path, target: Path) -> None:

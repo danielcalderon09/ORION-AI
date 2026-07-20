@@ -2,13 +2,9 @@
 
 import asyncio
 import subprocess
-from pathlib import Path
 from uuid import uuid4
 
-import numpy as np
 import pytest
-
-from backend.src.infrastructure.config.settings import settings
 
 
 class TestPhase1MultimodalIntegration:
@@ -16,8 +12,13 @@ class TestPhase1MultimodalIntegration:
 
     def test_semantic_memory_store_and_retrieve(self, tmp_path):
         """Semantic Memory can store and retrieve concepts with embeddings."""
-        from backend.src.learning.semantic_memory.infrastructure.faiss_semantic_memory import FaissSemanticMemory
-        from backend.src.learning.semantic_memory.domain.semantic_concept import SemanticConcept, EmbeddingVector
+        from backend.src.learning.semantic_memory.domain.semantic_concept import (
+            EmbeddingVector,
+            SemanticConcept,
+        )
+        from backend.src.learning.semantic_memory.infrastructure.faiss_semantic_memory import (
+            FaissSemanticMemory,
+        )
 
         memory = FaissSemanticMemory(tmp_path)
         concept = SemanticConcept(
@@ -44,11 +45,16 @@ class TestPhase1MultimodalIntegration:
 
     def test_semantic_memory_embedding_search(self, tmp_path):
         """Semantic Memory can search by embedding similarity."""
-        from backend.src.learning.semantic_memory.infrastructure.faiss_semantic_memory import FaissSemanticMemory
-        from backend.src.learning.semantic_memory.domain.semantic_concept import SemanticConcept, EmbeddingVector
+        from backend.src.learning.semantic_memory.domain.semantic_concept import (
+            EmbeddingVector,
+            SemanticConcept,
+        )
+        from backend.src.learning.semantic_memory.infrastructure.faiss_semantic_memory import (
+            FaissSemanticMemory,
+        )
 
         memory = FaissSemanticMemory(tmp_path)
-        
+
         # Store two concepts
         for i, vec in enumerate([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]):
             concept = SemanticConcept(
@@ -75,9 +81,13 @@ class TestPhase1MultimodalIntegration:
 
     def test_video_understanding_agent_returns_genre(self):
         """VideoUnderstandingAgent returns genre classification."""
-        from backend.src.cognition.video_understanding.application.video_understanding_agent import VideoUnderstandingAgent
-        from backend.src.cognition.video_understanding.i_video_understanding_provider import DummyVideoUnderstandingProvider
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.cognition.video_understanding.application.video_understanding_agent import (
+            VideoUnderstandingAgent,
+        )
+        from backend.src.cognition.video_understanding.i_video_understanding_provider import (
+            DummyVideoUnderstandingProvider,
+        )
 
         provider = DummyVideoUnderstandingProvider()
         agent = VideoUnderstandingAgent(provider)
@@ -98,7 +108,9 @@ class TestPhase1MultimodalIntegration:
 
     def test_clip_provider_genre_classification(self):
         """CLIP provider classifies genres correctly."""
-        from backend.src.cognition.video_understanding.infrastructure.clip_provider import CLIPUnderstandingProvider
+        from backend.src.cognition.video_understanding.infrastructure.clip_provider import (
+            CLIPUnderstandingProvider,
+        )
 
         provider = CLIPUnderstandingProvider()
 
@@ -118,7 +130,9 @@ class TestPhase2TemporalTracking:
 
     def test_temporal_identity_tracked(self, tmp_path):
         """Temporal tracker assigns persistent identities."""
-        from backend.src.cognition.temporal_tracking.domain.temporal_identity import TemporalIdentity
+        from backend.src.cognition.temporal_tracking.domain.temporal_identity import (
+            TemporalIdentity,
+        )
 
         identity = TemporalIdentity(
             identity_id="person_01",
@@ -142,8 +156,10 @@ class TestPhase3EventGraph:
 
     def test_event_graph_causal_query(self):
         """Event graph supports causal queries."""
-        from backend.src.cognition.event_graph.infrastructure.networkx_event_graph import NetworkXEventGraph
-        from backend.src.cognition.event_graph.domain.event_node import EventNode, CausalEdge
+        from backend.src.cognition.event_graph.domain.event_node import CausalEdge, EventNode
+        from backend.src.cognition.event_graph.infrastructure.networkx_event_graph import (
+            NetworkXEventGraph,
+        )
 
         graph = NetworkXEventGraph()
 
@@ -193,8 +209,10 @@ class TestPhase3EventGraph:
 
     def test_event_graph_temporal_sequence(self):
         """Event graph returns temporal sequences."""
-        from backend.src.cognition.event_graph.infrastructure.networkx_event_graph import NetworkXEventGraph
         from backend.src.cognition.event_graph.domain.event_node import EventNode
+        from backend.src.cognition.event_graph.infrastructure.networkx_event_graph import (
+            NetworkXEventGraph,
+        )
 
         graph = NetworkXEventGraph()
         for i in range(5):
@@ -217,9 +235,12 @@ class TestPhase3EventGraph:
 
     def test_event_graph_persistence(self, tmp_path):
         """Event graph persists and loads correctly."""
-        from backend.src.cognition.event_graph.infrastructure.networkx_event_graph import NetworkXEventGraph
-        from backend.src.cognition.event_graph.domain.event_node import EventNode
         from uuid import uuid4
+
+        from backend.src.cognition.event_graph.domain.event_node import EventNode
+        from backend.src.cognition.event_graph.infrastructure.networkx_event_graph import (
+            NetworkXEventGraph,
+        )
 
         project_id = uuid4()
         graph = NetworkXEventGraph()
@@ -251,7 +272,9 @@ class TestPhase4Explainability:
 
     def test_explainability_generates_factors(self):
         """Explainability engine generates factors for a decision."""
-        from backend.src.production.explainability.infrastructure.explainability_engine import ExplainabilityEngine
+        from backend.src.production.explainability.infrastructure.explainability_engine import (
+            ExplainabilityEngine,
+        )
 
         engine = ExplainabilityEngine()
         clip_data = {
@@ -286,9 +309,15 @@ class TestPhase4Explainability:
 
     def test_explanation_html_export(self, tmp_path):
         """Explainability exports HTML report."""
-        from backend.src.production.explainability.infrastructure.explainability_engine import ExplainabilityEngine
-        from backend.src.production.explainability.domain.explanation import DecisionExplanation, ExplanationFactor
         from uuid import uuid4
+
+        from backend.src.production.explainability.domain.explanation import (
+            DecisionExplanation,
+            ExplanationFactor,
+        )
+        from backend.src.production.explainability.infrastructure.explainability_engine import (
+            ExplainabilityEngine,
+        )
 
         engine = ExplainabilityEngine()
         explanation = DecisionExplanation(
@@ -322,8 +351,8 @@ class TestPhase4Explainability:
 
     def test_director_agent_confidence_with_explainability(self):
         """DirectorAgent clips include confidence usable by explainability."""
-        from backend.src.agents.director_agent.application.director_service import DirectorAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.agents.director_agent.application.director_service import DirectorAgent
 
         director = DirectorAgent()
 
@@ -370,26 +399,42 @@ class TestSprint2Orchestrator:
     @pytest.mark.asyncio
     async def test_sprint2_orchestrator_runs_full_pipeline(self, tmp_path):
         """Sprint 2 orchestrator runs complete pipeline with all phases."""
-        from backend.src.core.domain.entities.video_project import VideoProject
-        from backend.src.core.application.services.sprint2_orchestrator import Sprint2OrchestrationService
-        from backend.src.infrastructure.media.ffmpeg_adapter import FFmpegMediaAdapter
-        from backend.src.infrastructure.learning.feature_store import FileSystemFeatureStore
-        from backend.src.infrastructure.cognition.knowledge_graph_impl import InMemoryKnowledgeGraph
-        from backend.src.infrastructure.messaging.event_bus import EventBus
-        from backend.src.infrastructure.telemetry.telemetry_service import TelemetryService
-        from backend.src.infrastructure.benchmark.benchmark_suite import BenchmarkSuite
-
-        from backend.src.agents.vision_agent.application.extract_visual_features import VisionAgent
-        from backend.src.agents.audio_agent.application.extract_audio_features import AudioAgent
-        from backend.src.agents.speech_agent.application.transcribe_speech import SpeechAgent
-        from backend.src.agents.attention_agent.application.estimate_attention import AttentionAgent
-        from backend.src.agents.narrative_intelligence_agent.application.analyze_narrative import NarrativeIntelligenceAgent
+        from backend.src.agents.attention_agent.application.estimate_attention import (
+            AttentionAgent,
+            DummyAttentionProvider,
+        )
+        from backend.src.agents.audio_agent.application.extract_audio_features import (
+            AudioAgent,
+            DummyAudioProvider,
+        )
         from backend.src.agents.director_agent.application.director_service import DirectorAgent
         from backend.src.agents.dop_agent.application.dop_service import DoPAgent
         from backend.src.agents.exporter_agent.application.export_clip import ExporterAgent
+        from backend.src.agents.narrative_intelligence_agent.application.analyze_narrative import (
+            NarrativeIntelligenceAgent,
+        )
         from backend.src.agents.qa_agent.application.qa_service import QAAgent
-        from backend.src.cognition.video_understanding.application.video_understanding_agent import VideoUnderstandingAgent
-        from backend.src.cognition.video_understanding.i_video_understanding_provider import DummyVideoUnderstandingProvider
+        from backend.src.agents.speech_agent.application.transcribe_speech import (
+            DummySpeechProvider,
+            SpeechAgent,
+        )
+        from backend.src.agents.vision_agent.application.extract_visual_features import VisionAgent
+        from backend.src.cognition.video_understanding.application.video_understanding_agent import (
+            VideoUnderstandingAgent,
+        )
+        from backend.src.cognition.video_understanding.i_video_understanding_provider import (
+            DummyVideoUnderstandingProvider,
+        )
+        from backend.src.core.application.services.sprint2_orchestrator import (
+            Sprint2OrchestrationService,
+        )
+        from backend.src.core.domain.entities.video_project import VideoProject
+        from backend.src.infrastructure.benchmark.benchmark_suite import BenchmarkSuite
+        from backend.src.infrastructure.cognition.knowledge_graph_impl import InMemoryKnowledgeGraph
+        from backend.src.infrastructure.learning.feature_store import FileSystemFeatureStore
+        from backend.src.infrastructure.media.ffmpeg_adapter import FFmpegMediaAdapter
+        from backend.src.infrastructure.messaging.event_bus import EventBus
+        from backend.src.infrastructure.telemetry.telemetry_service import TelemetryService
 
         # Create test video
         video_path = tmp_path / "test.mp4"
@@ -410,9 +455,9 @@ class TestSprint2Orchestrator:
             telemetry=TelemetryService(),
             benchmark=BenchmarkSuite(),
             vision_agent=VisionAgent(media),
-            audio_agent=AudioAgent(media),
-            speech_agent=SpeechAgent(),
-            attention_agent=AttentionAgent(),
+            audio_agent=AudioAgent(media, DummyAudioProvider()),
+            speech_agent=SpeechAgent(DummySpeechProvider()),
+            attention_agent=AttentionAgent(DummyAttentionProvider()),
             narrative_agent=NarrativeIntelligenceAgent(),
             director_agent=DirectorAgent(),
             dop_agent=DoPAgent(),

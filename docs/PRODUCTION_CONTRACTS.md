@@ -20,6 +20,16 @@ Este documento describe los contratos introducidos en la Fase 1. Son estructuras
 La Fase 1.5 incorpora contratos de ejecución y un coordinador de decisiones puro. Tampoco publica
 eventos ni ejecuta capacidades externas.
 
+## Contratos ejecutables de SCRIPTING (Fase 5B)
+
+`production.scripting.ProductionScript` es independiente de `ProductionPlan`. Sus
+`ProductionScriptScene` consecutivas referencian exactamente una escena origen, en el mismo
+orden, idioma y duracion. `ReadProductionPlan`, `ScriptingConfiguration` y los contratos del
+provider no contienen ORM, cliente HTTP, headers, keys ni paths absolutos.
+
+`ArtifactType.PRODUCTION_SCRIPT` es aditivo. La columna SQL almacena strings, no un enum
+nativo, por lo que Fase 5B no requiere migracion.
+
 ## Principios
 
 - El dominio es importable sin FastAPI, OpenCV, FFmpeg, DaVinci o acceso a IO.

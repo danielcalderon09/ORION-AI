@@ -4,7 +4,18 @@ import json
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
-SENSITIVE_PARTS = ("api_key", "credential", "password", "secret", "token")
+SENSITIVE_PARTS = (
+    "api_key",
+    "authorization",
+    "credential",
+    "http_referer",
+    "password",
+    "secret",
+    "token",
+    "x-openrouter-title",
+    "x_title",
+)
+SAFE_TOKEN_COUNT_KEYS = frozenset({"input_tokens", "output_tokens", "total_tokens"})
 
 
 class UnsafeProductionDataError(ValueError):
@@ -17,7 +28,7 @@ def validate_safe_json(value: Any, *, path: str = "root") -> Any:
         result: dict[str, Any] = {}
         for key, child in value.items():
             normalized = str(key).lower()
-            if any(part in normalized for part in SENSITIVE_PARTS):
+            if _is_sensitive_key(normalized):
                 raise UnsafeProductionDataError(f"sensitive key is not allowed: {path}.{key}")
             result[str(key)] = validate_safe_json(child, path=f"{path}.{key}")
         return result
@@ -35,10 +46,16 @@ def sanitize_public_json(value: Any) -> Any:
     if isinstance(value, dict):
         return {
             str(key): "[REDACTED]"
-            if any(part in str(key).lower() for part in SENSITIVE_PARTS)
+            if _is_sensitive_key(str(key).lower())
             else sanitize_public_json(child)
             for key, child in sorted(value.items(), key=lambda item: str(item[0]))
         }
     if isinstance(value, list):
         return [sanitize_public_json(item) for item in value]
     return value
+
+
+def _is_sensitive_key(normalized: str) -> bool:
+    return normalized not in SAFE_TOKEN_COUNT_KEYS and any(
+        part in normalized for part in SENSITIVE_PARTS
+    )

@@ -5,22 +5,25 @@ from pathlib import Path
 from typing import Protocol
 
 from backend.src.agents.base.i_agent import AgentCapability, AgentInput, AgentResult, IAgent
-from backend.src.infrastructure.media.ffmpeg_adapter import FFmpegMediaAdapter
 from backend.src.infrastructure.config.settings import settings
+from backend.src.infrastructure.media.ffmpeg_adapter import FFmpegMediaAdapter
 
 
 class IObjectDetectionProvider(Protocol):
     """Provider for object detection models."""
+
     async def detect(self, frame) -> list[dict]: ...
 
 
 class ISceneDetectionProvider(Protocol):
     """Provider for scene change detection."""
+
     async def detect_scenes(self, video_path: Path) -> list[dict]: ...
 
 
 class IVisualFeatureProvider(Protocol):
     """Provider for general visual feature extraction."""
+
     async def extract_features(self, frame) -> dict: ...
 
 
@@ -34,6 +37,7 @@ class VisionAgentConfig:
 
 class DummyObjectDetectionProvider:
     """Placeholder provider for testing."""
+
     async def detect(self, frame) -> list[dict]:
         return []
 
@@ -43,7 +47,6 @@ class OpenCVSceneDetectionProvider:
 
     async def detect_scenes(self, video_path: Path) -> list[dict]:
         import cv2
-        import numpy as np
 
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
@@ -67,11 +70,13 @@ class OpenCVSceneDetectionProvider:
                 diff = cv2.compareHist(prev_hist, hist, cv2.HISTCMP_BHATTACHARYYA)
                 if diff > settings.SCENE_CHANGE_THRESHOLD:
                     timestamp = frame_idx / fps
-                    scenes.append({
-                        "frame": frame_idx,
-                        "timestamp": timestamp,
-                        "score": float(diff),
-                    })
+                    scenes.append(
+                        {
+                            "frame": frame_idx,
+                            "timestamp": timestamp,
+                            "score": float(diff),
+                        }
+                    )
 
             prev_hist = hist
             frame_idx += 1
@@ -117,15 +122,20 @@ class VisionAgent(IAgent):
 
         # Extract frames metadata
         import cv2
+
         cap = cv2.VideoCapture(str(video_path))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         duration = total_frames / fps if fps else 0
         cap.release()
 
         features["video_info"] = {
             "total_frames": total_frames,
             "fps": fps,
+            "width": width,
+            "height": height,
             "duration_seconds": duration,
             "extracted_fps": self.config.fps,
         }

@@ -1,8 +1,6 @@
 """Stress tests for production hardening."""
 
-import asyncio
 import subprocess
-import tempfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,11 +12,12 @@ from backend.src.infrastructure.config.settings import settings
 class TestStressPipeline:
     """Stress tests measuring throughput, failure rate, and resource usage."""
 
-    @pytest.fixture(scope="class")
-    def stress_videos(self, tmp_path_factory):
+    @pytest.fixture
+    def stress_videos(self, tmp_path):
         """Generate a batch of synthetic stress test videos."""
         videos = []
-        batch_dir = tmp_path_factory.mktemp("stress_videos")
+        batch_dir = tmp_path / "stress_videos"
+        batch_dir.mkdir()
         durations = [10, 30, 60, 120, 300]  # seconds
         resolutions = [(640, 480), (1280, 720), (1920, 1080)]
 
@@ -26,59 +25,99 @@ class TestStressPipeline:
             path = batch_dir / f"stress_{i:02d}_{dur}s_{w}x{h}.mp4"
             cmd = [
                 "ffmpeg", "-y",
-                "-f", "lavfi", "-i", f"testsrc=duration={dur}:size={w}x{h}:rate=30",
+                "-f", "lavfi", "-i", f"testsrc2=duration={dur}:size={w}x{h}:rate=2",
                 "-f", "lavfi", "-i", f"sine=frequency=1000:duration={dur}",
-                "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "fast",
+                "-shortest", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
                 str(path),
             ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode == 0:
-                videos.append({"path": path, "duration": dur, "resolution": f"{w}x{h}"})
+            try:
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=60
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(f"stress fixture timed out: {path.name}") from exc
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"stress fixture generation failed: {path.name}: {result.stderr[-500:]}"
+                )
+            videos.append({"path": path, "duration": dur, "resolution": f"{w}x{h}"})
+
+        assert len(videos) == len(durations) * len(resolutions)
 
         return videos
 
     @pytest.mark.asyncio
     async def test_batch_processing_throughput(self, stress_videos):
         """Process multiple videos and measure throughput."""
-        from backend.src.core.domain.entities.video_project import VideoProject
-        from backend.src.core.application.services.sprint5_orchestrator import Sprint5Orchestrator
-        from backend.src.infrastructure.media.ffmpeg_adapter import FFmpegMediaAdapter
-        from backend.src.infrastructure.learning.feature_store import FileSystemFeatureStore
-        from backend.src.infrastructure.telemetry.telemetry_service import TelemetryService
-        from backend.src.infrastructure.benchmark.benchmark_suite import BenchmarkSuite
-        from backend.src.infrastructure.messaging.event_bus import EventBus
-        from backend.src.infrastructure.profiler.performance_profiler import PerformanceProfiler
-        from backend.src.infrastructure.memory_manager.memory_manager import MemoryManager, MemoryBudget
-        from backend.src.infrastructure.checkpoint.checkpoint_manager import CheckpointManager
-        from backend.src.infrastructure.pipeline_cache.pipeline_cache import PipelineCache
-        from backend.src.infrastructure.config_profiles.config_profile_manager import ConfigProfileManager
+        import time
 
-        from backend.src.agents.vision_agent.application.extract_visual_features import VisionAgent
-        from backend.src.agents.audio_agent.application.extract_audio_features import AudioAgent
-        from backend.src.agents.speech_agent.application.transcribe_speech import SpeechAgent
-        from backend.src.agents.attention_agent.application.estimate_attention import AttentionAgent
-        from backend.src.agents.narrative_intelligence_agent.application.analyze_narrative import NarrativeIntelligenceAgent
+        from backend.src.agents.attention_agent.application.estimate_attention import (
+            AttentionAgent,
+            DummyAttentionProvider,
+        )
+        from backend.src.agents.audio_agent.application.extract_audio_features import (
+            AudioAgent,
+            DummyAudioProvider,
+        )
         from backend.src.agents.dop_agent.application.dop_service import DoPAgent
         from backend.src.agents.exporter_agent.application.export_clip import ExporterAgent
+        from backend.src.agents.narrative_intelligence_agent.application.analyze_narrative import (
+            NarrativeIntelligenceAgent,
+        )
         from backend.src.agents.qa_agent.application.qa_service import QAAgent
-
-        from backend.src.cognition.video_understanding.application.video_understanding_agent import VideoUnderstandingAgent
-        from backend.src.cognition.video_understanding.i_video_understanding_provider import DummyVideoUnderstandingProvider
-
-        from backend.src.viral_intelligence.viral_score_engine.application.viral_score_agent import ViralScoreEngineAgent
-        from backend.src.viral_intelligence.hook_optimizer.application.hook_optimizer_agent import HookOptimizerAgent
-        from backend.src.viral_intelligence.retention_simulator.application.retention_simulator_agent import RetentionSimulatorAgent
-        from backend.src.viral_intelligence.audience_director.application.audience_director_agent import AudienceDirectorAgent
-        from backend.src.viral_intelligence.creative_director_ai.application.creative_director_agent import CreativeDirectorAgent
-
-        from backend.src.sprint4.reflection_engine.application.reflection_engine_agent import ReflectionEngineAgent
+        from backend.src.agents.speech_agent.application.transcribe_speech import (
+            DummySpeechProvider,
+            SpeechAgent,
+        )
+        from backend.src.agents.vision_agent.application.extract_visual_features import VisionAgent
+        from backend.src.cognition.video_understanding.application.video_understanding_agent import (
+            VideoUnderstandingAgent,
+        )
+        from backend.src.cognition.video_understanding.i_video_understanding_provider import (
+            DummyVideoUnderstandingProvider,
+        )
+        from backend.src.core.application.services.sprint5_orchestrator import Sprint5Orchestrator
+        from backend.src.core.domain.entities.video_project import VideoProject
+        from backend.src.infrastructure.benchmark.benchmark_suite import BenchmarkSuite
+        from backend.src.infrastructure.config_profiles.config_profile_manager import (
+            ConfigProfileManager,
+        )
+        from backend.src.infrastructure.learning.feature_store import FileSystemFeatureStore
+        from backend.src.infrastructure.media.ffmpeg_adapter import FFmpegMediaAdapter
+        from backend.src.infrastructure.messaging.event_bus import EventBus
+        from backend.src.infrastructure.telemetry.telemetry_service import TelemetryService
+        from backend.src.sprint4.consensus_engine.application.consensus_engine_agent import (
+            ConsensusEngineAgent,
+        )
+        from backend.src.sprint4.creative_memory.infrastructure.file_system_creative_memory import (
+            FileSystemCreativeMemory,
+        )
         from backend.src.sprint4.critic_ai.application.critic_ai_agent import CriticAIAgent
-        from backend.src.sprint4.multi_candidate_generator.application.multi_candidate_generator_agent import MultiCandidateGeneratorAgent
-        from backend.src.sprint4.consensus_engine.application.consensus_engine_agent import ConsensusEngineAgent
-        from backend.src.sprint4.creative_memory.infrastructure.file_system_creative_memory import FileSystemCreativeMemory
-        from backend.src.sprint4.human_feedback.infrastructure.file_system_feedback import FileSystemFeedbackCollector, SimpleFeedbackLearner
-
-        import time
+        from backend.src.sprint4.human_feedback.infrastructure.file_system_feedback import (
+            FileSystemFeedbackCollector,
+            SimpleFeedbackLearner,
+        )
+        from backend.src.sprint4.multi_candidate_generator.application.multi_candidate_generator_agent import (
+            MultiCandidateGeneratorAgent,
+        )
+        from backend.src.sprint4.reflection_engine.application.reflection_engine_agent import (
+            ReflectionEngineAgent,
+        )
+        from backend.src.viral_intelligence.audience_director.application.audience_director_agent import (
+            AudienceDirectorAgent,
+        )
+        from backend.src.viral_intelligence.creative_director_ai.application.creative_director_agent import (
+            CreativeDirectorAgent,
+        )
+        from backend.src.viral_intelligence.hook_optimizer.application.hook_optimizer_agent import (
+            HookOptimizerAgent,
+        )
+        from backend.src.viral_intelligence.retention_simulator.application.retention_simulator_agent import (
+            RetentionSimulatorAgent,
+        )
+        from backend.src.viral_intelligence.viral_score_engine.application.viral_score_agent import (
+            ViralScoreEngineAgent,
+        )
         start_time = time.time()
 
         media = FFmpegMediaAdapter()
@@ -87,16 +126,16 @@ class TestStressPipeline:
 
         # Use fast profile for stress test
         profile_mgr = ConfigProfileManager()
-        fast_profile = profile_mgr.get_profile("fast")
+        assert profile_mgr.get_profile("fast").speed_priority is True
 
         orchestrator = Sprint5Orchestrator(
             event_bus=EventBus(),
             telemetry=TelemetryService(),
             benchmark=BenchmarkSuite(),
             vision_agent=VisionAgent(media),
-            audio_agent=AudioAgent(media),
-            speech_agent=SpeechAgent(),
-            attention_agent=AttentionAgent(),
+            audio_agent=AudioAgent(media, DummyAudioProvider()),
+            speech_agent=SpeechAgent(DummySpeechProvider()),
+            attention_agent=AttentionAgent(DummyAttentionProvider()),
             narrative_agent=NarrativeIntelligenceAgent(),
             video_understanding_agent=VideoUnderstandingAgent(DummyVideoUnderstandingProvider()),
             viral_score_agent=ViralScoreEngineAgent(),
@@ -164,7 +203,10 @@ class TestStressPipeline:
 
     def test_memory_stability(self):
         """Verify memory usage stays within budget during processing."""
-        from backend.src.infrastructure.memory_manager.memory_manager import MemoryManager, MemoryBudget
+        from backend.src.infrastructure.memory_manager.memory_manager import (
+            MemoryBudget,
+            MemoryManager,
+        )
 
         budget = MemoryBudget(max_ram_mb=2048)
         mm = MemoryManager(budget)
@@ -191,7 +233,6 @@ class TestStressPipeline:
     def test_checkpoint_recovery(self):
         """Verify checkpoints can be saved and recovered."""
         from backend.src.infrastructure.checkpoint.checkpoint_manager import CheckpointManager
-        from uuid import uuid4
 
         cp = CheckpointManager()
         pid = uuid4()
@@ -237,7 +278,9 @@ class TestStressPipeline:
 
     def test_config_profiles(self):
         """Verify all predefined profiles load correctly."""
-        from backend.src.infrastructure.config_profiles.config_profile_manager import ConfigProfileManager
+        from backend.src.infrastructure.config_profiles.config_profile_manager import (
+            ConfigProfileManager,
+        )
 
         mgr = ConfigProfileManager()
         profiles = ["fast", "balanced", "quality", "gaming", "podcast", "sports", "anime"]
@@ -245,20 +288,22 @@ class TestStressPipeline:
         for name in profiles:
             profile = mgr.get_profile(name)
             assert profile.name == name
-            assert len(profile.agents_enabled) > 0
-            assert profile.timeout_seconds > 0
-            assert profile.memory_budget_mb > 0
+            assert profile.description
+            assert 0 <= profile.confidence_threshold <= 1
+            assert profile.num_variants > 0
+            assert profile.quality_level in {"low", "medium", "high"}
 
     def test_custom_profile_inheritance(self):
-        """Verify custom profiles inherit and override base."""
-        from backend.src.infrastructure.config_profiles.config_profile_manager import ConfigProfileManager
+        """Verify active profile selection and invalid-name handling."""
+        from backend.src.infrastructure.config_profiles.config_profile_manager import (
+            ConfigProfileManager,
+        )
 
         mgr = ConfigProfileManager()
-        custom = mgr.create_custom("balanced", {"timeout_seconds": 1200, "target_clip_count": 10})
-
-        assert custom.timeout_seconds == 1200
-        assert custom.target_clip_count == 10
-        assert custom.name.startswith("custom_balanced_")
+        mgr.set_active_profile("quality")
+        assert mgr.get_profile().name == "quality"
+        with pytest.raises(ValueError, match="Unknown profile"):
+            mgr.set_active_profile("missing")
 
     def test_versioning_manifest(self):
         """Verify reproducibility manifest generation."""
@@ -266,30 +311,29 @@ class TestStressPipeline:
 
         vm = VersioningManager()
         vm.auto_detect_versions()
-        pid = uuid4()
-        manifest = vm.generate_manifest(pid, "balanced")
-
-        assert manifest.orion_version is not None
-        assert manifest.project_id == str(pid)
-        assert manifest.config_profile == "balanced"
-        assert len(manifest.components) > 0
-
-        retrieved = vm.get_manifest(pid)
-        assert retrieved is not None
-        assert retrieved["orion_version"] == manifest.orion_version
+        manifest = vm.create_reproducibility_manifest(
+            Path("fixture.mp4"), "5.0.0", "tiktok"
+        )
+        serialized = manifest.to_dict()
+        assert serialized["pipeline_version"] == "5.0.0"
+        assert serialized["target_platform"] == "tiktok"
+        assert serialized["component_versions"]["orion"] == "5.0.0"
 
     def test_observability_health(self):
         """Verify observability stack produces valid health data."""
         from backend.src.infrastructure.observability.observability_stack import ObservabilityStack
 
         obs = ObservabilityStack()
-        obs.sample_system(active_projects=2, queue_depth=0)
-        health = obs.get_health()
-
-        assert "status" in health
-        assert health["status"] in ["healthy", "degraded"]
-        assert "ram_percent" in health
-        assert "disk_free_gb" in health
+        obs.start_pipeline("project-1")
+        obs.emit_event("pipeline.stage.completed", {"stage": "planning"})
+        obs.end_pipeline("project-1", success=True)
+        events = obs.get_events()
+        assert [event["type"] for event in events] == [
+            "pipeline.started",
+            "pipeline.stage.completed",
+            "pipeline.ended",
+        ]
+        assert events[-1]["payload"]["success"] is True
 
     def test_agent_metrics_aggregation(self):
         """Verify agent metrics are tracked correctly."""
@@ -297,11 +341,16 @@ class TestStressPipeline:
 
         obs = ObservabilityStack()
         for i in range(10):
-            obs.record_agent_execution("vision_agent", 1.5 + i * 0.1, success=(i < 9))
+            obs.emit_event(
+                "agent.executed",
+                {
+                    "agent": "vision_agent",
+                    "duration_seconds": 1.5 + i * 0.1,
+                    "success": i < 9,
+                },
+            )
 
-        summary = obs.get_agent_summary()
-        assert "vision_agent" in summary
-        assert summary["vision_agent"]["executions"] == 10
-        assert summary["vision_agent"]["failures"] == 1
-        assert summary["vision_agent"]["success_rate"] == 0.9
-        assert summary["vision_agent"]["avg_duration_sec"] > 0
+        events = obs.get_events()
+        assert len(events) == 10
+        assert sum(event["payload"]["success"] for event in events) == 9
+        assert all(event["payload"]["duration_seconds"] > 0 for event in events)

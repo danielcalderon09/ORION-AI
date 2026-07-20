@@ -1,8 +1,16 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado de Fase 5B
+
+SCRIPTING consume el `ProductionPlan` durable con validacion fisica/contractual y produce
+`production-script.json` mediante provider simulated u OpenRouter lazy sobre transporte
+OpenAI-compatible. SCENE_PLANNING y todo lo
+posterior permanecen simulados. La siguiente fase recomendada es 5C: consumo durable del
+script por SCENE_PLANNING, sin adelantar assets, audio, render, DaVinci o frontend.
+
 ## Estado de Fase 5A.1
 
-El soporte HTTP real está formalizado como extra `planning-openai`; la instalación mínima
+El soporte HTTP real está formalizado como extra `production-llm`; la instalación mínima
 mantiene el simulador sin importar infraestructura opcional. Startup reconcilia de forma
 conservadora planes físicos no registrados antes de recovery, con antigüedad mínima, cuarentena
 y rechazo de symlinks. Requested/reported model quedan diferenciados en metadata segura. No hay
@@ -11,7 +19,7 @@ migración, ruta o etapa real adicional.
 ## Estado de Fase 5A
 
 PLANNING dispone de un puerto intercambiable, simulador determinista y un único adaptador
-real OpenAI sobre HTTP async. Produce un JSON físico validado y registrado como artefacto.
+real OpenRouter sobre HTTP async. Produce un JSON físico validado y registrado como artefacto.
 Las demás etapas continúan simuladas; no existe integración con imágenes, TTS, música,
 subtítulos, render o DaVinci.
 

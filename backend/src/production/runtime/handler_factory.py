@@ -17,6 +17,7 @@ from backend.src.production.runtime.handlers import (
     RenderHandler,
     ScenePlanningHandler,
     ScriptHandler,
+    ScriptingHandler,
     SubtitleHandler,
     TimelineHandler,
     ValidationHandler,
@@ -52,15 +53,16 @@ def create_simulated_handler_registry(
 def create_handler_registry(
     *,
     planning_handler: PlanningHandler,
+    scripting_handler: ScriptingHandler | None = None,
     clock: Callable[[], datetime],
     uuid_factory: Callable[[], UUID],
 ) -> StageHandlerRegistry:
-    """Replace only PLANNING while every other stage remains simulated."""
+    """Replace PLANNING and optionally SCRIPTING; later stages remain simulated."""
 
     return StageHandlerRegistry(
         (
             planning_handler,
-            ScriptHandler(clock=clock, uuid_factory=uuid_factory),
+            scripting_handler or ScriptHandler(clock=clock, uuid_factory=uuid_factory),
             ScenePlanningHandler(clock=clock, uuid_factory=uuid_factory),
             AssetHandler(clock=clock, uuid_factory=uuid_factory),
             NarrationHandler(clock=clock, uuid_factory=uuid_factory),

@@ -2,11 +2,11 @@
 
 import json
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
-import numpy as np
 import cv2
+import numpy as np
 
 from backend.src.core.application.ports.incoming.i_media_processor import IMediaProcessor
 
@@ -99,7 +99,13 @@ class FFmpegMediaAdapter(IMediaProcessor):
         filter_str = ",".join(filters)
 
         if subtitle_path and subtitle_path.exists():
-            filter_str = f"{filter_str},subtitles={subtitle_path}"
+            subtitle_filename = subtitle_path.resolve().as_posix()
+            subtitle_filename = subtitle_filename.replace(":", "\\:").replace(
+                "'", "\\'"
+            )
+            filter_str = (
+                f"{filter_str},subtitles=filename='{subtitle_filename}'"
+            )
 
         cmd = [
             "ffmpeg",

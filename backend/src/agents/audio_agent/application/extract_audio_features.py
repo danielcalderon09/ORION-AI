@@ -7,8 +7,8 @@ from typing import Protocol
 import numpy as np
 
 from backend.src.agents.base.i_agent import AgentCapability, AgentInput, AgentResult, IAgent
-from backend.src.infrastructure.media.ffmpeg_adapter import FFmpegMediaAdapter
 from backend.src.infrastructure.config.settings import settings
+from backend.src.infrastructure.media.ffmpeg_adapter import FFmpegMediaAdapter
 
 
 class IAudioFeatureProvider(Protocol):
@@ -28,7 +28,6 @@ class LibrosaAudioProvider:
 
     async def extract_features(self, audio_path: Path) -> dict:
         import librosa
-        import soundfile as sf
 
         y, sr = librosa.load(str(audio_path), sr=settings.DEFAULT_AUDIO_SAMPLE_RATE)
 
@@ -62,6 +61,19 @@ class LibrosaAudioProvider:
             "peaks": peaks,
             "duration": float(len(y) / sr),
             "sample_rate": sr,
+        }
+
+
+class DummyAudioProvider:
+    """Deterministic audio features for tests and offline contract checks."""
+
+    async def extract_features(self, audio_path: Path) -> dict:
+        return {
+            "rms_energy": {"times": [0.0, 1.0, 2.0], "values": [0.2, 0.8, 0.4]},
+            "onset_strength": {"times": [0.0, 1.0], "values": [0.1, 0.8]},
+            "peaks": [{"time": 1.0, "energy": 0.8}],
+            "duration": 3.0,
+            "sample_rate": settings.DEFAULT_AUDIO_SAMPLE_RATE,
         }
 
 

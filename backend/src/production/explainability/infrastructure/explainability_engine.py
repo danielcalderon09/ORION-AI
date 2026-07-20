@@ -1,14 +1,17 @@
 """Explainability engine for decision justification."""
 
+import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from backend.src.production.explainability.domain.explanation import (
-    DecisionExplanation, ExplanationFactor, ExplainabilityReport,
-)
 from backend.src.infrastructure.config.settings import settings
+from backend.src.production.explainability.domain.explanation import (
+    DecisionExplanation,
+    ExplainabilityReport,
+    ExplanationFactor,
+)
 
 
 class ExplainabilityEngine:

@@ -1,4 +1,4 @@
-"""Lazy, explicit availability checks for optional planning providers."""
+"""Lazy availability checks for the optional OpenRouter planning adapter."""
 
 from collections.abc import Callable
 from importlib import import_module
@@ -8,16 +8,16 @@ from typing import cast
 from backend.src.production.planning.exceptions import PlanningProviderDependencyError
 from backend.src.production.planning.ports import PlanningProvider
 
-OPENAI_EXTRA_NAME = "planning-openai"
-OPENAI_DEPENDENCY_MESSAGE = (
-    "OpenAI planning support is not installed. Install the planning-openai extra."
+OPENROUTER_EXTRA_NAME = "production-llm"
+OPENROUTER_DEPENDENCY_MESSAGE = (
+    "OpenRouter planning support is not installed. Install the production-llm extra."
 )
 
 ModuleImporter = Callable[[str], ModuleType]
 PlanningProviderFactory = Callable[..., PlanningProvider]
 
 
-def load_openai_planning_provider(
+def load_openrouter_planning_provider(
     *,
     importer: ModuleImporter = import_module,
 ) -> PlanningProviderFactory:
@@ -25,13 +25,19 @@ def load_openai_planning_provider(
 
     try:
         module = importer(
-            "backend.src.production.planning.providers.openai_provider"
+            "backend.src.production.planning.providers.openrouter_provider"
         )
     except ModuleNotFoundError as exc:
         if exc.name == "httpx":
-            raise PlanningProviderDependencyError(OPENAI_DEPENDENCY_MESSAGE) from None
+            raise PlanningProviderDependencyError(OPENROUTER_DEPENDENCY_MESSAGE) from None
         raise
-    provider = getattr(module, "OpenAIPlanningProvider", None)
+    provider = getattr(module, "OpenRouterPlanningProvider", None)
     if not callable(provider):
-        raise PlanningProviderDependencyError(OPENAI_DEPENDENCY_MESSAGE)
+        raise PlanningProviderDependencyError(OPENROUTER_DEPENDENCY_MESSAGE)
     return cast(PlanningProviderFactory, provider)
+
+
+# Import compatibility only; runtime selection uses ``openrouter``.
+load_openai_planning_provider = load_openrouter_planning_provider
+OPENAI_EXTRA_NAME = OPENROUTER_EXTRA_NAME
+OPENAI_DEPENDENCY_MESSAGE = OPENROUTER_DEPENDENCY_MESSAGE

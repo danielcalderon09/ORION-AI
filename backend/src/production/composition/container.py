@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Protocol
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from sqlalchemy import Engine
@@ -20,8 +22,15 @@ from backend.src.production.application.services.production_jobs import (
     ListProductionJobsService,
     RetryProductionJobService,
 )
+from backend.src.production.domain.enums import ArtifactType
+from backend.src.production.infrastructure.durable_production_plan_reader import (
+    DurableProductionPlanReader,
+)
 from backend.src.production.infrastructure.persistence.planning_artifact_reader import (
     SQLAlchemyRegisteredPlanningArtifactReader,
+)
+from backend.src.production.infrastructure.persistence.production_plan_query_repository import (
+    SQLAlchemyProductionPlanQueryRepository,
 )
 from backend.src.production.infrastructure.persistence.query_repositories import (
     SQLAlchemyProductionArtifactQueryRepository,
@@ -36,7 +45,7 @@ from backend.src.production.infrastructure.persistence.transactions import (
     OrchestrationDecisionStore,
 )
 from backend.src.production.infrastructure.planning_artifact_reconciler import (
-    LocalPlanningArtifactReconciler,
+    LocalProductionArtifactReconciler,
 )
 from backend.src.production.planning.artifact_writer import LocalPlanningArtifactWriter
 from backend.src.production.planning.exceptions import (
@@ -46,7 +55,7 @@ from backend.src.production.planning.ports import PlanningProvider
 from backend.src.production.planning.prompt_builder import PlanningPromptBuilder
 from backend.src.production.planning.providers import SimulatedPlanningProvider
 from backend.src.production.planning.providers.availability import (
-    load_openai_planning_provider,
+    load_openrouter_planning_provider,
 )
 from backend.src.production.planning.reconciliation import PlanningArtifactReconciler
 from backend.src.production.runtime import (
@@ -65,11 +74,26 @@ from backend.src.production.runtime.blocking_executor import (
 from backend.src.production.runtime.decision_persister import (
     ThreadedRuntimeDecisionPersister,
 )
-from backend.src.production.runtime.handlers import PlanningHandler
+from backend.src.production.runtime.handlers import PlanningHandler, ScriptingHandler
 from backend.src.production.runtime.leases import (
     ProductionLeaseManager,
     SQLAlchemyLeaseRepository,
 )
+from backend.src.production.scripting.artifact_writer import LocalScriptingArtifactWriter
+from backend.src.production.scripting.exceptions import (
+    ScriptingProviderConfigurationError,
+)
+from backend.src.production.scripting.ports import ScriptingProvider
+from backend.src.production.scripting.prompt_builder import ScriptingPromptBuilder
+from backend.src.production.scripting.providers import SimulatedScriptingProvider
+from backend.src.production.scripting.providers.availability import (
+    ScriptingProviderFactory,
+    load_openrouter_scripting_provider,
+)
+
+
+class AsyncClosable(Protocol):
+    async def close(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,21 +109,31 @@ class ProductionContainer:
     recovery: ProductionRecoveryService
     worker: ProductionWorker
     planning_provider: PlanningProvider
+    scripting_provider: ScriptingProvider
     planning_artifact_reconciler: PlanningArtifactReconciler
+    async_resources: tuple[AsyncClosable, ...]
 
     def shutdown(self) -> None:
         self.engine.dispose()
 
     async def aclose(self) -> None:
+        first_error: Exception | None = None
         try:
-            await self.planning_provider.close()
+            for resource in self.async_resources:
+                try:
+                    await resource.close()
+                except Exception as exc:
+                    first_error = first_error or exc
         finally:
             self.engine.dispose()
+        if first_error is not None:
+            raise first_error
 
 
 def build_production_container(settings: Settings) -> ProductionContainer:
     def clock() -> datetime:
         return datetime.now(UTC)
+    scripting_factory = _resolve_scripting_provider_factory(settings)
     engine = create_production_engine(
         settings.production_database_url,
         echo=settings.ORION_DATABASE_ECHO,
@@ -114,6 +148,10 @@ def build_production_container(settings: Settings) -> ProductionContainer:
     persister = ThreadedRuntimeDecisionPersister(store)
     try:
         planning_provider = _build_planning_provider(settings)
+        scripting_provider = _build_scripting_provider(
+            settings,
+            openrouter_factory=scripting_factory,
+        )
     except Exception:
         engine.dispose()
         raise
@@ -123,9 +161,28 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         clock=clock,
         uuid_factory=uuid4,
     )
-    planning_artifact_reconciler = LocalPlanningArtifactReconciler(
+    scripting_handler = ScriptingHandler(
+        plan_reader=DurableProductionPlanReader(
+            workspace_root=settings.PROJECTS_DIR,
+            repository=SQLAlchemyProductionPlanQueryRepository(sessions),
+            max_plan_bytes=settings.ORION_SCRIPTING_MAX_PLAN_BYTES,
+        ),
+        provider=scripting_provider,
+        artifact_writer=LocalScriptingArtifactWriter(
+            settings.PROJECTS_DIR,
+            max_script_bytes=settings.ORION_SCRIPTING_MAX_SCRIPT_BYTES,
+        ),
+        clock=clock,
+        uuid_factory=uuid4,
+    )
+    planning_artifact_reconciler = LocalProductionArtifactReconciler(
         workspace_root=settings.PROJECTS_DIR,
-        registered_reader=SQLAlchemyRegisteredPlanningArtifactReader(sessions),
+        registered_reader=SQLAlchemyRegisteredPlanningArtifactReader(
+            sessions,
+            artifact_types=frozenset(
+                {ArtifactType.PRODUCTION_PLAN, ArtifactType.PRODUCTION_SCRIPT}
+            ),
+        ),
         minimum_age_seconds=settings.ORION_PLANNING_ORPHAN_MIN_AGE_SECONDS,
         action=settings.ORION_PLANNING_ORPHAN_ACTION,
         quarantine_relative_path=settings.ORION_PLANNING_QUARANTINE_DIR,
@@ -162,6 +219,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         executor=ProductionExecutor(
             create_handler_registry(
                 planning_handler=planning_handler,
+                scripting_handler=scripting_handler,
                 clock=clock,
                 uuid_factory=uuid4,
             )
@@ -208,7 +266,9 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         recovery=recovery,
         worker=worker,
         planning_provider=planning_provider,
+        scripting_provider=scripting_provider,
         planning_artifact_reconciler=planning_artifact_reconciler,
+        async_resources=(scripting_provider, planning_provider),
     )
 
 
@@ -216,15 +276,22 @@ def _build_planning_provider(settings: Settings) -> PlanningProvider:
     provider_name = settings.ORION_PLANNING_PROVIDER.strip().lower()
     if provider_name == "simulated":
         return SimulatedPlanningProvider()
-    if provider_name != "openai":
+    if provider_name != "openrouter":
         raise PlanningProviderConfigurationError(
             f"unsupported planning provider: {provider_name!r}"
         )
-    openai_provider_factory = load_openai_planning_provider()
     if settings.ORION_PLANNING_API_KEY is None:
         raise PlanningProviderConfigurationError("planning provider credential is missing")
+    if not settings.ORION_PLANNING_MODEL.strip():
+        raise PlanningProviderConfigurationError("planning model is missing")
+    _validate_https_provider_url(
+        settings.ORION_PLANNING_BASE_URL,
+        error_type=PlanningProviderConfigurationError,
+        message="planning base URL is invalid",
+    )
+    openrouter_provider_factory = load_openrouter_planning_provider()
 
-    return openai_provider_factory(
+    return openrouter_provider_factory(
         api_key=settings.ORION_PLANNING_API_KEY.get_secret_value(),
         model=settings.ORION_PLANNING_MODEL,
         prompt_builder=PlanningPromptBuilder(),
@@ -234,4 +301,65 @@ def _build_planning_provider(settings: Settings) -> PlanningProvider:
         retry_base_delay_seconds=settings.ORION_PLANNING_RETRY_BASE_DELAY_SECONDS,
         max_output_tokens=settings.ORION_PLANNING_MAX_OUTPUT_TOKENS,
         temperature=settings.ORION_PLANNING_TEMPERATURE,
+        http_referer=settings.ORION_OPENROUTER_HTTP_REFERER,
+        app_title=settings.ORION_OPENROUTER_APP_TITLE,
     )
+
+
+def _resolve_scripting_provider_factory(
+    settings: Settings,
+) -> ScriptingProviderFactory | None:
+    provider_name = settings.ORION_SCRIPTING_PROVIDER.strip().lower()
+    if provider_name == "simulated":
+        return None
+    if provider_name != "openrouter":
+        raise ScriptingProviderConfigurationError(
+            f"unsupported scripting provider: {provider_name!r}"
+        )
+    if settings.ORION_SCRIPTING_API_KEY is None:
+        raise ScriptingProviderConfigurationError("scripting provider credential is missing")
+    if not settings.ORION_SCRIPTING_MODEL.strip():
+        raise ScriptingProviderConfigurationError("scripting model is missing")
+    _validate_https_provider_url(
+        settings.ORION_SCRIPTING_BASE_URL,
+        error_type=ScriptingProviderConfigurationError,
+        message="scripting base URL is invalid",
+    )
+    return load_openrouter_scripting_provider()
+
+
+def _build_scripting_provider(
+    settings: Settings,
+    *,
+    openrouter_factory: ScriptingProviderFactory | None,
+) -> ScriptingProvider:
+    if openrouter_factory is None:
+        return SimulatedScriptingProvider()
+    if settings.ORION_SCRIPTING_API_KEY is None:
+        raise ScriptingProviderConfigurationError("scripting provider credential is missing")
+    return openrouter_factory(
+        api_key=settings.ORION_SCRIPTING_API_KEY.get_secret_value(),
+        model=settings.ORION_SCRIPTING_MODEL,
+        prompt_builder=ScriptingPromptBuilder(
+            max_plan_bytes=settings.ORION_SCRIPTING_MAX_PLAN_BYTES
+        ),
+        base_url=settings.ORION_SCRIPTING_BASE_URL,
+        timeout_seconds=settings.ORION_SCRIPTING_TIMEOUT_SECONDS,
+        max_transport_attempts=settings.ORION_SCRIPTING_MAX_TRANSPORT_ATTEMPTS,
+        retry_base_delay_seconds=settings.ORION_SCRIPTING_RETRY_BASE_DELAY_SECONDS,
+        max_output_tokens=settings.ORION_SCRIPTING_MAX_OUTPUT_TOKENS,
+        temperature=settings.ORION_SCRIPTING_TEMPERATURE,
+        http_referer=settings.ORION_OPENROUTER_HTTP_REFERER,
+        app_title=settings.ORION_OPENROUTER_APP_TITLE,
+    )
+
+
+def _validate_https_provider_url(
+    value: str,
+    *,
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    parsed = urlsplit(value)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise error_type(message)

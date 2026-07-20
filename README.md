@@ -56,13 +56,24 @@ python scripts/batch_processor.py --videos=./samples --profile=balanced --max-wo
 pip install -e ".[dev]"
 python -m backend.src.main
 
-# Soporte opcional del proveedor OpenAI de PLANNING
-pip install -e ".[planning-openai]"
+# Soporte opcional OpenRouter para PLANNING y SCRIPTING
+pip install -e ".[production-llm]"
+
+# Alias descriptivo equivalente
+pip install -e ".[production-openrouter]"
 ```
 
 La instalación base conserva `SimulatedPlanningProvider` y no necesita `httpx`. El extra
-`planning-openai` habilita el único adaptador HTTP real. Los perfiles pueden verificarse sin
+`production-llm` habilita el transporte OpenAI-compatible usado por OpenRouter. Los extras
+`planning-openai` y `production-openai` permanecen solo por compatibilidad de instalación.
+Los perfiles pueden verificarse sin
 llamadas externas con `python scripts/verify_planning_install_profiles.py`.
+
+SCRIPTING consume el plan durable, verifica tamano/SHA-256 y escribe
+`production/<job_id>/scripting/attempt-<n>/production-script.json`. Su provider default es
+`simulated`; el provider real principal es OpenRouter lazy, con modelos configurables de
+OpenAI, Anthropic, Google, DeepSeek, Qwen y otros disponibles en OpenRouter. Consulta
+[`docs/PRODUCTION_SCRIPTING_PROVIDER.md`](docs/PRODUCTION_SCRIPTING_PROVIDER.md).
 
 ### Frontend
 ```bash

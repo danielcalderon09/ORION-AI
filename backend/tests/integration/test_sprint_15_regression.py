@@ -30,7 +30,7 @@ class RegressionBaseline:
         path = self.BASELINE_DIR / f"{test_name}.json"
         if not path.exists():
             return None
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
 
     def compare(self, test_name: str, actual: dict[str, Any]) -> dict[str, Any]:
@@ -108,24 +108,34 @@ class TestSprint15Regression:
     @pytest.mark.asyncio
     async def test_pipeline_produces_clips(self, sample_video, baseline):
         """Test that the full pipeline produces at least 1 clip."""
-        from backend.src.core.domain.entities.video_project import VideoProject
-        from backend.src.core.application.services.orchestration_service import OrchestrationService
-        from backend.src.infrastructure.media.ffmpeg_adapter import FFmpegMediaAdapter
-        from backend.src.infrastructure.learning.feature_store import FileSystemFeatureStore
-        from backend.src.infrastructure.cognition.knowledge_graph_impl import InMemoryKnowledgeGraph
-        from backend.src.infrastructure.messaging.event_bus import EventBus
-        from backend.src.infrastructure.telemetry.telemetry_service import TelemetryService
-        from backend.src.infrastructure.benchmark.benchmark_suite import BenchmarkSuite
-
-        from backend.src.agents.vision_agent.application.extract_visual_features import VisionAgent
-        from backend.src.agents.audio_agent.application.extract_audio_features import AudioAgent
-        from backend.src.agents.speech_agent.application.transcribe_speech import SpeechAgent
-        from backend.src.agents.attention_agent.application.estimate_attention import AttentionAgent
-        from backend.src.agents.narrative_intelligence_agent.application.analyze_narrative import NarrativeIntelligenceAgent
+        from backend.src.agents.attention_agent.application.estimate_attention import (
+            AttentionAgent,
+            DummyAttentionProvider,
+        )
+        from backend.src.agents.audio_agent.application.extract_audio_features import (
+            AudioAgent,
+            DummyAudioProvider,
+        )
         from backend.src.agents.director_agent.application.director_service import DirectorAgent
         from backend.src.agents.dop_agent.application.dop_service import DoPAgent
         from backend.src.agents.exporter_agent.application.export_clip import ExporterAgent
+        from backend.src.agents.narrative_intelligence_agent.application.analyze_narrative import (
+            NarrativeIntelligenceAgent,
+        )
         from backend.src.agents.qa_agent.application.qa_service import QAAgent
+        from backend.src.agents.speech_agent.application.transcribe_speech import (
+            DummySpeechProvider,
+            SpeechAgent,
+        )
+        from backend.src.agents.vision_agent.application.extract_visual_features import VisionAgent
+        from backend.src.core.application.services.orchestration_service import OrchestrationService
+        from backend.src.core.domain.entities.video_project import VideoProject
+        from backend.src.infrastructure.benchmark.benchmark_suite import BenchmarkSuite
+        from backend.src.infrastructure.cognition.knowledge_graph_impl import InMemoryKnowledgeGraph
+        from backend.src.infrastructure.learning.feature_store import FileSystemFeatureStore
+        from backend.src.infrastructure.media.ffmpeg_adapter import FFmpegMediaAdapter
+        from backend.src.infrastructure.messaging.event_bus import EventBus
+        from backend.src.infrastructure.telemetry.telemetry_service import TelemetryService
 
         media = FFmpegMediaAdapter()
         fs = FileSystemFeatureStore(settings.ORION_HOME / "features_test")
@@ -134,9 +144,9 @@ class TestSprint15Regression:
             telemetry=TelemetryService(),
             benchmark=BenchmarkSuite(),
             vision_agent=VisionAgent(media),
-            audio_agent=AudioAgent(media),
-            speech_agent=SpeechAgent(),
-            attention_agent=AttentionAgent(),
+            audio_agent=AudioAgent(media, DummyAudioProvider()),
+            speech_agent=SpeechAgent(DummySpeechProvider()),
+            attention_agent=AttentionAgent(DummyAttentionProvider()),
             narrative_agent=NarrativeIntelligenceAgent(),
             director_agent=DirectorAgent(),
             dop_agent=DoPAgent(),
@@ -173,8 +183,8 @@ class TestSprint15Regression:
 
     def test_qa_rejects_invalid_resolution(self, tmp_path):
         """Test that QA agent catches wrong resolution."""
-        from backend.src.agents.qa_agent.application.qa_service import QAAgent, BasicQAProvider
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.agents.qa_agent.application.qa_service import BasicQAProvider, QAAgent
 
         # Create a fake wrong-resolution video
         wrong_video = tmp_path / "wrong_res.mp4"
@@ -209,8 +219,8 @@ class TestSprint15Regression:
 
     def test_confidence_score_computed(self):
         """Test that DirectorAgent computes confidence for each clip."""
-        from backend.src.agents.director_agent.application.director_service import DirectorAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.agents.director_agent.application.director_service import DirectorAgent
 
         director = DirectorAgent()
 
@@ -254,8 +264,8 @@ class TestSprint15Regression:
 
     def test_debug_timeline_generated(self):
         """Test that debug mode produces timeline data."""
-        from backend.src.agents.director_agent.application.director_service import DirectorAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.agents.director_agent.application.director_service import DirectorAgent
 
         director = DirectorAgent()
 
@@ -300,6 +310,7 @@ class TestSprint15Regression:
     def test_feature_store_persistence(self, tmp_path):
         """Test that features are saved and retrievable."""
         from uuid import uuid4
+
         from backend.src.infrastructure.learning.feature_store import FileSystemFeatureStore
 
         store = FileSystemFeatureStore(tmp_path)
@@ -314,7 +325,10 @@ class TestSprint15Regression:
 
     def test_capability_registry_resolution(self):
         """Test that capability registry resolves providers correctly."""
-        from backend.src.infrastructure.model_registry.capability_registry import CapabilityRegistry, ModelMetadata
+        from backend.src.infrastructure.model_registry.capability_registry import (
+            CapabilityRegistry,
+            ModelMetadata,
+        )
 
         registry = CapabilityRegistry()
         registry.register(ModelMetadata(
@@ -328,7 +342,7 @@ class TestSprint15Regression:
         ))
 
         provider = registry.resolve("test_capability")
-        assert provider == dict
+        assert provider is dict
 
         instance = registry.get_instance("test_capability")
         assert isinstance(instance, dict)

@@ -1,13 +1,26 @@
 # Runtime local de Production Pipeline
 
+## SCRIPTING durable (Fase 5B)
+
+El registry de Production reemplaza PLANNING y SCRIPTING; `SCENE_PLANNING` y las etapas
+posteriores siguen simuladas. SCRIPTING selecciona el plan durable, valida path, symlinks,
+tamano, SHA-256, UTF-8, JSON y contrato, invoca un provider y publica
+`production-script.json` canonico.
+
+Retry genera attempt/ruta nuevos; recovery puede seleccionar el plan registrado mas reciente
+si el command no conserva inputs. Reconciliacion cubre rutas contractuales de plan/script.
+Los clientes OpenRouter sobre transporte OpenAI-compatible son lazy. Shutdown cierra
+Scripting, Planning y engine tras el worker; el feature apagado no construye clientes.
+
 ## Planning configurable (Fase 5A)
 
 El registry recibe un único `PlanningHandler` dependiente de `PlanningProvider`; todos los
-demás handlers permanecen simulados. El container selecciona `simulated` u `openai`,
+demás handlers permanecen simulados. El container selecciona `simulated` u `openrouter`,
 inyecta el writer local y cierra uniformemente el provider antes de disponer el engine.
 No se crea cliente real al importar ni con el feature principal apagado.
 
-Fase 5A.1 formaliza `httpx` en el extra `planning-openai` y añade reconciliación conservadora
+Fase 5B.1 formaliza `httpx` en el extra neutral `production-llm` (con aliases históricos
+`planning-openai`/`production-openai`) y mantiene reconciliación conservadora
 del JSON de planificación. El orden de startup con el feature activo es: construir container,
 validar esquema, reconciliar artifacts, ejecutar recovery e iniciar el worker. Un fallo de
 integridad durante reconciliación cierra recursos parciales y evita crear la task. La consulta

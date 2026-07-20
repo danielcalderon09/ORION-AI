@@ -2,12 +2,8 @@
 
 import asyncio
 import subprocess
-from pathlib import Path
-from uuid import uuid4
 
 import pytest
-
-from backend.src.infrastructure.config.settings import settings
 
 
 class TestPhase1ReflectionAndCritic:
@@ -15,8 +11,10 @@ class TestPhase1ReflectionAndCritic:
 
     def test_reflection_engine_proposes_improvements(self):
         """ReflectionEngine suggests concrete improvements for a clip."""
-        from backend.src.sprint4.reflection_engine.application.reflection_engine_agent import ReflectionEngineAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.sprint4.reflection_engine.application.reflection_engine_agent import (
+            ReflectionEngineAgent,
+        )
 
         engine = ReflectionEngineAgent()
 
@@ -60,8 +58,8 @@ class TestPhase1ReflectionAndCritic:
 
     def test_critic_ai_evaluates_multiple_axes(self):
         """CriticAI produces scores for narrative, technical, retention, engagement."""
-        from backend.src.sprint4.critic_ai.application.critic_ai_agent import CriticAIAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.sprint4.critic_ai.application.critic_ai_agent import CriticAIAgent
 
         critic = CriticAIAgent()
 
@@ -105,8 +103,8 @@ class TestPhase1ReflectionAndCritic:
 
     def test_critic_detects_qa_failure(self):
         """CriticAI flags fatal flaws when QA fails."""
-        from backend.src.sprint4.critic_ai.application.critic_ai_agent import CriticAIAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.sprint4.critic_ai.application.critic_ai_agent import CriticAIAgent
 
         critic = CriticAIAgent()
         candidate = {
@@ -131,8 +129,10 @@ class TestPhase2CandidatesAndConsensus:
 
     def test_candidate_generator_produces_variants(self):
         """MultiCandidateGenerator creates multiple variants per clip."""
-        from backend.src.sprint4.multi_candidate_generator.application.multi_candidate_generator_agent import MultiCandidateGeneratorAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.sprint4.multi_candidate_generator.application.multi_candidate_generator_agent import (
+            MultiCandidateGeneratorAgent,
+        )
 
         gen = MultiCandidateGeneratorAgent(num_variants=3)
 
@@ -162,8 +162,10 @@ class TestPhase2CandidatesAndConsensus:
 
     def test_consensus_engine_selects_winner(self):
         """ConsensusEngine picks a winning candidate with confidence."""
-        from backend.src.sprint4.consensus_engine.application.consensus_engine_agent import ConsensusEngineAgent
         from backend.src.agents.base.i_agent import AgentInput
+        from backend.src.sprint4.consensus_engine.application.consensus_engine_agent import (
+            ConsensusEngineAgent,
+        )
 
         consensus = ConsensusEngineAgent()
 
@@ -207,11 +209,12 @@ class TestPhase3CreativeMemory:
 
     def test_creative_memory_stores_and_retrieves(self, tmp_path):
         """CreativeMemory stores patterns and retrieves by category."""
-        from backend.src.sprint4.creative_memory.infrastructure.file_system_creative_memory import FileSystemCreativeMemory
-        from backend.src.sprint4.creative_memory.domain.creative_pattern import CreativePattern
-
         # Override path for test
         import backend.src.infrastructure.config.settings as settings_mod
+        from backend.src.sprint4.creative_memory.domain.creative_pattern import CreativePattern
+        from backend.src.sprint4.creative_memory.infrastructure.file_system_creative_memory import (
+            FileSystemCreativeMemory,
+        )
         original_orion_home = settings_mod.settings.ORION_HOME
         settings_mod.settings.ORION_HOME = tmp_path
 
@@ -247,8 +250,10 @@ class TestPhase3CreativeMemory:
         settings_mod.settings.ORION_HOME = tmp_path
 
         try:
-            from backend.src.sprint4.creative_memory.infrastructure.file_system_creative_memory import FileSystemCreativeMemory
             from backend.src.sprint4.creative_memory.domain.creative_pattern import CreativePattern
+            from backend.src.sprint4.creative_memory.infrastructure.file_system_creative_memory import (
+                FileSystemCreativeMemory,
+            )
 
             memory = FileSystemCreativeMemory()
             pattern = CreativePattern(
@@ -276,10 +281,15 @@ class TestPhase4HumanFeedback:
         settings_mod.settings.ORION_HOME = tmp_path
 
         try:
-            from backend.src.sprint4.human_feedback.infrastructure.file_system_feedback import FileSystemFeedbackCollector
-            from backend.src.sprint4.human_feedback.domain.structured_feedback import StructuredFeedback
             from datetime import datetime
             from uuid import uuid4
+
+            from backend.src.sprint4.human_feedback.domain.structured_feedback import (
+                StructuredFeedback,
+            )
+            from backend.src.sprint4.human_feedback.infrastructure.file_system_feedback import (
+                FileSystemFeedbackCollector,
+            )
 
             collector = FileSystemFeedbackCollector()
             pid = uuid4()
@@ -316,10 +326,16 @@ class TestPhase4HumanFeedback:
         settings_mod.settings.ORION_HOME = tmp_path
 
         try:
-            from backend.src.sprint4.human_feedback.infrastructure.file_system_feedback import FileSystemFeedbackCollector, SimpleFeedbackLearner
-            from backend.src.sprint4.human_feedback.domain.structured_feedback import StructuredFeedback
             from datetime import datetime
             from uuid import uuid4
+
+            from backend.src.sprint4.human_feedback.domain.structured_feedback import (
+                StructuredFeedback,
+            )
+            from backend.src.sprint4.human_feedback.infrastructure.file_system_feedback import (
+                FileSystemFeedbackCollector,
+                SimpleFeedbackLearner,
+            )
 
             collector = FileSystemFeedbackCollector()
             learner = SimpleFeedbackLearner(collector)
@@ -352,38 +368,70 @@ class TestSprint4Integration:
     @pytest.mark.asyncio
     async def test_sprint4_orchestrator_runs(self, tmp_path):
         """Sprint 4 orchestrator runs full pipeline with auto-improvement."""
-        from backend.src.core.domain.entities.video_project import VideoProject
-        from backend.src.core.application.services.sprint5_orchestrator import Sprint5Orchestrator
-        from backend.src.infrastructure.media.ffmpeg_adapter import FFmpegMediaAdapter
-        from backend.src.infrastructure.learning.feature_store import FileSystemFeatureStore
-        from backend.src.infrastructure.telemetry.telemetry_service import TelemetryService
-        from backend.src.infrastructure.benchmark.benchmark_suite import BenchmarkSuite
-        from backend.src.infrastructure.messaging.event_bus import EventBus
-
-        from backend.src.agents.vision_agent.application.extract_visual_features import VisionAgent
-        from backend.src.agents.audio_agent.application.extract_audio_features import AudioAgent
-        from backend.src.agents.speech_agent.application.transcribe_speech import SpeechAgent
-        from backend.src.agents.attention_agent.application.estimate_attention import AttentionAgent
-        from backend.src.agents.narrative_intelligence_agent.application.analyze_narrative import NarrativeIntelligenceAgent
+        from backend.src.agents.attention_agent.application.estimate_attention import (
+            AttentionAgent,
+            DummyAttentionProvider,
+        )
+        from backend.src.agents.audio_agent.application.extract_audio_features import (
+            AudioAgent,
+            DummyAudioProvider,
+        )
         from backend.src.agents.dop_agent.application.dop_service import DoPAgent
         from backend.src.agents.exporter_agent.application.export_clip import ExporterAgent
+        from backend.src.agents.narrative_intelligence_agent.application.analyze_narrative import (
+            NarrativeIntelligenceAgent,
+        )
         from backend.src.agents.qa_agent.application.qa_service import QAAgent
-
-        from backend.src.cognition.video_understanding.application.video_understanding_agent import VideoUnderstandingAgent
-        from backend.src.cognition.video_understanding.i_video_understanding_provider import DummyVideoUnderstandingProvider
-
-        from backend.src.viral_intelligence.viral_score_engine.application.viral_score_agent import ViralScoreEngineAgent
-        from backend.src.viral_intelligence.hook_optimizer.application.hook_optimizer_agent import HookOptimizerAgent
-        from backend.src.viral_intelligence.retention_simulator.application.retention_simulator_agent import RetentionSimulatorAgent
-        from backend.src.viral_intelligence.audience_director.application.audience_director_agent import AudienceDirectorAgent
-        from backend.src.viral_intelligence.creative_director_ai.application.creative_director_agent import CreativeDirectorAgent
-
-        from backend.src.sprint4.reflection_engine.application.reflection_engine_agent import ReflectionEngineAgent
+        from backend.src.agents.speech_agent.application.transcribe_speech import (
+            DummySpeechProvider,
+            SpeechAgent,
+        )
+        from backend.src.agents.vision_agent.application.extract_visual_features import VisionAgent
+        from backend.src.cognition.video_understanding.application.video_understanding_agent import (
+            VideoUnderstandingAgent,
+        )
+        from backend.src.cognition.video_understanding.i_video_understanding_provider import (
+            DummyVideoUnderstandingProvider,
+        )
+        from backend.src.core.application.services.sprint5_orchestrator import Sprint5Orchestrator
+        from backend.src.core.domain.entities.video_project import VideoProject
+        from backend.src.infrastructure.benchmark.benchmark_suite import BenchmarkSuite
+        from backend.src.infrastructure.learning.feature_store import FileSystemFeatureStore
+        from backend.src.infrastructure.media.ffmpeg_adapter import FFmpegMediaAdapter
+        from backend.src.infrastructure.messaging.event_bus import EventBus
+        from backend.src.infrastructure.telemetry.telemetry_service import TelemetryService
+        from backend.src.sprint4.consensus_engine.application.consensus_engine_agent import (
+            ConsensusEngineAgent,
+        )
+        from backend.src.sprint4.creative_memory.infrastructure.file_system_creative_memory import (
+            FileSystemCreativeMemory,
+        )
         from backend.src.sprint4.critic_ai.application.critic_ai_agent import CriticAIAgent
-        from backend.src.sprint4.multi_candidate_generator.application.multi_candidate_generator_agent import MultiCandidateGeneratorAgent
-        from backend.src.sprint4.consensus_engine.application.consensus_engine_agent import ConsensusEngineAgent
-        from backend.src.sprint4.creative_memory.infrastructure.file_system_creative_memory import FileSystemCreativeMemory
-        from backend.src.sprint4.human_feedback.infrastructure.file_system_feedback import FileSystemFeedbackCollector, SimpleFeedbackLearner
+        from backend.src.sprint4.human_feedback.infrastructure.file_system_feedback import (
+            FileSystemFeedbackCollector,
+            SimpleFeedbackLearner,
+        )
+        from backend.src.sprint4.multi_candidate_generator.application.multi_candidate_generator_agent import (
+            MultiCandidateGeneratorAgent,
+        )
+        from backend.src.sprint4.reflection_engine.application.reflection_engine_agent import (
+            ReflectionEngineAgent,
+        )
+        from backend.src.viral_intelligence.audience_director.application.audience_director_agent import (
+            AudienceDirectorAgent,
+        )
+        from backend.src.viral_intelligence.creative_director_ai.application.creative_director_agent import (
+            CreativeDirectorAgent,
+        )
+        from backend.src.viral_intelligence.hook_optimizer.application.hook_optimizer_agent import (
+            HookOptimizerAgent,
+        )
+        from backend.src.viral_intelligence.retention_simulator.application.retention_simulator_agent import (
+            RetentionSimulatorAgent,
+        )
+        from backend.src.viral_intelligence.viral_score_engine.application.viral_score_agent import (
+            ViralScoreEngineAgent,
+        )
 
         video_path = tmp_path / "test.mp4"
         cmd = [
@@ -403,9 +451,9 @@ class TestSprint4Integration:
             telemetry=TelemetryService(),
             benchmark=BenchmarkSuite(),
             vision_agent=VisionAgent(media),
-            audio_agent=AudioAgent(media),
-            speech_agent=SpeechAgent(),
-            attention_agent=AttentionAgent(),
+            audio_agent=AudioAgent(media, DummyAudioProvider()),
+            speech_agent=SpeechAgent(DummySpeechProvider()),
+            attention_agent=AttentionAgent(DummyAttentionProvider()),
             narrative_agent=NarrativeIntelligenceAgent(),
             video_understanding_agent=VideoUnderstandingAgent(DummyVideoUnderstandingProvider()),
             viral_score_agent=ViralScoreEngineAgent(),

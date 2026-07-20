@@ -2,13 +2,16 @@
 
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import SecretStr, model_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Orion AI application settings."""
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     # App
     APP_NAME: str = "Orion AI"
@@ -28,9 +31,9 @@ class Settings(BaseSettings):
     ORION_PRODUCTION_SHUTDOWN_TIMEOUT_SECONDS: float = 10.0
     ORION_PRODUCTION_MAX_CYCLES: int | None = None
     ORION_PLANNING_PROVIDER: str = "simulated"
-    ORION_PLANNING_MODEL: str = "gpt-4.1-mini"
+    ORION_PLANNING_MODEL: str = "openai/gpt-4.1-mini"
     ORION_PLANNING_API_KEY: SecretStr | None = None
-    ORION_PLANNING_BASE_URL: str = "https://api.openai.com/v1"
+    ORION_PLANNING_BASE_URL: str = "https://openrouter.ai/api/v1"
     ORION_PLANNING_TIMEOUT_SECONDS: float = 30.0
     ORION_PLANNING_MAX_TRANSPORT_ATTEMPTS: int = 2
     ORION_PLANNING_RETRY_BASE_DELAY_SECONDS: float = 0.25
@@ -40,6 +43,19 @@ class Settings(BaseSettings):
     ORION_PLANNING_ORPHAN_MIN_AGE_SECONDS: float = 300.0
     ORION_PLANNING_ORPHAN_ACTION: Literal["delete", "quarantine"] = "quarantine"
     ORION_PLANNING_QUARANTINE_DIR: str = "production-quarantine"
+    ORION_SCRIPTING_PROVIDER: str = "simulated"
+    ORION_SCRIPTING_MODEL: str = "openai/gpt-4.1-mini"
+    ORION_SCRIPTING_API_KEY: SecretStr | None = None
+    ORION_SCRIPTING_BASE_URL: str = "https://openrouter.ai/api/v1"
+    ORION_SCRIPTING_TIMEOUT_SECONDS: float = 30.0
+    ORION_SCRIPTING_MAX_TRANSPORT_ATTEMPTS: int = 2
+    ORION_SCRIPTING_RETRY_BASE_DELAY_SECONDS: float = 0.25
+    ORION_SCRIPTING_MAX_OUTPUT_TOKENS: int = 8192
+    ORION_SCRIPTING_TEMPERATURE: float = 0.2
+    ORION_SCRIPTING_MAX_PLAN_BYTES: int = 1_000_000
+    ORION_SCRIPTING_MAX_SCRIPT_BYTES: int = 2_000_000
+    ORION_OPENROUTER_HTTP_REFERER: str | None = None
+    ORION_OPENROUTER_APP_TITLE: str | None = None
 
     # Paths
     ORION_HOME: Path = Path.home() / ".orion"
@@ -81,10 +97,6 @@ class Settings(BaseSettings):
     TELEMETRY_ENABLED: bool = True
     BENCHMARK_ENABLED: bool = True
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         # Ensure directories exist
@@ -102,6 +114,8 @@ class Settings(BaseSettings):
             "ORION_PRODUCTION_SHUTDOWN_TIMEOUT_SECONDS": self.ORION_PRODUCTION_SHUTDOWN_TIMEOUT_SECONDS,
             "ORION_PLANNING_TIMEOUT_SECONDS": self.ORION_PLANNING_TIMEOUT_SECONDS,
             "ORION_PLANNING_RETRY_BASE_DELAY_SECONDS": self.ORION_PLANNING_RETRY_BASE_DELAY_SECONDS,
+            "ORION_SCRIPTING_TIMEOUT_SECONDS": self.ORION_SCRIPTING_TIMEOUT_SECONDS,
+            "ORION_SCRIPTING_RETRY_BASE_DELAY_SECONDS": self.ORION_SCRIPTING_RETRY_BASE_DELAY_SECONDS,
         }
         for name, value in positive.items():
             if value <= 0:
@@ -119,6 +133,18 @@ class Settings(BaseSettings):
             raise ValueError("ORION_PLANNING_MAX_OUTPUT_TOKENS is outside safe limits")
         if not 0 <= self.ORION_PLANNING_TEMPERATURE <= 2:
             raise ValueError("ORION_PLANNING_TEMPERATURE must be between 0 and 2")
+        if not 1 <= self.ORION_SCRIPTING_MAX_TRANSPORT_ATTEMPTS <= 5:
+            raise ValueError("ORION_SCRIPTING_MAX_TRANSPORT_ATTEMPTS must be between 1 and 5")
+        if not 1 <= self.ORION_SCRIPTING_MAX_OUTPUT_TOKENS <= 100_000:
+            raise ValueError("ORION_SCRIPTING_MAX_OUTPUT_TOKENS is outside safe limits")
+        if not 0 <= self.ORION_SCRIPTING_TEMPERATURE <= 2:
+            raise ValueError("ORION_SCRIPTING_TEMPERATURE must be between 0 and 2")
+        for name, value in {
+            "ORION_SCRIPTING_MAX_PLAN_BYTES": self.ORION_SCRIPTING_MAX_PLAN_BYTES,
+            "ORION_SCRIPTING_MAX_SCRIPT_BYTES": self.ORION_SCRIPTING_MAX_SCRIPT_BYTES,
+        }.items():
+            if not 1 <= value <= 50_000_000:
+                raise ValueError(f"{name} is outside safe limits")
         if self.ORION_PLANNING_ORPHAN_MIN_AGE_SECONDS < 0:
             raise ValueError("ORION_PLANNING_ORPHAN_MIN_AGE_SECONDS cannot be negative")
         quarantine = self.ORION_PLANNING_QUARANTINE_DIR.strip()
@@ -133,6 +159,29 @@ class Settings(BaseSettings):
         ):
             raise ValueError("ORION_PLANNING_QUARANTINE_DIR must be a safe relative POSIX path")
         self.ORION_PLANNING_QUARANTINE_DIR = posix_path.as_posix()
+        if self.ORION_OPENROUTER_HTTP_REFERER is not None:
+            referer = self.ORION_OPENROUTER_HTTP_REFERER.strip()
+            parsed_referer = urlsplit(referer)
+            if (
+                not referer
+                or len(referer) > 2048
+                or any(ord(char) < 32 for char in referer)
+                or parsed_referer.scheme not in {"http", "https"}
+                or not parsed_referer.hostname
+                or parsed_referer.username
+                or parsed_referer.password
+            ):
+                raise ValueError("ORION_OPENROUTER_HTTP_REFERER is invalid")
+            self.ORION_OPENROUTER_HTTP_REFERER = referer
+        if self.ORION_OPENROUTER_APP_TITLE is not None:
+            title = self.ORION_OPENROUTER_APP_TITLE.strip()
+            if (
+                not title
+                or len(title) > 200
+                or any(ord(char) < 32 for char in title)
+            ):
+                raise ValueError("ORION_OPENROUTER_APP_TITLE is invalid")
+            self.ORION_OPENROUTER_APP_TITLE = title
         return self
 
     @property

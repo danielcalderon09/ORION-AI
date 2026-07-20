@@ -63,7 +63,7 @@ def verify_profile(*, smoke_script: str) -> None:
 
 def main() -> None:
     verify_profile(smoke_script="smoke_planning_minimal.py")
-    verify_profile(smoke_script="smoke_planning_openai.py")
+    verify_profile(smoke_script="smoke_production_openrouter.py")
     print("planning installation profiles: OK")
 
 

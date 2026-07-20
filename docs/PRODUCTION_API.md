@@ -1,5 +1,12 @@
 # Production Jobs API interna (Fase 4)
 
+## Compatibilidad con SCRIPTING de Fase 5B
+
+No hay rutas nuevas ni cambios HTTP. El listado puede incluir `production_script` con ruta
+relativa, MIME, tamano, checksum, provider/model y metadata sanitizada. Nunca incluye contenido
+del plan/script, prompts, keys, headers, payload externo o paths absolutos. La configuracion
+anidada de scripting valida una lista permitida; opciones privadas producen 422.
+
 ## Compatibilidad con Planning de Fase 5A
 
 No se agregan rutas ni campos secretos. `configuration` puede transportar las opciones

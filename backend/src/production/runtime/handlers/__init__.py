@@ -8,7 +8,7 @@ from backend.src.production.runtime.handlers.narration_handler import NarrationH
 from backend.src.production.runtime.handlers.planning_handler import PlanningHandler
 from backend.src.production.runtime.handlers.render_handler import RenderHandler
 from backend.src.production.runtime.handlers.scene_planning_handler import ScenePlanningHandler
-from backend.src.production.runtime.handlers.script_handler import ScriptHandler
+from backend.src.production.runtime.handlers.script_handler import ScriptHandler, ScriptingHandler
 from backend.src.production.runtime.handlers.subtitle_handler import SubtitleHandler
 from backend.src.production.runtime.handlers.timeline_handler import TimelineHandler
 from backend.src.production.runtime.handlers.validation_handler import ValidationHandler
@@ -22,6 +22,7 @@ __all__ = [
     "RenderHandler",
     "ScenePlanningHandler",
     "ScriptHandler",
+    "ScriptingHandler",
     "StageHandler",
     "SubtitleHandler",
     "TimelineHandler",

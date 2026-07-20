@@ -183,6 +183,15 @@ class PlanningHandler:
         if not context.job_prompt.strip():
             raise PlanningProviderConfigurationError("production prompt is missing")
         raw_configuration = command.configuration_snapshot.get("configuration", {})
+        if isinstance(raw_configuration, dict) and (
+            "planning" in raw_configuration or "scripting" in raw_configuration
+        ):
+            unknown = set(raw_configuration) - {"planning", "scripting"}
+            if unknown:
+                raise PlanningProviderConfigurationError(
+                    "nested production configuration contains unsupported capabilities"
+                )
+            raw_configuration = raw_configuration.get("planning", {})
         configuration = PlanningJobConfiguration.model_validate(raw_configuration)
         return PlanningProviderRequest(
             job_id=command.job_id,
