@@ -15,6 +15,7 @@ class StageRegistry:
         ProductionStage.PLANNING,
         ProductionStage.SCRIPTING,
         ProductionStage.SCENE_PLANNING,
+        ProductionStage.VISUAL_ASSET_PLANNING,
         ProductionStage.ACQUIRING_ASSETS,
         ProductionStage.GENERATING_NARRATION,
         ProductionStage.PREPARING_MUSIC,

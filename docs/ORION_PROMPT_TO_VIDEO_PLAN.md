@@ -1,13 +1,17 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
-## Estado de Fase 5B
+## Estado de Fase 5D
 
-SCRIPTING consume el `ProductionPlan` durable con validacion fisica/contractual y produce
-`production-script.json` mediante provider simulated u OpenRouter lazy sobre transporte
-OpenAI-compatible. SCENE_PLANNING consume ahora el ProductionScript durable mediante un provider
-configurable y produce scene-plan.json; todo lo
-posterior permanecen simulados. La siguiente fase recomendada es 5C: consumo durable del
-script por SCENE_PLANNING, sin adelantar assets, audio, render, DaVinci o frontend.
+PLANNING, SCRIPTING y SCENE_PLANNING conservan sus contratos durables. La nueva etapa
+VISUAL_ASSET_PLANNING consume exclusivamente `scene-plan.json`, verifica artifact, ruta, tamaño,
+SHA-256, UTF-8, JSON estricto y schema, y produce `visual-asset-plan.json` con mapping
+scene/shot/asset, cámara/timing aprobados y continuidad visual tipada. El provider default es
+simulated; OpenRouter es opcional y lazy sobre el transporte OpenAI-compatible compartido.
+
+No se generan ni descargan imágenes o videos. Tampoco existen TTS, música, SFX, subtítulos,
+timeline, render, DaVinci o frontend de producción. La siguiente fase recomendada es la
+generación/adquisición real de assets visuales mediante puertos separados, límites de red,
+licencias, MIME/checksum y almacenamiento binario seguro.
 
 ## Estado de Fase 5A.1
 

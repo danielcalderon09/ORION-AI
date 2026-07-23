@@ -184,9 +184,15 @@ class PlanningHandler:
             raise PlanningProviderConfigurationError("production prompt is missing")
         raw_configuration = command.configuration_snapshot.get("configuration", {})
         if isinstance(raw_configuration, dict) and (
-            "planning" in raw_configuration or "scripting" in raw_configuration
+            "planning" in raw_configuration
+            or "scripting" in raw_configuration
+            or "visual_asset_planning" in raw_configuration
         ):
-            unknown = set(raw_configuration) - {"planning", "scripting"}
+            unknown = set(raw_configuration) - {
+                "planning",
+                "scripting",
+                "visual_asset_planning",
+            }
             if unknown:
                 raise PlanningProviderConfigurationError(
                     "nested production configuration contains unsupported capabilities"

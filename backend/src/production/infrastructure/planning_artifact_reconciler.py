@@ -35,6 +35,10 @@ SCRIPTING_POLICY = JsonArtifactReconciliationPolicy(
 SCENE_PLANNING_POLICY = JsonArtifactReconciliationPolicy(
     stage="scene_planning", filename="scene-plan.json"
 )
+VISUAL_ASSET_PLANNING_POLICY = JsonArtifactReconciliationPolicy(
+    stage="visual_asset_planning",
+    filename="visual-asset-plan.json",
+)
 
 
 class LocalPlanningArtifactReconciler:
@@ -240,7 +244,12 @@ class LocalProductionArtifactReconciler(LocalPlanningArtifactReconciler):
             action=action,
             quarantine_relative_path=quarantine_relative_path,
             clock=clock,
-            policies=(PLANNING_POLICY, SCRIPTING_POLICY, SCENE_PLANNING_POLICY),
+            policies=(
+                PLANNING_POLICY,
+                SCRIPTING_POLICY,
+                SCENE_PLANNING_POLICY,
+                VISUAL_ASSET_PLANNING_POLICY,
+            ),
         )
 
 

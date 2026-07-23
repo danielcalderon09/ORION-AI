@@ -26,6 +26,9 @@ from backend.src.production.domain.enums import ArtifactType
 from backend.src.production.infrastructure.durable_production_plan_reader import (
     DurableProductionPlanReader,
 )
+from backend.src.production.infrastructure.durable_production_scene_plan_reader import (
+    DurableProductionScenePlanReader,
+)
 from backend.src.production.infrastructure.durable_production_script_reader import (
     DurableProductionScriptReader,
 )
@@ -34,6 +37,9 @@ from backend.src.production.infrastructure.persistence.planning_artifact_reader 
 )
 from backend.src.production.infrastructure.persistence.production_plan_query_repository import (
     SQLAlchemyProductionPlanQueryRepository,
+)
+from backend.src.production.infrastructure.persistence.production_scene_plan_query_repository import (
+    SQLAlchemyProductionScenePlanQueryRepository,
 )
 from backend.src.production.infrastructure.persistence.production_script_query_repository import (
     SQLAlchemyProductionScriptQueryRepository,
@@ -114,6 +120,28 @@ from backend.src.production.scripting.providers.availability import (
     ScriptingProviderFactory,
     load_openrouter_scripting_provider,
 )
+from backend.src.production.visual_asset_planning.artifact_writer import (
+    LocalVisualAssetPlanningArtifactWriter,
+)
+from backend.src.production.visual_asset_planning.exceptions import (
+    VisualAssetPlanningProviderConfigurationException,
+)
+from backend.src.production.visual_asset_planning.handler import (
+    VisualAssetPlanningHandler,
+)
+from backend.src.production.visual_asset_planning.ports import (
+    VisualAssetPlanningProvider,
+)
+from backend.src.production.visual_asset_planning.prompt_builder import (
+    VisualAssetPlanningPromptBuilder,
+)
+from backend.src.production.visual_asset_planning.providers import (
+    SimulatedVisualAssetPlanningProvider,
+)
+from backend.src.production.visual_asset_planning.providers.availability import (
+    VisualAssetPlanningProviderFactory,
+    load_openrouter_visual_asset_planning_provider,
+)
 
 
 class AsyncClosable(Protocol):
@@ -135,6 +163,7 @@ class ProductionContainer:
     planning_provider: PlanningProvider
     scripting_provider: ScriptingProvider
     scene_planning_provider: ScenePlanningProvider
+    visual_asset_planning_provider: VisualAssetPlanningProvider
     planning_artifact_reconciler: PlanningArtifactReconciler
     async_resources: tuple[AsyncClosable, ...]
 
@@ -160,6 +189,9 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         return datetime.now(UTC)
     scripting_factory = _resolve_scripting_provider_factory(settings)
     scene_planning_factory = _resolve_scene_planning_provider_factory(settings)
+    visual_asset_planning_factory = (
+        _resolve_visual_asset_planning_provider_factory(settings)
+    )
     engine = create_production_engine(
         settings.production_database_url,
         echo=settings.ORION_DATABASE_ECHO,
@@ -181,6 +213,10 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         scene_planning_provider = _build_scene_planning_provider(
             settings,
             openrouter_factory=scene_planning_factory,
+        )
+        visual_asset_planning_provider = _build_visual_asset_planning_provider(
+            settings,
+            openrouter_factory=visual_asset_planning_factory,
         )
     except Exception:
         engine.dispose()
@@ -219,6 +255,24 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         clock=clock,
         uuid_factory=uuid4,
     )
+    visual_asset_planning_handler = VisualAssetPlanningHandler(
+        scene_plan_reader=DurableProductionScenePlanReader(
+            workspace_root=settings.PROJECTS_DIR,
+            repository=SQLAlchemyProductionScenePlanQueryRepository(sessions),
+            max_scene_plan_bytes=(
+                settings.ORION_VISUAL_ASSET_PLANNING_MAX_SCENE_PLAN_BYTES
+            ),
+        ),
+        provider=visual_asset_planning_provider,
+        artifact_writer=LocalVisualAssetPlanningArtifactWriter(
+            settings.PROJECTS_DIR,
+            max_artifact_bytes=(
+                settings.ORION_VISUAL_ASSET_PLANNING_MAX_ARTIFACT_BYTES
+            ),
+        ),
+        clock=clock,
+        uuid_factory=uuid4,
+    )
     planning_artifact_reconciler = LocalProductionArtifactReconciler(
         workspace_root=settings.PROJECTS_DIR,
         registered_reader=SQLAlchemyRegisteredPlanningArtifactReader(
@@ -228,6 +282,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                     ArtifactType.PRODUCTION_PLAN,
                     ArtifactType.PRODUCTION_SCRIPT,
                     ArtifactType.PRODUCTION_SCENE_PLAN,
+                    ArtifactType.PRODUCTION_VISUAL_ASSET_PLAN,
                 }
             ),
         ),
@@ -269,6 +324,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                 planning_handler=planning_handler,
                 scripting_handler=scripting_handler,
                 scene_planning_handler=scene_planning_handler,
+                visual_asset_planning_handler=visual_asset_planning_handler,
                 clock=clock,
                 uuid_factory=uuid4,
             )
@@ -317,8 +373,14 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         planning_provider=planning_provider,
         scripting_provider=scripting_provider,
         scene_planning_provider=scene_planning_provider,
+        visual_asset_planning_provider=visual_asset_planning_provider,
         planning_artifact_reconciler=planning_artifact_reconciler,
-        async_resources=(scene_planning_provider, scripting_provider, planning_provider),
+        async_resources=(
+            visual_asset_planning_provider,
+            scene_planning_provider,
+            scripting_provider,
+            planning_provider,
+        ),
     )
 
 
@@ -457,6 +519,66 @@ def _build_scene_planning_provider(
         ),
         max_output_tokens=settings.ORION_SCENE_PLANNING_MAX_OUTPUT_TOKENS,
         temperature=settings.ORION_SCENE_PLANNING_TEMPERATURE,
+        http_referer=settings.ORION_OPENROUTER_HTTP_REFERER,
+        app_title=settings.ORION_OPENROUTER_APP_TITLE,
+    )
+
+
+def _resolve_visual_asset_planning_provider_factory(
+    settings: Settings,
+) -> VisualAssetPlanningProviderFactory | None:
+    provider_name = settings.ORION_VISUAL_ASSET_PLANNING_PROVIDER.strip().lower()
+    if provider_name == "simulated":
+        return None
+    if provider_name != "openrouter":
+        raise VisualAssetPlanningProviderConfigurationException(
+            f"unsupported visual asset planning provider: {provider_name!r}"
+        )
+    if settings.ORION_VISUAL_ASSET_PLANNING_API_KEY is None:
+        raise VisualAssetPlanningProviderConfigurationException(
+            "visual asset planning provider credential is missing"
+        )
+    if not settings.ORION_VISUAL_ASSET_PLANNING_MODEL.strip():
+        raise VisualAssetPlanningProviderConfigurationException(
+            "visual asset planning model is missing"
+        )
+    _validate_https_provider_url(
+        settings.ORION_VISUAL_ASSET_PLANNING_BASE_URL,
+        error_type=VisualAssetPlanningProviderConfigurationException,
+        message="visual asset planning base URL is invalid",
+    )
+    return load_openrouter_visual_asset_planning_provider()
+
+
+def _build_visual_asset_planning_provider(
+    settings: Settings,
+    *,
+    openrouter_factory: VisualAssetPlanningProviderFactory | None,
+) -> VisualAssetPlanningProvider:
+    if openrouter_factory is None:
+        return SimulatedVisualAssetPlanningProvider()
+    if settings.ORION_VISUAL_ASSET_PLANNING_API_KEY is None:
+        raise VisualAssetPlanningProviderConfigurationException(
+            "visual asset planning provider credential is missing"
+        )
+    return openrouter_factory(
+        api_key=settings.ORION_VISUAL_ASSET_PLANNING_API_KEY.get_secret_value(),
+        model=settings.ORION_VISUAL_ASSET_PLANNING_MODEL,
+        prompt_builder=VisualAssetPlanningPromptBuilder(
+            max_scene_plan_bytes=(
+                settings.ORION_VISUAL_ASSET_PLANNING_MAX_SCENE_PLAN_BYTES
+            )
+        ),
+        base_url=settings.ORION_VISUAL_ASSET_PLANNING_BASE_URL,
+        timeout_seconds=settings.ORION_VISUAL_ASSET_PLANNING_TIMEOUT_SECONDS,
+        max_transport_attempts=(
+            settings.ORION_VISUAL_ASSET_PLANNING_MAX_TRANSPORT_ATTEMPTS
+        ),
+        retry_base_delay_seconds=(
+            settings.ORION_VISUAL_ASSET_PLANNING_RETRY_BASE_DELAY_SECONDS
+        ),
+        max_output_tokens=settings.ORION_VISUAL_ASSET_PLANNING_MAX_OUTPUT_TOKENS,
+        temperature=settings.ORION_VISUAL_ASSET_PLANNING_TEMPERATURE,
         http_referer=settings.ORION_OPENROUTER_HTTP_REFERER,
         app_title=settings.ORION_OPENROUTER_APP_TITLE,
     )

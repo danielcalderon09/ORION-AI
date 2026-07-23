@@ -3,7 +3,8 @@
 ## Arquitectura y pipeline
 
 Fase 5C transforma un `ProductionScript` durable en un `ProductionScenePlan` durable. No usa el
-prompt original y no genera imagenes, video ni assets.
+prompt original y no genera imágenes, video ni assets. Fase 5D consume este artifact sin cambiar
+el contrato de Scene Planning.
 
 ```text
 StageCommand(SCENE_PLANNING)
@@ -100,3 +101,6 @@ ORION_SCENE_PLANNING_PROVIDER=simulated
 Fase 5C no implementa assets, Image Provider, Video Provider, Voice Provider, narracion real,
 musica, subtitulos, timeline, render, DaVinci, Electron, frontend, WebSockets, Redis, OpenCV ni
 FFmpeg.
+
+La etapa siguiente implementada es VISUAL_ASSET_PLANNING, que genera únicamente especificaciones
+JSON. La generación o adquisición real de assets visuales permanece pendiente.

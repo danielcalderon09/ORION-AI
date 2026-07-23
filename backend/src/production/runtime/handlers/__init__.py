@@ -12,6 +12,9 @@ from backend.src.production.runtime.handlers.script_handler import ScriptHandler
 from backend.src.production.runtime.handlers.subtitle_handler import SubtitleHandler
 from backend.src.production.runtime.handlers.timeline_handler import TimelineHandler
 from backend.src.production.runtime.handlers.validation_handler import ValidationHandler
+from backend.src.production.runtime.handlers.visual_asset_planning_handler import (
+    VisualAssetPlanningHandler,
+)
 
 __all__ = [
     "AssetHandler",
@@ -27,4 +30,5 @@ __all__ = [
     "SubtitleHandler",
     "TimelineHandler",
     "ValidationHandler",
+    "VisualAssetPlanningHandler",
 ]

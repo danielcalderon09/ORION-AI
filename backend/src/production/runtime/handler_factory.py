@@ -24,8 +24,14 @@ from backend.src.production.runtime.handlers import (
 from backend.src.production.runtime.handlers import (
     ScenePlanningHandler as SimulatedScenePlanningHandler,
 )
+from backend.src.production.runtime.handlers import (
+    VisualAssetPlanningHandler as SimulatedVisualAssetPlanningHandler,
+)
 from backend.src.production.runtime.job_dispatcher import StageHandlerRegistry
 from backend.src.production.scene_planning.handler import ScenePlanningHandler
+from backend.src.production.visual_asset_planning.handler import (
+    VisualAssetPlanningHandler,
+)
 
 
 def create_simulated_handler_registry(
@@ -41,6 +47,10 @@ def create_simulated_handler_registry(
             ),
             ScriptHandler(clock=clock, uuid_factory=uuid_factory),
             SimulatedScenePlanningHandler(clock=clock, uuid_factory=uuid_factory),
+            SimulatedVisualAssetPlanningHandler(
+                clock=clock,
+                uuid_factory=uuid_factory,
+            ),
             AssetHandler(clock=clock, uuid_factory=uuid_factory),
             NarrationHandler(clock=clock, uuid_factory=uuid_factory),
             MusicHandler(clock=clock, uuid_factory=uuid_factory),
@@ -58,6 +68,7 @@ def create_handler_registry(
     planning_handler: PlanningHandler,
     scripting_handler: ScriptingHandler | None = None,
     scene_planning_handler: ScenePlanningHandler | None = None,
+    visual_asset_planning_handler: VisualAssetPlanningHandler | None = None,
     clock: Callable[[], datetime],
     uuid_factory: Callable[[], UUID],
 ) -> StageHandlerRegistry:
@@ -69,6 +80,11 @@ def create_handler_registry(
             scripting_handler or ScriptHandler(clock=clock, uuid_factory=uuid_factory),
             scene_planning_handler
             or SimulatedScenePlanningHandler(clock=clock, uuid_factory=uuid_factory),
+            visual_asset_planning_handler
+            or SimulatedVisualAssetPlanningHandler(
+                clock=clock,
+                uuid_factory=uuid_factory,
+            ),
             AssetHandler(clock=clock, uuid_factory=uuid_factory),
             NarrationHandler(clock=clock, uuid_factory=uuid_factory),
             MusicHandler(clock=clock, uuid_factory=uuid_factory),

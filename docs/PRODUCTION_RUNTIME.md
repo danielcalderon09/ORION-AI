@@ -1,5 +1,25 @@
 # Runtime local de Production Pipeline
 
+## VISUAL_ASSET_PLANNING durable (Fase 5D)
+
+La etapa se ejecuta inmediatamente después de SCENE_PLANNING. El
+`DurableProductionScenePlanReader` selecciona únicamente un
+`ArtifactType.PRODUCTION_SCENE_PLAN` del mismo job, prioriza los inputs explícitos y verifica ruta
+contractual, confinamiento, symlinks, archivo regular, límite de bytes, tamaño, SHA-256, UTF-8,
+JSON estricto sin duplicados y schema. El handler recibe el contrato validado; nunca recibe el
+prompt original, ProductionPlan ni ProductionScript.
+
+El provider produce solo `ProductionVisualAssetPlan`: especificaciones visuales, referencias
+deterministas y continuidad; el writer publica `visual-asset-plan.json` mediante temporal,
+`fsync` y `os.replace`. Recovery reutiliza únicamente el archivo del mismo attempt cuando su
+artifact/checksum de origen y mapping completo todavía coinciden. Retry durable usa un nuevo
+attempt. La reconciliación conservadora reconoce exclusivamente plan, script, scene plan y visual
+asset plan.
+
+`simulated` es el provider default y offline. `openrouter` reutiliza el cliente neutral
+OpenAI-compatible, es lazy y no hace llamadas en startup. Shutdown cierra Visual Asset Planning,
+Scene Planning, Scripting, Planning y finalmente el engine.
+
 ## SCENE_PLANNING durable (Fase 5C)
 
 Production inyecta un `ScenePlanningHandler` independiente despues de SCRIPTING. El handler lee
@@ -13,8 +33,8 @@ existe un scene plan valido y coherente con el script aprobado, recovery reconst
 sin otra generacion. El runtime durable sigue garantizando una sola persistencia por comando y
 leases exclusivos. Reconciliacion incluye plan, script y scene plan, sin seguir symlinks.
 
-El provider default es `simulated`; `openrouter` usa el transporte neutral lazy. Shutdown cierra
-Scene Planning, Scripting, Planning y finalmente el engine. Assets, narracion, musica, subtitulos,
+El provider default es `simulated`; `openrouter` usa el transporte neutral lazy. Assets reales,
+narracion, musica, subtitulos,
 timeline, render y handoff permanecen simulados.
 
 ## SCRIPTING durable (Fase 5B)

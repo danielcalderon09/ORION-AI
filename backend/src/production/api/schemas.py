@@ -24,6 +24,9 @@ from backend.src.production.domain.enums import (
 )
 from backend.src.production.planning.models import PlanningJobConfiguration
 from backend.src.production.scripting.configuration import ScriptingConfiguration
+from backend.src.production.visual_asset_planning.configuration import (
+    VisualAssetPlanningConfiguration,
+)
 
 
 class PublicSchema(BaseModel):
@@ -55,13 +58,22 @@ class CreateProductionJobRequest(PublicSchema):
         if not isinstance(validated, dict):
             raise ValueError(f"{info.field_name} must be an object")
         if info.field_name == "configuration" and (
-            "planning" in validated or "scripting" in validated
+            "planning" in validated
+            or "scripting" in validated
+            or "visual_asset_planning" in validated
         ):
-            unknown = set(validated) - {"planning", "scripting"}
+            unknown = set(validated) - {
+                "planning",
+                "scripting",
+                "visual_asset_planning",
+            }
             if unknown:
                 raise ValueError("nested configuration contains unsupported capabilities")
             PlanningJobConfiguration.model_validate(validated.get("planning", {}))
             ScriptingConfiguration.model_validate(validated.get("scripting", {}))
+            VisualAssetPlanningConfiguration.model_validate(
+                validated.get("visual_asset_planning", {})
+            )
         return validated
 
 

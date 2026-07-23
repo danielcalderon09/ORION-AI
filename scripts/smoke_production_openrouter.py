@@ -20,6 +20,12 @@ from backend.src.production.scripting.prompt_builder import ScriptingPromptBuild
 from backend.src.production.scripting.providers.openrouter_provider import (
     OpenRouterScriptingProvider,
 )
+from backend.src.production.visual_asset_planning.prompt_builder import (
+    VisualAssetPlanningPromptBuilder,
+)
+from backend.src.production.visual_asset_planning.providers.openrouter_provider import (
+    OpenRouterVisualAssetPlanningProvider,
+)
 
 
 async def smoke() -> None:
@@ -62,6 +68,20 @@ async def smoke() -> None:
     )
     await scene_planning.close()
     assert scene_planning_client.is_closed
+    visual_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: None)
+    )
+    visual = OpenRouterVisualAssetPlanningProvider(
+        api_key="smoke-test-only",
+        model="qwen/smoke-model",
+        prompt_builder=VisualAssetPlanningPromptBuilder(
+            max_scene_plan_bytes=100_000
+        ),
+        client=visual_client,
+        max_transport_attempts=1,
+    )
+    await visual.close()
+    assert visual_client.is_closed
     print("production OpenRouter installation smoke: OK (zero requests)")
 
 

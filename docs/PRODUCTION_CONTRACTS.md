@@ -43,6 +43,19 @@ Los modelos son estrictos, inmutables y no contienen dicts arbitrarios. El contr
 nuevo contra el script despues del provider y durante recovery. `ArtifactType.PRODUCTION_SCENE_PLAN`
 es aditivo sobre la columna textual existente, por lo que Fase 5C no requiere migracion.
 
+## Contratos ejecutables de VISUAL_ASSET_PLANNING (Fase 5D)
+
+`ProductionVisualAssetPlan` es independiente de los artifacts multimedia. Consume solo un
+`ProductionScenePlan` aprobado y conserva título, idioma, scene/shot IDs, cámara y duración.
+Contiene `ProductionVisualAssetSpec`, `VisualComposition` y `VisualConsistencyProfile` tipados;
+`AssetKind`, `GenerationMode`, `SeedPolicy`, roles y clases de entidad son enums cerrados.
+
+`validate_visual_asset_plan_against_scene_plan` exige al menos un asset principal por shot,
+mapping exacto, IDs únicos, orden determinista, dimensiones/ratio coherentes y referencias
+anteriores, válidas y acíclicas. La procedencia durable incluye artifact ID y SHA-256 del scene
+plan. `ArtifactType.PRODUCTION_VISUAL_ASSET_PLAN` se guarda como string en la columna existente,
+por lo que Fase 5D no requiere migración.
+
 ## Principios
 
 - El dominio es importable sin FastAPI, OpenCV, FFmpeg, DaVinci o acceso a IO.

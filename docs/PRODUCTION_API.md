@@ -1,5 +1,13 @@
 # Production Jobs API interna (Fase 4)
 
+## Compatibilidad con VISUAL_ASSET_PLANNING de Fase 5D
+
+No existen endpoints nuevos. `configuration.visual_asset_planning` acepta únicamente preferencias
+creativas públicas validadas; provider, model, key, URL, headers, timeout, retries, paths, clases,
+system prompt y schemas externos producen 422. El listado de artifacts puede incluir
+`production_visual_asset_plan` con ruta relativa, MIME, tamaño, SHA-256, provider/model y metadata
+sanitizada. Nunca devuelve el contenido de `visual-asset-plan.json`, prompts o respuestas externas.
+
 ## Compatibilidad con SCRIPTING de Fase 5B
 
 No hay rutas nuevas ni cambios HTTP. El listado puede incluir `production_script` con ruta

@@ -31,7 +31,9 @@ class OpenAICompatibleUnavailableError(OpenAICompatibleError):
 
 
 class OpenAICompatibleProtocolError(OpenAICompatibleError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -167,7 +169,8 @@ class OpenAICompatibleResponsesClient:
         if status in {408, 425} or status >= 500:
             raise OpenAICompatibleUnavailableError("provider is unavailable")
         raise OpenAICompatibleProtocolError(
-            f"provider returned unsupported status {status}"
+            f"provider returned unsupported status {status}",
+            status_code=status,
         )
 
     @staticmethod

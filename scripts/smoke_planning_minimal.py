@@ -38,6 +38,9 @@ def main() -> None:
             SimulatedScenePlanningProvider,
         )
         from backend.src.production.scripting.providers import SimulatedScriptingProvider
+        from backend.src.production.visual_asset_planning.providers import (
+            SimulatedVisualAssetPlanningProvider,
+        )
 
         settings = Settings(
             _env_file=None,
@@ -51,11 +54,16 @@ def main() -> None:
         assert SimulatedPlanningProvider is not None
         assert SimulatedScriptingProvider is not None
         assert SimulatedScenePlanningProvider is not None
+        assert SimulatedVisualAssetPlanningProvider is not None
         assert app is not None
         assert "backend.src.production.planning.providers.openrouter_provider" not in sys.modules
         assert "backend.src.production.scripting.providers.openrouter_provider" not in sys.modules
         assert (
             "backend.src.production.scene_planning.providers.openrouter_provider"
+            not in sys.modules
+        )
+        assert (
+            "backend.src.production.visual_asset_planning.providers.openrouter_provider"
             not in sys.modules
         )
         assert "backend.src.production.planning.providers.openai_provider" not in sys.modules

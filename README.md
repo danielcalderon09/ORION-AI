@@ -56,7 +56,7 @@ python scripts/batch_processor.py --videos=./samples --profile=balanced --max-wo
 pip install -e ".[dev]"
 python -m backend.src.main
 
-# Soporte opcional OpenRouter para PLANNING, SCRIPTING y SCENE_PLANNING
+# Soporte opcional OpenRouter para las cuatro etapas creativas durables
 pip install -e ".[production-llm]"
 
 # Alias descriptivo equivalente
@@ -80,6 +80,13 @@ SCENE_PLANNING consume exclusivamente el `ProductionScript` durable y produce
 tambien es `simulated`; OpenRouter se habilita de forma independiente y lazy. El artifact contiene
 escenas, shots, camara, timing y transiciones tipados, sin generar imagenes ni video. Consulta
 [`docs/PRODUCTION_SCENE_PLANNING_PROVIDER.md`](docs/PRODUCTION_SCENE_PLANNING_PROVIDER.md).
+
+VISUAL_ASSET_PLANNING consume exclusivamente el `ProductionScenePlan` durable y produce
+`production/<job_id>/visual_asset_planning/attempt-<n>/visual-asset-plan.json`. El plan contiene
+especificaciones tipadas por shot, cámara aprobada, timing, dimensiones, prompts seguros y una
+biblia de continuidad; no genera ni descarga archivos multimedia. `simulated` sigue siendo el
+default y OpenRouter es opcional/lazy. Consulta
+[`docs/PRODUCTION_VISUAL_ASSET_PLANNING_PROVIDER.md`](docs/PRODUCTION_VISUAL_ASSET_PLANNING_PROVIDER.md).
 
 ### Frontend
 ```bash
