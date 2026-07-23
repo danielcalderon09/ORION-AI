@@ -1,0 +1,1 @@
+"""Image acquisition unit tests."""

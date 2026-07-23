@@ -43,6 +43,27 @@ from backend.src.production.binary_assets.validators import (
     BinaryAssetIntegrityValidator,
 )
 from backend.src.production.domain.enums import ArtifactType
+from backend.src.production.image_acquisition.configuration import (
+    ImageAcquisitionConfiguration,
+)
+from backend.src.production.image_acquisition.exceptions import (
+    ImageAcquisitionProviderConfigurationException,
+)
+from backend.src.production.image_acquisition.handler import ImageAcquisitionHandler
+from backend.src.production.image_acquisition.manifest_writer import (
+    LocalImageAcquisitionManifestWriter,
+)
+from backend.src.production.image_acquisition.ports import ImageAcquisitionProvider
+from backend.src.production.image_acquisition.prompt_builder import (
+    ImageGenerationPromptBuilder,
+)
+from backend.src.production.image_acquisition.providers import (
+    SimulatedImageAcquisitionProvider,
+)
+from backend.src.production.image_acquisition.providers.availability import (
+    ImageAcquisitionProviderFactory,
+    load_openrouter_image_acquisition_provider,
+)
 from backend.src.production.infrastructure.durable_production_plan_reader import (
     DurableProductionPlanReader,
 )
@@ -51,6 +72,9 @@ from backend.src.production.infrastructure.durable_production_scene_plan_reader 
 )
 from backend.src.production.infrastructure.durable_production_script_reader import (
     DurableProductionScriptReader,
+)
+from backend.src.production.infrastructure.durable_production_visual_asset_plan_reader import (
+    DurableProductionVisualAssetPlanReader,
 )
 from backend.src.production.infrastructure.persistence.planning_artifact_reader import (
     SQLAlchemyRegisteredPlanningArtifactReader,
@@ -63,6 +87,9 @@ from backend.src.production.infrastructure.persistence.production_scene_plan_que
 )
 from backend.src.production.infrastructure.persistence.production_script_query_repository import (
     SQLAlchemyProductionScriptQueryRepository,
+)
+from backend.src.production.infrastructure.persistence.production_visual_asset_plan_query_repository import (
+    SQLAlchemyProductionVisualAssetPlanQueryRepository,
 )
 from backend.src.production.infrastructure.persistence.query_repositories import (
     SQLAlchemyProductionArtifactQueryRepository,
@@ -184,6 +211,7 @@ class ProductionContainer:
     scripting_provider: ScriptingProvider
     scene_planning_provider: ScenePlanningProvider
     visual_asset_planning_provider: VisualAssetPlanningProvider
+    image_acquisition_provider: ImageAcquisitionProvider
     binary_asset_configuration: AssetStorageConfiguration
     binary_asset_store: BinaryAssetStore
     binary_asset_writer: BinaryAssetWriter
@@ -218,6 +246,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
     visual_asset_planning_factory = (
         _resolve_visual_asset_planning_provider_factory(settings)
     )
+    image_acquisition_factory = _resolve_image_acquisition_provider_factory(settings)
     engine = create_production_engine(
         settings.production_database_url,
         echo=settings.ORION_DATABASE_ECHO,
@@ -243,6 +272,10 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         visual_asset_planning_provider = _build_visual_asset_planning_provider(
             settings,
             openrouter_factory=visual_asset_planning_factory,
+        )
+        image_acquisition_provider = _build_image_acquisition_provider(
+            settings,
+            openrouter_factory=image_acquisition_factory,
         )
     except Exception:
         engine.dispose()
@@ -322,6 +355,33 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         integrity_validator=binary_asset_integrity_validator,
         clock=clock,
     )
+    image_prompt_builder = ImageGenerationPromptBuilder(
+        max_prompt_bytes=settings.ORION_IMAGE_ACQUISITION_MAX_PLAN_BYTES,
+    )
+    image_acquisition_handler = ImageAcquisitionHandler(
+        plan_reader=DurableProductionVisualAssetPlanReader(
+            workspace_root=settings.PROJECTS_DIR,
+            repository=SQLAlchemyProductionVisualAssetPlanQueryRepository(sessions),
+            max_plan_bytes=settings.ORION_IMAGE_ACQUISITION_MAX_PLAN_BYTES,
+        ),
+        provider=image_acquisition_provider,
+        manifest_writer=LocalImageAcquisitionManifestWriter(
+            settings.PROJECTS_DIR,
+            max_manifest_bytes=settings.ORION_IMAGE_ACQUISITION_MAX_MANIFEST_BYTES,
+        ),
+        binary_reader=filesystem_binary_asset_store,
+        binary_writer=filesystem_binary_asset_store,
+        configuration=ImageAcquisitionConfiguration(
+            output_format=settings.ORION_IMAGE_ACQUISITION_OUTPUT_FORMAT,
+            quality=settings.ORION_IMAGE_ACQUISITION_QUALITY,
+        ),
+        provider_name=settings.ORION_IMAGE_ACQUISITION_PROVIDER.strip().lower(),
+        requested_model=(
+            settings.ORION_IMAGE_ACQUISITION_MODEL.strip() or None
+        ),
+        prompt_builder=image_prompt_builder,
+        clock=clock,
+    )
     binary_asset_reconciler = FilesystemBinaryAssetReconciler(
         configuration=binary_asset_configuration,
         store=filesystem_binary_asset_store,
@@ -336,6 +396,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                     ArtifactType.PRODUCTION_SCRIPT,
                     ArtifactType.PRODUCTION_SCENE_PLAN,
                     ArtifactType.PRODUCTION_VISUAL_ASSET_PLAN,
+                    ArtifactType.PRODUCTION_IMAGE_ACQUISITION_MANIFEST,
                 }
             ),
         ),
@@ -379,6 +440,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                 scripting_handler=scripting_handler,
                 scene_planning_handler=scene_planning_handler,
                 visual_asset_planning_handler=visual_asset_planning_handler,
+                image_acquisition_handler=image_acquisition_handler,
                 clock=clock,
                 uuid_factory=uuid4,
             )
@@ -428,6 +490,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         scripting_provider=scripting_provider,
         scene_planning_provider=scene_planning_provider,
         visual_asset_planning_provider=visual_asset_planning_provider,
+        image_acquisition_provider=image_acquisition_provider,
         binary_asset_configuration=binary_asset_configuration,
         binary_asset_store=filesystem_binary_asset_store,
         binary_asset_writer=filesystem_binary_asset_store,
@@ -436,6 +499,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         binary_asset_reconciler=binary_asset_reconciler,
         planning_artifact_reconciler=planning_artifact_reconciler,
         async_resources=(
+            image_acquisition_provider,
             visual_asset_planning_provider,
             scene_planning_provider,
             scripting_provider,
@@ -639,6 +703,67 @@ def _build_visual_asset_planning_provider(
         ),
         max_output_tokens=settings.ORION_VISUAL_ASSET_PLANNING_MAX_OUTPUT_TOKENS,
         temperature=settings.ORION_VISUAL_ASSET_PLANNING_TEMPERATURE,
+        http_referer=settings.ORION_OPENROUTER_HTTP_REFERER,
+        app_title=settings.ORION_OPENROUTER_APP_TITLE,
+    )
+
+
+def _resolve_image_acquisition_provider_factory(
+    settings: Settings,
+) -> ImageAcquisitionProviderFactory | None:
+    provider_name = settings.ORION_IMAGE_ACQUISITION_PROVIDER.strip().lower()
+    if provider_name == "simulated":
+        return None
+    if provider_name != "openrouter":
+        raise ImageAcquisitionProviderConfigurationException(
+            f"unsupported image acquisition provider: {provider_name!r}"
+        )
+    if settings.ORION_IMAGE_ACQUISITION_API_KEY is None:
+        raise ImageAcquisitionProviderConfigurationException(
+            "image acquisition provider credential is missing"
+        )
+    if not settings.ORION_IMAGE_ACQUISITION_MODEL.strip():
+        raise ImageAcquisitionProviderConfigurationException(
+            "image acquisition model is missing"
+        )
+    _validate_https_provider_url(
+        settings.ORION_IMAGE_ACQUISITION_BASE_URL,
+        error_type=ImageAcquisitionProviderConfigurationException,
+        message="image acquisition base URL is invalid",
+    )
+    return load_openrouter_image_acquisition_provider()
+
+
+def _build_image_acquisition_provider(
+    settings: Settings,
+    *,
+    openrouter_factory: ImageAcquisitionProviderFactory | None,
+) -> ImageAcquisitionProvider:
+    if openrouter_factory is None:
+        return SimulatedImageAcquisitionProvider()
+    if settings.ORION_IMAGE_ACQUISITION_API_KEY is None:
+        raise ImageAcquisitionProviderConfigurationException(
+            "image acquisition provider credential is missing"
+        )
+    return openrouter_factory(
+        api_key=settings.ORION_IMAGE_ACQUISITION_API_KEY.get_secret_value(),
+        model=settings.ORION_IMAGE_ACQUISITION_MODEL,
+        prompt_builder=ImageGenerationPromptBuilder(
+            max_prompt_bytes=settings.ORION_IMAGE_ACQUISITION_MAX_PLAN_BYTES
+        ),
+        base_url=settings.ORION_IMAGE_ACQUISITION_BASE_URL,
+        timeout_seconds=settings.ORION_IMAGE_ACQUISITION_TIMEOUT_SECONDS,
+        max_transport_attempts=(
+            settings.ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS
+        ),
+        retry_base_delay_seconds=(
+            settings.ORION_IMAGE_ACQUISITION_RETRY_BASE_DELAY_SECONDS
+        ),
+        max_response_bytes=settings.ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES,
+        max_decoded_image_bytes=(
+            settings.ORION_IMAGE_ACQUISITION_MAX_DECODED_IMAGE_BYTES
+        ),
+        provider_only=settings.ORION_IMAGE_ACQUISITION_PROVIDER_ONLY,
         http_referer=settings.ORION_OPENROUTER_HTTP_REFERER,
         app_title=settings.ORION_OPENROUTER_APP_TITLE,
     )

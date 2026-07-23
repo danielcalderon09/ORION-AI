@@ -1,6 +1,7 @@
 """Provider-neutral ports for durable binary production assets."""
 
 from typing import Protocol
+from uuid import UUID
 
 from backend.src.production.binary_assets.models import (
     BinaryAssetWriteRequest,
@@ -24,6 +25,14 @@ class BinaryAssetReader(Protocol):
         self,
         *,
         reference: ProductionBinaryAssetReference,
+    ) -> ReadProductionBinaryAsset: ...
+
+    async def resolve(
+        self,
+        *,
+        job_id: UUID,
+        asset_id: str,
+        extension: str,
     ) -> ReadProductionBinaryAsset: ...
 
 

@@ -115,7 +115,10 @@ ORION_VISUAL_ASSET_PLANNING_PROVIDER=simulated
 
 ## Límites deliberados
 
-Todavía no existen generación real de imágenes o video, descarga/adquisición de assets,
-almacenamiento binario, thumbnails, embeddings, visión/facial, TTS, música, SFX, subtítulos,
-timeline, render, DaVinci ni frontend de producción. La fase recomendada siguiente es
-generación/adquisición real de assets visuales bajo puertos separados.
+Desde Fase 5E.2, la etapa siguiente ACQUIRING_ASSETS materializa únicamente
+`still_image` + `text_to_image` a partir de este plan durable. Visual Asset Planning sigue sin
+escribir bytes ni invocar motores de imagen.
+
+Todavía no existen image-to-image, reference images, video, animación, thumbnails, embeddings,
+visión/facial, TTS, música, SFX, subtítulos, timeline, render, DaVinci ni frontend de producción.
+La fase recomendada siguiente es evaluación de imágenes verificadas y preparación de clips.

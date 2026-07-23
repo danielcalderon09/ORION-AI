@@ -6,6 +6,12 @@ from pathlib import Path
 
 import httpx
 
+from backend.src.production.image_acquisition.prompt_builder import (
+    ImageGenerationPromptBuilder,
+)
+from backend.src.production.image_acquisition.providers.openrouter_provider import (
+    OpenRouterImageAcquisitionProvider,
+)
 from backend.src.production.planning.prompt_builder import PlanningPromptBuilder
 from backend.src.production.planning.providers.openrouter_provider import (
     OpenRouterPlanningProvider,
@@ -82,6 +88,18 @@ async def smoke() -> None:
     )
     await visual.close()
     assert visual_client.is_closed
+    image_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: None)
+    )
+    image = OpenRouterImageAcquisitionProvider(
+        api_key="smoke-test-only",
+        model="openai/smoke-image-model",
+        prompt_builder=ImageGenerationPromptBuilder(),
+        client=image_client,
+        max_transport_attempts=1,
+    )
+    await image.close()
+    assert image_client.is_closed
     print("production OpenRouter installation smoke: OK (zero requests)")
 
 

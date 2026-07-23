@@ -1,5 +1,13 @@
 # Production Jobs API interna (Fase 4)
 
+## Compatibilidad con Image Acquisition de Fase 5E.2
+
+No existen rutas nuevas. El listado puede incluir `source_image` y
+`production_image_acquisition_manifest` con ruta relativa, MIME, tamaño, SHA-256 y metadata
+sanitizada. Nunca sirve bytes, base64, `file://`, rutas absolutas, prompts ni manifest completo.
+`configuration.image_acquisition` se rechaza con 422: provider, model, key, URL, routing, headers,
+timeout, retries y formato son exclusivamente globales.
+
 ## Compatibilidad con VISUAL_ASSET_PLANNING de Fase 5D
 
 No existen endpoints nuevos. `configuration.visual_asset_planning` acepta únicamente preferencias

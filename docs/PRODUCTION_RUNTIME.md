@@ -1,5 +1,17 @@
 # Runtime local de Production Pipeline
 
+## ACQUIRING_ASSETS durable (Fase 5E.2)
+
+Después de VISUAL_ASSET_PLANNING, `ImageAcquisitionHandler` lee el plan visual durable, admite
+solo still image/text-to-image y procesa secuencialmente cada especificación. El manifest se
+checkpointa antes de invocar al provider y después de cada `BinaryAssetWriter.write`. El provider
+simulado es el default; OpenRouter usa de forma lazy `POST /api/v1/images`.
+
+Recovery verifica manifest, source artifact/SHA, sidecar, bytes, MIME, tamaño, dimensiones y
+mapping antes de reutilizar. `generating` sin binario verificable pasa a `uncertain` y requiere
+retry explícito para evitar coste duplicado. Shutdown cierra Image Acquisition, Visual Asset
+Planning, Scene Planning, Scripting, Planning y finalmente el engine.
+
 ## Almacenamiento binario durable
 
 Production compone un `FilesystemBinaryAssetStore` provider-neutral que implementa los puertos de

@@ -4,6 +4,7 @@ from collections.abc import Callable
 from datetime import datetime
 from uuid import UUID
 
+from backend.src.production.image_acquisition.handler import ImageAcquisitionHandler
 from backend.src.production.planning.artifact_writer import (
     InMemoryPlanningArtifactWriter,
 )
@@ -69,6 +70,7 @@ def create_handler_registry(
     scripting_handler: ScriptingHandler | None = None,
     scene_planning_handler: ScenePlanningHandler | None = None,
     visual_asset_planning_handler: VisualAssetPlanningHandler | None = None,
+    image_acquisition_handler: ImageAcquisitionHandler | None = None,
     clock: Callable[[], datetime],
     uuid_factory: Callable[[], UUID],
 ) -> StageHandlerRegistry:
@@ -85,7 +87,8 @@ def create_handler_registry(
                 clock=clock,
                 uuid_factory=uuid_factory,
             ),
-            AssetHandler(clock=clock, uuid_factory=uuid_factory),
+            image_acquisition_handler
+            or AssetHandler(clock=clock, uuid_factory=uuid_factory),
             NarrationHandler(clock=clock, uuid_factory=uuid_factory),
             MusicHandler(clock=clock, uuid_factory=uuid_factory),
             SubtitleHandler(clock=clock, uuid_factory=uuid_factory),

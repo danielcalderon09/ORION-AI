@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
 from backend.src.production.binary_assets.configuration import (
     AssetStorageConfiguration,
@@ -62,6 +63,29 @@ class FilesystemBinaryAssetStore:
         reference: ProductionBinaryAssetReference,
     ) -> ReadProductionBinaryAsset:
         asset = await asyncio.to_thread(self._read_metadata_sync, reference)
+        content = await asyncio.to_thread(self._read_bytes_sync, asset)
+        return ReadProductionBinaryAsset(asset=asset, content=content)
+
+    async def resolve(
+        self,
+        *,
+        job_id: UUID,
+        asset_id: str,
+        extension: str,
+    ) -> ReadProductionBinaryAsset:
+        relative_path = binary_asset_relative_path(
+            job_id=job_id,
+            asset_id=asset_id,
+            extension=extension,
+        )
+        asset = await asyncio.to_thread(
+            self._read_metadata_path_sync,
+            relative_path,
+        )
+        if asset.job_id != job_id or asset.asset_id != asset_id:
+            raise BinaryAssetMetadataError(
+                "binary asset identity differs from durable metadata"
+            )
         content = await asyncio.to_thread(self._read_bytes_sync, asset)
         return ReadProductionBinaryAsset(asset=asset, content=content)
 
@@ -201,6 +225,12 @@ class FilesystemBinaryAssetStore:
                 "binary asset reference differs from durable metadata"
             )
         return asset
+
+    def _read_metadata_path_sync(self, relative_path: str) -> ProductionBinaryAsset:
+        metadata_target = self._metadata_target(relative_path)
+        if not metadata_target.exists():
+            raise BinaryAssetNotFoundError("binary asset metadata is missing")
+        return self._read_metadata_file(metadata_target)
 
     def _read_metadata_file(self, target: Path) -> ProductionBinaryAsset:
         self._confinement.reject_unsafe_file(target)

@@ -40,7 +40,7 @@ def test_scene_planning_defaults_to_simulated(tmp_path) -> None:
     assert type(container.scene_planning_provider).__name__ == (
         "SimulatedScenePlanningProvider"
     )
-    assert container.async_resources[1] is container.scene_planning_provider
+    assert container.async_resources[2] is container.scene_planning_provider
     container.shutdown()
 
 

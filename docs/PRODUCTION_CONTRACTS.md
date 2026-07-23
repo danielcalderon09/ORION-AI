@@ -1,5 +1,18 @@
 # Contratos del bounded context `production`
 
+## Contratos ejecutables de ACQUIRING_ASSETS (Fase 5E.2)
+
+`ProductionImageAcquisitionManifest` registra la relación versionada entre un
+`ProductionVisualAssetPlan` y cada `ProductionBinaryAsset`. Sus entries son únicas, ordenadas,
+frozen y pasan por estados cerrados. Un manifest `completed` exige que todas estén `stored`.
+`GeneratedImagePayload.content` queda excluido de repr/serialización y nunca entra en artifacts,
+resultados o API.
+
+`ImageAcquisitionProvider` recibe solo una `ProductionVisualAssetSpec`, configuración pública
+mínima e identificadores. `BinaryAssetWriter` es el único puerto autorizado para escribir bytes.
+`ArtifactType.PRODUCTION_IMAGE_ACQUISITION_MANIFEST` es aditivo; la columna SQL almacena strings,
+por lo que no requiere migración.
+
 ## Contrato ejecutable de planificación (Fase 5A)
 
 `production.planning.ProductionPlan` y `ProductionScenePlan` son contratos estrictos para

@@ -1,5 +1,6 @@
 """Composable integrity validators for binary image assets."""
 
+import warnings
 from dataclasses import dataclass
 from io import BytesIO
 
@@ -55,14 +56,24 @@ class AssetMimeValidator:
             raise BinaryAssetMimeError(
                 "binary asset extension does not match its declared MIME type"
             )
+        _validate_container_boundaries(content, mime_type=mime_type)
         try:
-            with Image.open(BytesIO(content)) as image:
-                detected_format = image.format
-                image.verify()
-            with Image.open(BytesIO(content)) as image:
-                image.load()
-                width, height = image.size
-        except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as exc:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                with Image.open(BytesIO(content)) as image:
+                    detected_format = image.format
+                    image.verify()
+                with Image.open(BytesIO(content)) as image:
+                    image.load()
+                    width, height = image.size
+        except (
+            Image.DecompressionBombError,
+            Image.DecompressionBombWarning,
+            UnidentifiedImageError,
+            OSError,
+            SyntaxError,
+            ValueError,
+        ) as exc:
             raise BinaryAssetCorruptError(
                 "binary asset is not a complete supported image"
             ) from exc
@@ -159,3 +170,21 @@ class BinaryAssetIntegrityValidator:
                 "decoded binary asset dimensions differ from metadata"
             )
         return inspected
+
+
+def _validate_container_boundaries(content: bytes, *, mime_type: str) -> None:
+    if mime_type == "image/png":
+        if not content.startswith(b"\x89PNG\r\n\x1a\n") or not content.endswith(
+            b"\x00\x00\x00\x00IEND\xaeB`\x82"
+        ):
+            raise BinaryAssetCorruptError("PNG container boundaries are invalid")
+    elif mime_type == "image/jpeg":
+        if not content.startswith(b"\xff\xd8\xff") or not content.endswith(b"\xff\xd9"):
+            raise BinaryAssetCorruptError("JPEG container boundaries are invalid")
+    elif mime_type == "image/webp" and (
+        len(content) < 12
+        or content[:4] != b"RIFF"
+        or content[8:12] != b"WEBP"
+        or int.from_bytes(content[4:8], "little") + 8 != len(content)
+    ):
+        raise BinaryAssetCorruptError("WebP container boundaries are invalid")

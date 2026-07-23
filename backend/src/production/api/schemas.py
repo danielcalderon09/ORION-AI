@@ -61,6 +61,7 @@ class CreateProductionJobRequest(PublicSchema):
             "planning" in validated
             or "scripting" in validated
             or "visual_asset_planning" in validated
+            or "image_acquisition" in validated
         ):
             unknown = set(validated) - {
                 "planning",

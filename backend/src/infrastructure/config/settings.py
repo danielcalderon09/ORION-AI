@@ -88,6 +88,22 @@ class Settings(BaseSettings):
         "jpeg",
         "webp",
     )
+    ORION_IMAGE_ACQUISITION_PROVIDER: str = "simulated"
+    ORION_IMAGE_ACQUISITION_MODEL: str = ""
+    ORION_IMAGE_ACQUISITION_API_KEY: SecretStr | None = None
+    ORION_IMAGE_ACQUISITION_BASE_URL: str = "https://openrouter.ai/api/v1"
+    ORION_IMAGE_ACQUISITION_TIMEOUT_SECONDS: float = 120.0
+    ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS: int = 2
+    ORION_IMAGE_ACQUISITION_RETRY_BASE_DELAY_SECONDS: float = 1.0
+    ORION_IMAGE_ACQUISITION_OUTPUT_FORMAT: Literal["png", "jpeg", "webp"] = "png"
+    ORION_IMAGE_ACQUISITION_QUALITY: Literal[
+        "auto", "low", "medium", "high"
+    ] = "auto"
+    ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES: int = 40_000_000
+    ORION_IMAGE_ACQUISITION_MAX_DECODED_IMAGE_BYTES: int = 25_000_000
+    ORION_IMAGE_ACQUISITION_MAX_PLAN_BYTES: int = 8_000_000
+    ORION_IMAGE_ACQUISITION_MAX_MANIFEST_BYTES: int = 4_000_000
+    ORION_IMAGE_ACQUISITION_PROVIDER_ONLY: str | None = None
     ORION_OPENROUTER_HTTP_REFERER: str | None = None
     ORION_OPENROUTER_APP_TITLE: str | None = None
 
@@ -154,6 +170,8 @@ class Settings(BaseSettings):
             "ORION_SCENE_PLANNING_RETRY_BASE_DELAY_SECONDS": self.ORION_SCENE_PLANNING_RETRY_BASE_DELAY_SECONDS,
             "ORION_VISUAL_ASSET_PLANNING_TIMEOUT_SECONDS": self.ORION_VISUAL_ASSET_PLANNING_TIMEOUT_SECONDS,
             "ORION_VISUAL_ASSET_PLANNING_RETRY_BASE_DELAY_SECONDS": self.ORION_VISUAL_ASSET_PLANNING_RETRY_BASE_DELAY_SECONDS,
+            "ORION_IMAGE_ACQUISITION_TIMEOUT_SECONDS": self.ORION_IMAGE_ACQUISITION_TIMEOUT_SECONDS,
+            "ORION_IMAGE_ACQUISITION_RETRY_BASE_DELAY_SECONDS": self.ORION_IMAGE_ACQUISITION_RETRY_BASE_DELAY_SECONDS,
         }
         for name, value in positive.items():
             if value <= 0:
@@ -206,9 +224,43 @@ class Settings(BaseSettings):
             "ORION_VISUAL_ASSET_PLANNING_MAX_SCENE_PLAN_BYTES": self.ORION_VISUAL_ASSET_PLANNING_MAX_SCENE_PLAN_BYTES,
             "ORION_VISUAL_ASSET_PLANNING_MAX_ARTIFACT_BYTES": self.ORION_VISUAL_ASSET_PLANNING_MAX_ARTIFACT_BYTES,
             "ORION_BINARY_ASSET_MAX_SIZE_BYTES": self.ORION_BINARY_ASSET_MAX_SIZE_BYTES,
+            "ORION_IMAGE_ACQUISITION_MAX_DECODED_IMAGE_BYTES": self.ORION_IMAGE_ACQUISITION_MAX_DECODED_IMAGE_BYTES,
+            "ORION_IMAGE_ACQUISITION_MAX_PLAN_BYTES": self.ORION_IMAGE_ACQUISITION_MAX_PLAN_BYTES,
+            "ORION_IMAGE_ACQUISITION_MAX_MANIFEST_BYTES": self.ORION_IMAGE_ACQUISITION_MAX_MANIFEST_BYTES,
         }.items():
             if not 1 <= value <= 50_000_000:
                 raise ValueError(f"{name} is outside safe limits")
+        if not 1 <= self.ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES <= 100_000_000:
+            raise ValueError(
+                "ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES is outside safe limits"
+            )
+        if not 1 <= self.ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS <= 5:
+            raise ValueError(
+                "ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS "
+                "must be between 1 and 5"
+            )
+        if (
+            self.ORION_IMAGE_ACQUISITION_MAX_DECODED_IMAGE_BYTES
+            > self.ORION_BINARY_ASSET_MAX_SIZE_BYTES
+        ):
+            raise ValueError(
+                "decoded image limit cannot exceed binary asset storage limit"
+            )
+        if self.ORION_IMAGE_ACQUISITION_PROVIDER_ONLY is not None:
+            provider_only = self.ORION_IMAGE_ACQUISITION_PROVIDER_ONLY.strip().lower()
+            if (
+                not provider_only
+                or len(provider_only) > 100
+                or not provider_only[0].isalnum()
+                or any(
+                    not (character.isalnum() or character in {"_", "-"})
+                    for character in provider_only
+                )
+            ):
+                raise ValueError(
+                    "ORION_IMAGE_ACQUISITION_PROVIDER_ONLY is invalid"
+                )
+            self.ORION_IMAGE_ACQUISITION_PROVIDER_ONLY = provider_only
         if self.ORION_PLANNING_ORPHAN_MIN_AGE_SECONDS < 0:
             raise ValueError("ORION_PLANNING_ORPHAN_MIN_AGE_SECONDS cannot be negative")
         quarantine = self.ORION_PLANNING_QUARANTINE_DIR.strip()

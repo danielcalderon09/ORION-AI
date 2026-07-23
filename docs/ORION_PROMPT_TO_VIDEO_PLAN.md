@@ -1,5 +1,16 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 5E.2
+
+ACQUIRING_ASSETS consume `visual-asset-plan.json`, checkpointa un manifest por attempt y escribe
+imágenes verificadas mediante la infraestructura binaria. El simulador offline es default;
+OpenRouter Images API es opcional, explícita y lazy. No existen descargas por URL, fallback de
+modelos ni selección automática.
+
+La siguiente fase recomendada es evaluación de las imágenes verificadas y preparación de clips de
+video. Todavía no existen image-to-image, reference images, video, animación, TTS, música, SFX,
+subtítulos, timeline, render, DaVinci ni frontend de producción.
+
 ## Estado posterior a Fase 5D: infraestructura binaria
 
 La base interna para futuras adquisiciones visuales ya dispone de contratos, store, writer,

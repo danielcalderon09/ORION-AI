@@ -1,8 +1,9 @@
 # Infraestructura durable de assets binarios
 
-Esta fase prepara almacenamiento interno para imágenes de Production. No genera imágenes, no
-invoca OpenRouter ni otro proveedor y no añade endpoints. La futura etapa de adquisición podrá
-entregar bytes a `BinaryAssetWriter` y recibir un `ProductionBinaryAsset` durable.
+Esta infraestructura almacena imágenes de Production sin conocer su proveedor. Fase 5E.2 conecta
+ACQUIRING_ASSETS: el provider entrega bytes a `BinaryAssetWriter` y recibe un
+`ProductionBinaryAsset` durable. El store sigue sin importar OpenRouter, HTTP ni contratos de
+generación.
 
 ## Contratos y ruta
 
@@ -65,6 +66,6 @@ metadata sin archivo, metadata inválida, checksum/tamaño incorrectos, MIME inv
 links inseguros y paths inseguros. El reconciliador común de Production incluye sus conteos sin
 convertirse en un escáner arbitrario del workspace.
 
-Las pruebas usan imágenes locales diminutas y no realizan red ni llamadas facturables. Esta fase
-no implementa proveedores, generación, descarga, thumbnails, embeddings, visión, audio,
+Las pruebas usan imágenes locales diminutas y `MockTransport`; no realizan red ni llamadas
+facturables. La infraestructura no implementa descarga, thumbnails, embeddings, visión, audio,
 timeline, render, DaVinci ni frontend.

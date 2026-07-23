@@ -42,6 +42,10 @@ VISUAL_ASSET_PLANNING_POLICY = JsonArtifactReconciliationPolicy(
     stage="visual_asset_planning",
     filename="visual-asset-plan.json",
 )
+IMAGE_ACQUISITION_POLICY = JsonArtifactReconciliationPolicy(
+    stage="acquiring_assets",
+    filename="image-acquisition-manifest.json",
+)
 
 
 class LocalPlanningArtifactReconciler:
@@ -254,6 +258,7 @@ class LocalProductionArtifactReconciler(LocalPlanningArtifactReconciler):
                 SCRIPTING_POLICY,
                 SCENE_PLANNING_POLICY,
                 VISUAL_ASSET_PLANNING_POLICY,
+                IMAGE_ACQUISITION_POLICY,
             ),
         )
 

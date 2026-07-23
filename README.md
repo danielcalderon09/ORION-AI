@@ -56,7 +56,7 @@ python scripts/batch_processor.py --videos=./samples --profile=balanced --max-wo
 pip install -e ".[dev]"
 python -m backend.src.main
 
-# Soporte opcional OpenRouter para las cuatro etapas creativas durables
+# Soporte opcional OpenRouter para etapas creativas y adquisición de imágenes
 pip install -e ".[production-llm]"
 
 # Alias descriptivo equivalente
@@ -88,11 +88,15 @@ biblia de continuidad; no genera ni descarga archivos multimedia. `simulated` si
 default y OpenRouter es opcional/lazy. Consulta
 [`docs/PRODUCTION_VISUAL_ASSET_PLANNING_PROVIDER.md`](docs/PRODUCTION_VISUAL_ASSET_PLANNING_PROVIDER.md).
 
-La infraestructura binaria interna almacena imágenes ya obtenidas por capacidades futuras bajo
+La infraestructura binaria interna almacena imágenes verificadas bajo
 `production/<job_id>/assets/images/`, con sidecar durable, MIME/extensión verificados, SHA-256 y
-tamaño reales, escritura atómica, confinamiento del workspace y recovery sin reescritura. Esta
-capacidad todavía no genera ni descarga imágenes y no invoca proveedores. Consulta
+tamaño reales, escritura atómica, confinamiento del workspace y recovery sin reescritura. Consulta
 [`docs/PRODUCTION_BINARY_ASSETS.md`](docs/PRODUCTION_BINARY_ASSETS.md).
+
+ACQUIRING_ASSETS consume el plan visual durable, almacena imágenes mediante esa infraestructura
+binaria y publica `image-acquisition-manifest.json`. El provider default es simulado, offline y
+determinista; OpenRouter Images API es opcional y no permite fallback. Consulta
+[`docs/PRODUCTION_IMAGE_ACQUISITION_PROVIDER.md`](docs/PRODUCTION_IMAGE_ACQUISITION_PROVIDER.md).
 
 ### Frontend
 ```bash
