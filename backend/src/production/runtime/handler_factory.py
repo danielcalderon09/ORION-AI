@@ -15,14 +15,17 @@ from backend.src.production.runtime.handlers import (
     NarrationHandler,
     PlanningHandler,
     RenderHandler,
-    ScenePlanningHandler,
     ScriptHandler,
     ScriptingHandler,
     SubtitleHandler,
     TimelineHandler,
     ValidationHandler,
 )
+from backend.src.production.runtime.handlers import (
+    ScenePlanningHandler as SimulatedScenePlanningHandler,
+)
 from backend.src.production.runtime.job_dispatcher import StageHandlerRegistry
+from backend.src.production.scene_planning.handler import ScenePlanningHandler
 
 
 def create_simulated_handler_registry(
@@ -37,7 +40,7 @@ def create_simulated_handler_registry(
                 uuid_factory=uuid_factory,
             ),
             ScriptHandler(clock=clock, uuid_factory=uuid_factory),
-            ScenePlanningHandler(clock=clock, uuid_factory=uuid_factory),
+            SimulatedScenePlanningHandler(clock=clock, uuid_factory=uuid_factory),
             AssetHandler(clock=clock, uuid_factory=uuid_factory),
             NarrationHandler(clock=clock, uuid_factory=uuid_factory),
             MusicHandler(clock=clock, uuid_factory=uuid_factory),
@@ -54,16 +57,18 @@ def create_handler_registry(
     *,
     planning_handler: PlanningHandler,
     scripting_handler: ScriptingHandler | None = None,
+    scene_planning_handler: ScenePlanningHandler | None = None,
     clock: Callable[[], datetime],
     uuid_factory: Callable[[], UUID],
 ) -> StageHandlerRegistry:
-    """Replace PLANNING and optionally SCRIPTING; later stages remain simulated."""
+    """Inject durable early-stage handlers; later media stages remain simulated."""
 
     return StageHandlerRegistry(
         (
             planning_handler,
             scripting_handler or ScriptHandler(clock=clock, uuid_factory=uuid_factory),
-            ScenePlanningHandler(clock=clock, uuid_factory=uuid_factory),
+            scene_planning_handler
+            or SimulatedScenePlanningHandler(clock=clock, uuid_factory=uuid_factory),
             AssetHandler(clock=clock, uuid_factory=uuid_factory),
             NarrationHandler(clock=clock, uuid_factory=uuid_factory),
             MusicHandler(clock=clock, uuid_factory=uuid_factory),

@@ -26,11 +26,17 @@ from backend.src.production.domain.enums import ArtifactType
 from backend.src.production.infrastructure.durable_production_plan_reader import (
     DurableProductionPlanReader,
 )
+from backend.src.production.infrastructure.durable_production_script_reader import (
+    DurableProductionScriptReader,
+)
 from backend.src.production.infrastructure.persistence.planning_artifact_reader import (
     SQLAlchemyRegisteredPlanningArtifactReader,
 )
 from backend.src.production.infrastructure.persistence.production_plan_query_repository import (
     SQLAlchemyProductionPlanQueryRepository,
+)
+from backend.src.production.infrastructure.persistence.production_script_query_repository import (
+    SQLAlchemyProductionScriptQueryRepository,
 )
 from backend.src.production.infrastructure.persistence.query_repositories import (
     SQLAlchemyProductionArtifactQueryRepository,
@@ -79,6 +85,24 @@ from backend.src.production.runtime.leases import (
     ProductionLeaseManager,
     SQLAlchemyLeaseRepository,
 )
+from backend.src.production.scene_planning.artifact_writer import (
+    LocalScenePlanningArtifactWriter,
+)
+from backend.src.production.scene_planning.exceptions import (
+    ScenePlanningProviderConfigurationException,
+)
+from backend.src.production.scene_planning.handler import ScenePlanningHandler
+from backend.src.production.scene_planning.ports import ScenePlanningProvider
+from backend.src.production.scene_planning.prompt_builder import (
+    ScenePlanningPromptBuilder,
+)
+from backend.src.production.scene_planning.providers import (
+    SimulatedScenePlanningProvider,
+)
+from backend.src.production.scene_planning.providers.availability import (
+    ScenePlanningProviderFactory,
+    load_openrouter_scene_planning_provider,
+)
 from backend.src.production.scripting.artifact_writer import LocalScriptingArtifactWriter
 from backend.src.production.scripting.exceptions import (
     ScriptingProviderConfigurationError,
@@ -110,6 +134,7 @@ class ProductionContainer:
     worker: ProductionWorker
     planning_provider: PlanningProvider
     scripting_provider: ScriptingProvider
+    scene_planning_provider: ScenePlanningProvider
     planning_artifact_reconciler: PlanningArtifactReconciler
     async_resources: tuple[AsyncClosable, ...]
 
@@ -134,6 +159,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
     def clock() -> datetime:
         return datetime.now(UTC)
     scripting_factory = _resolve_scripting_provider_factory(settings)
+    scene_planning_factory = _resolve_scene_planning_provider_factory(settings)
     engine = create_production_engine(
         settings.production_database_url,
         echo=settings.ORION_DATABASE_ECHO,
@@ -151,6 +177,10 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         scripting_provider = _build_scripting_provider(
             settings,
             openrouter_factory=scripting_factory,
+        )
+        scene_planning_provider = _build_scene_planning_provider(
+            settings,
+            openrouter_factory=scene_planning_factory,
         )
     except Exception:
         engine.dispose()
@@ -175,12 +205,30 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         clock=clock,
         uuid_factory=uuid4,
     )
+    scene_planning_handler = ScenePlanningHandler(
+        script_reader=DurableProductionScriptReader(
+            workspace_root=settings.PROJECTS_DIR,
+            repository=SQLAlchemyProductionScriptQueryRepository(sessions),
+            max_script_bytes=settings.ORION_SCENE_PLANNING_MAX_SCRIPT_BYTES,
+        ),
+        provider=scene_planning_provider,
+        artifact_writer=LocalScenePlanningArtifactWriter(
+            settings.PROJECTS_DIR,
+            max_scene_plan_bytes=settings.ORION_SCENE_PLANNING_MAX_PLAN_BYTES,
+        ),
+        clock=clock,
+        uuid_factory=uuid4,
+    )
     planning_artifact_reconciler = LocalProductionArtifactReconciler(
         workspace_root=settings.PROJECTS_DIR,
         registered_reader=SQLAlchemyRegisteredPlanningArtifactReader(
             sessions,
             artifact_types=frozenset(
-                {ArtifactType.PRODUCTION_PLAN, ArtifactType.PRODUCTION_SCRIPT}
+                {
+                    ArtifactType.PRODUCTION_PLAN,
+                    ArtifactType.PRODUCTION_SCRIPT,
+                    ArtifactType.PRODUCTION_SCENE_PLAN,
+                }
             ),
         ),
         minimum_age_seconds=settings.ORION_PLANNING_ORPHAN_MIN_AGE_SECONDS,
@@ -220,6 +268,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             create_handler_registry(
                 planning_handler=planning_handler,
                 scripting_handler=scripting_handler,
+                scene_planning_handler=scene_planning_handler,
                 clock=clock,
                 uuid_factory=uuid4,
             )
@@ -267,8 +316,9 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         worker=worker,
         planning_provider=planning_provider,
         scripting_provider=scripting_provider,
+        scene_planning_provider=scene_planning_provider,
         planning_artifact_reconciler=planning_artifact_reconciler,
-        async_resources=(scripting_provider, planning_provider),
+        async_resources=(scene_planning_provider, scripting_provider, planning_provider),
     )
 
 
@@ -349,6 +399,64 @@ def _build_scripting_provider(
         retry_base_delay_seconds=settings.ORION_SCRIPTING_RETRY_BASE_DELAY_SECONDS,
         max_output_tokens=settings.ORION_SCRIPTING_MAX_OUTPUT_TOKENS,
         temperature=settings.ORION_SCRIPTING_TEMPERATURE,
+        http_referer=settings.ORION_OPENROUTER_HTTP_REFERER,
+        app_title=settings.ORION_OPENROUTER_APP_TITLE,
+    )
+
+
+def _resolve_scene_planning_provider_factory(
+    settings: Settings,
+) -> ScenePlanningProviderFactory | None:
+    provider_name = settings.ORION_SCENE_PLANNING_PROVIDER.strip().lower()
+    if provider_name == "simulated":
+        return None
+    if provider_name != "openrouter":
+        raise ScenePlanningProviderConfigurationException(
+            f"unsupported scene-planning provider: {provider_name!r}"
+        )
+    if settings.ORION_SCENE_PLANNING_API_KEY is None:
+        raise ScenePlanningProviderConfigurationException(
+            "scene-planning provider credential is missing"
+        )
+    if not settings.ORION_SCENE_PLANNING_MODEL.strip():
+        raise ScenePlanningProviderConfigurationException(
+            "scene-planning model is missing"
+        )
+    _validate_https_provider_url(
+        settings.ORION_SCENE_PLANNING_BASE_URL,
+        error_type=ScenePlanningProviderConfigurationException,
+        message="scene-planning base URL is invalid",
+    )
+    return load_openrouter_scene_planning_provider()
+
+
+def _build_scene_planning_provider(
+    settings: Settings,
+    *,
+    openrouter_factory: ScenePlanningProviderFactory | None,
+) -> ScenePlanningProvider:
+    if openrouter_factory is None:
+        return SimulatedScenePlanningProvider()
+    if settings.ORION_SCENE_PLANNING_API_KEY is None:
+        raise ScenePlanningProviderConfigurationException(
+            "scene-planning provider credential is missing"
+        )
+    return openrouter_factory(
+        api_key=settings.ORION_SCENE_PLANNING_API_KEY.get_secret_value(),
+        model=settings.ORION_SCENE_PLANNING_MODEL,
+        prompt_builder=ScenePlanningPromptBuilder(
+            max_script_bytes=settings.ORION_SCENE_PLANNING_MAX_SCRIPT_BYTES
+        ),
+        base_url=settings.ORION_SCENE_PLANNING_BASE_URL,
+        timeout_seconds=settings.ORION_SCENE_PLANNING_TIMEOUT_SECONDS,
+        max_transport_attempts=(
+            settings.ORION_SCENE_PLANNING_MAX_TRANSPORT_ATTEMPTS
+        ),
+        retry_base_delay_seconds=(
+            settings.ORION_SCENE_PLANNING_RETRY_BASE_DELAY_SECONDS
+        ),
+        max_output_tokens=settings.ORION_SCENE_PLANNING_MAX_OUTPUT_TOKENS,
+        temperature=settings.ORION_SCENE_PLANNING_TEMPERATURE,
         http_referer=settings.ORION_OPENROUTER_HTTP_REFERER,
         app_title=settings.ORION_OPENROUTER_APP_TITLE,
     )

@@ -54,6 +54,17 @@ class Settings(BaseSettings):
     ORION_SCRIPTING_TEMPERATURE: float = 0.2
     ORION_SCRIPTING_MAX_PLAN_BYTES: int = 1_000_000
     ORION_SCRIPTING_MAX_SCRIPT_BYTES: int = 2_000_000
+    ORION_SCENE_PLANNING_PROVIDER: str = "simulated"
+    ORION_SCENE_PLANNING_MODEL: str = "openai/gpt-4.1-mini"
+    ORION_SCENE_PLANNING_API_KEY: SecretStr | None = None
+    ORION_SCENE_PLANNING_BASE_URL: str = "https://openrouter.ai/api/v1"
+    ORION_SCENE_PLANNING_TIMEOUT_SECONDS: float = 30.0
+    ORION_SCENE_PLANNING_MAX_TRANSPORT_ATTEMPTS: int = 2
+    ORION_SCENE_PLANNING_RETRY_BASE_DELAY_SECONDS: float = 0.25
+    ORION_SCENE_PLANNING_MAX_OUTPUT_TOKENS: int = 8192
+    ORION_SCENE_PLANNING_TEMPERATURE: float = 0.2
+    ORION_SCENE_PLANNING_MAX_SCRIPT_BYTES: int = 2_000_000
+    ORION_SCENE_PLANNING_MAX_PLAN_BYTES: int = 4_000_000
     ORION_OPENROUTER_HTTP_REFERER: str | None = None
     ORION_OPENROUTER_APP_TITLE: str | None = None
 
@@ -116,6 +127,8 @@ class Settings(BaseSettings):
             "ORION_PLANNING_RETRY_BASE_DELAY_SECONDS": self.ORION_PLANNING_RETRY_BASE_DELAY_SECONDS,
             "ORION_SCRIPTING_TIMEOUT_SECONDS": self.ORION_SCRIPTING_TIMEOUT_SECONDS,
             "ORION_SCRIPTING_RETRY_BASE_DELAY_SECONDS": self.ORION_SCRIPTING_RETRY_BASE_DELAY_SECONDS,
+            "ORION_SCENE_PLANNING_TIMEOUT_SECONDS": self.ORION_SCENE_PLANNING_TIMEOUT_SECONDS,
+            "ORION_SCENE_PLANNING_RETRY_BASE_DELAY_SECONDS": self.ORION_SCENE_PLANNING_RETRY_BASE_DELAY_SECONDS,
         }
         for name, value in positive.items():
             if value <= 0:
@@ -139,9 +152,19 @@ class Settings(BaseSettings):
             raise ValueError("ORION_SCRIPTING_MAX_OUTPUT_TOKENS is outside safe limits")
         if not 0 <= self.ORION_SCRIPTING_TEMPERATURE <= 2:
             raise ValueError("ORION_SCRIPTING_TEMPERATURE must be between 0 and 2")
+        if not 1 <= self.ORION_SCENE_PLANNING_MAX_TRANSPORT_ATTEMPTS <= 5:
+            raise ValueError(
+                "ORION_SCENE_PLANNING_MAX_TRANSPORT_ATTEMPTS must be between 1 and 5"
+            )
+        if not 1 <= self.ORION_SCENE_PLANNING_MAX_OUTPUT_TOKENS <= 100_000:
+            raise ValueError("ORION_SCENE_PLANNING_MAX_OUTPUT_TOKENS is outside safe limits")
+        if not 0 <= self.ORION_SCENE_PLANNING_TEMPERATURE <= 2:
+            raise ValueError("ORION_SCENE_PLANNING_TEMPERATURE must be between 0 and 2")
         for name, value in {
             "ORION_SCRIPTING_MAX_PLAN_BYTES": self.ORION_SCRIPTING_MAX_PLAN_BYTES,
             "ORION_SCRIPTING_MAX_SCRIPT_BYTES": self.ORION_SCRIPTING_MAX_SCRIPT_BYTES,
+            "ORION_SCENE_PLANNING_MAX_SCRIPT_BYTES": self.ORION_SCENE_PLANNING_MAX_SCRIPT_BYTES,
+            "ORION_SCENE_PLANNING_MAX_PLAN_BYTES": self.ORION_SCENE_PLANNING_MAX_PLAN_BYTES,
         }.items():
             if not 1 <= value <= 50_000_000:
                 raise ValueError(f"{name} is outside safe limits")

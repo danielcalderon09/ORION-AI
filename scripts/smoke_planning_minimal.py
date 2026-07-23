@@ -34,6 +34,9 @@ def main() -> None:
         from backend.src.infrastructure.config.settings import Settings
         from backend.src.main import create_app
         from backend.src.production.planning.providers import SimulatedPlanningProvider
+        from backend.src.production.scene_planning.providers import (
+            SimulatedScenePlanningProvider,
+        )
         from backend.src.production.scripting.providers import SimulatedScriptingProvider
 
         settings = Settings(
@@ -47,9 +50,14 @@ def main() -> None:
         app = create_app(settings)
         assert SimulatedPlanningProvider is not None
         assert SimulatedScriptingProvider is not None
+        assert SimulatedScenePlanningProvider is not None
         assert app is not None
         assert "backend.src.production.planning.providers.openrouter_provider" not in sys.modules
         assert "backend.src.production.scripting.providers.openrouter_provider" not in sys.modules
+        assert (
+            "backend.src.production.scene_planning.providers.openrouter_provider"
+            not in sys.modules
+        )
         assert "backend.src.production.planning.providers.openai_provider" not in sys.modules
         assert "backend.src.production.scripting.providers.openai_provider" not in sys.modules
         assert "httpx" not in sys.modules

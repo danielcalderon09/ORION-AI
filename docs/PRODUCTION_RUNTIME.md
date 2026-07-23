@@ -1,9 +1,26 @@
 # Runtime local de Production Pipeline
 
+## SCENE_PLANNING durable (Fase 5C)
+
+Production inyecta un `ScenePlanningHandler` independiente despues de SCRIPTING. El handler lee
+`production-script.json` mediante metadata durable del job, verifica path, symlinks, tamano,
+SHA-256, UTF-8, JSON sin claves duplicadas y `ProductionScript`, y solo entonces invoca el
+provider seleccionado. El resultado validado se publica como `scene-plan.json` canonico y
+`ArtifactType.PRODUCTION_SCENE_PLAN`.
+
+Antes de invocar al provider, el writer inspecciona la ruta contractual del mismo intento. Si ya
+existe un scene plan valido y coherente con el script aprobado, recovery reconstruye el resultado
+sin otra generacion. El runtime durable sigue garantizando una sola persistencia por comando y
+leases exclusivos. Reconciliacion incluye plan, script y scene plan, sin seguir symlinks.
+
+El provider default es `simulated`; `openrouter` usa el transporte neutral lazy. Shutdown cierra
+Scene Planning, Scripting, Planning y finalmente el engine. Assets, narracion, musica, subtitulos,
+timeline, render y handoff permanecen simulados.
+
 ## SCRIPTING durable (Fase 5B)
 
-El registry de Production reemplaza PLANNING y SCRIPTING; `SCENE_PLANNING` y las etapas
-posteriores siguen simuladas. SCRIPTING selecciona el plan durable, valida path, symlinks,
+El registry de Production reemplaza PLANNING y SCRIPTING. SCRIPTING selecciona el plan durable,
+valida path, symlinks,
 tamano, SHA-256, UTF-8, JSON y contrato, invoca un provider y publica
 `production-script.json` canonico.
 

@@ -30,6 +30,19 @@ provider no contienen ORM, cliente HTTP, headers, keys ni paths absolutos.
 `ArtifactType.PRODUCTION_SCRIPT` es aditivo. La columna SQL almacena strings, no un enum
 nativo, por lo que Fase 5B no requiere migracion.
 
+## Contratos ejecutables de SCENE_PLANNING (Fase 5C)
+
+`production.scene_planning.ProductionScenePlan` consume exclusivamente un
+`production.scripting.ProductionScript` aprobado. Sus `ProductionScene` preservan narracion,
+duracion, orden y mapeo de origen. Cada escena contiene `ProductionShot` consecutivos con
+`ProductionCamera`, `ProductionTiming` contiguo y `ProductionTransition` controlada. IDs de
+escena/shot son contractuales y unicos; la ultima toma usa `none` y las escenas anteriores deben
+transicionar.
+
+Los modelos son estrictos, inmutables y no contienen dicts arbitrarios. El contrato se valida de
+nuevo contra el script despues del provider y durante recovery. `ArtifactType.PRODUCTION_SCENE_PLAN`
+es aditivo sobre la columna textual existente, por lo que Fase 5C no requiere migracion.
+
 ## Principios
 
 - El dominio es importable sin FastAPI, OpenCV, FFmpeg, DaVinci o acceso a IO.

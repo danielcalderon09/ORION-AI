@@ -32,6 +32,9 @@ PLANNING_POLICY = JsonArtifactReconciliationPolicy(
 SCRIPTING_POLICY = JsonArtifactReconciliationPolicy(
     stage="scripting", filename="production-script.json"
 )
+SCENE_PLANNING_POLICY = JsonArtifactReconciliationPolicy(
+    stage="scene_planning", filename="scene-plan.json"
+)
 
 
 class LocalPlanningArtifactReconciler:
@@ -218,7 +221,7 @@ def _is_contractual_artifact_path(
 
 
 class LocalProductionArtifactReconciler(LocalPlanningArtifactReconciler):
-    """Conservative reconciler for the two durable JSON stage artifacts."""
+    """Conservative reconciler for durable Production JSON stage artifacts."""
 
     def __init__(
         self,
@@ -237,7 +240,7 @@ class LocalProductionArtifactReconciler(LocalPlanningArtifactReconciler):
             action=action,
             quarantine_relative_path=quarantine_relative_path,
             clock=clock,
-            policies=(PLANNING_POLICY, SCRIPTING_POLICY),
+            policies=(PLANNING_POLICY, SCRIPTING_POLICY, SCENE_PLANNING_POLICY),
         )
 
 

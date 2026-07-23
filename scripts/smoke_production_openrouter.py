@@ -10,6 +10,12 @@ from backend.src.production.planning.prompt_builder import PlanningPromptBuilder
 from backend.src.production.planning.providers.openrouter_provider import (
     OpenRouterPlanningProvider,
 )
+from backend.src.production.scene_planning.prompt_builder import (
+    ScenePlanningPromptBuilder,
+)
+from backend.src.production.scene_planning.providers.openrouter_provider import (
+    OpenRouterScenePlanningProvider,
+)
 from backend.src.production.scripting.prompt_builder import ScriptingPromptBuilder
 from backend.src.production.scripting.providers.openrouter_provider import (
     OpenRouterScriptingProvider,
@@ -44,6 +50,18 @@ async def smoke() -> None:
     )
     await scripting.close()
     assert scripting_client.is_closed
+    scene_planning_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: None)
+    )
+    scene_planning = OpenRouterScenePlanningProvider(
+        api_key="smoke-test-only",
+        model="google/smoke-model",
+        prompt_builder=ScenePlanningPromptBuilder(max_script_bytes=100_000),
+        client=scene_planning_client,
+        max_transport_attempts=1,
+    )
+    await scene_planning.close()
+    assert scene_planning_client.is_closed
     print("production OpenRouter installation smoke: OK (zero requests)")
 
 

@@ -56,7 +56,7 @@ python scripts/batch_processor.py --videos=./samples --profile=balanced --max-wo
 pip install -e ".[dev]"
 python -m backend.src.main
 
-# Soporte opcional OpenRouter para PLANNING y SCRIPTING
+# Soporte opcional OpenRouter para PLANNING, SCRIPTING y SCENE_PLANNING
 pip install -e ".[production-llm]"
 
 # Alias descriptivo equivalente
@@ -74,6 +74,12 @@ SCRIPTING consume el plan durable, verifica tamano/SHA-256 y escribe
 `simulated`; el provider real principal es OpenRouter lazy, con modelos configurables de
 OpenAI, Anthropic, Google, DeepSeek, Qwen y otros disponibles en OpenRouter. Consulta
 [`docs/PRODUCTION_SCRIPTING_PROVIDER.md`](docs/PRODUCTION_SCRIPTING_PROVIDER.md).
+
+SCENE_PLANNING consume exclusivamente el `ProductionScript` durable y produce
+`production/<job_id>/scene_planning/attempt-<n>/scene-plan.json`. Su provider predeterminado
+tambien es `simulated`; OpenRouter se habilita de forma independiente y lazy. El artifact contiene
+escenas, shots, camara, timing y transiciones tipados, sin generar imagenes ni video. Consulta
+[`docs/PRODUCTION_SCENE_PLANNING_PROVIDER.md`](docs/PRODUCTION_SCENE_PLANNING_PROVIDER.md).
 
 ### Frontend
 ```bash

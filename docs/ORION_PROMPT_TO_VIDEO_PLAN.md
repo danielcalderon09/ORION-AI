@@ -4,7 +4,8 @@
 
 SCRIPTING consume el `ProductionPlan` durable con validacion fisica/contractual y produce
 `production-script.json` mediante provider simulated u OpenRouter lazy sobre transporte
-OpenAI-compatible. SCENE_PLANNING y todo lo
+OpenAI-compatible. SCENE_PLANNING consume ahora el ProductionScript durable mediante un provider
+configurable y produce scene-plan.json; todo lo
 posterior permanecen simulados. La siguiente fase recomendada es 5C: consumo durable del
 script por SCENE_PLANNING, sin adelantar assets, audio, render, DaVinci o frontend.
 

@@ -54,6 +54,7 @@ class TransitionType(StrEnum):
 class ArtifactType(StrEnum):
     PRODUCTION_PLAN = "production_plan"
     PRODUCTION_SCRIPT = "production_script"
+    PRODUCTION_SCENE_PLAN = "production_scene_plan"
     SOURCE_IMAGE = "source_image"
     SOURCE_VIDEO = "source_video"
     NARRATION = "narration"
