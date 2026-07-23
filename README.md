@@ -88,6 +88,12 @@ biblia de continuidad; no genera ni descarga archivos multimedia. `simulated` si
 default y OpenRouter es opcional/lazy. Consulta
 [`docs/PRODUCTION_VISUAL_ASSET_PLANNING_PROVIDER.md`](docs/PRODUCTION_VISUAL_ASSET_PLANNING_PROVIDER.md).
 
+La infraestructura binaria interna almacena imágenes ya obtenidas por capacidades futuras bajo
+`production/<job_id>/assets/images/`, con sidecar durable, MIME/extensión verificados, SHA-256 y
+tamaño reales, escritura atómica, confinamiento del workspace y recovery sin reescritura. Esta
+capacidad todavía no genera ni descarga imágenes y no invoca proveedores. Consulta
+[`docs/PRODUCTION_BINARY_ASSETS.md`](docs/PRODUCTION_BINARY_ASSETS.md).
+
 ### Frontend
 ```bash
 cd frontend

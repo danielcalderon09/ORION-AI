@@ -1,5 +1,16 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 5D: infraestructura binaria
+
+La base interna para futuras adquisiciones visuales ya dispone de contratos, store, writer,
+reader, validación MIME/extensión, checksum/tamaño reales, confinamiento de workspace, metadata
+sidecar, recovery y reconciliación. Todavía no existe una etapa que genere o descargue imágenes:
+no hay OpenRouter, Flux, Imagen, GPT ni otro proveedor conectado a esta infraestructura.
+
+La siguiente fase recomendada es conectar un puerto de adquisición/generación visual a estos
+contratos, manteniendo selección explícita, pruebas con transportes falsos y cero exposición de
+bytes en la API.
+
 ## Estado de Fase 5D
 
 PLANNING, SCRIPTING y SCENE_PLANNING conservan sus contratos durables. La nueva etapa

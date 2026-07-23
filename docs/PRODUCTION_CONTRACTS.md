@@ -56,6 +56,20 @@ anteriores, válidas y acíclicas. La procedencia durable incluye artifact ID y 
 plan. `ArtifactType.PRODUCTION_VISUAL_ASSET_PLAN` se guarda como string en la columna existente,
 por lo que Fase 5D no requiere migración.
 
+## Contratos durables de assets binarios
+
+`ProductionBinaryAsset`, `ProductionBinaryAssetMetadata` y
+`ProductionBinaryAssetReference` separan bytes, procedencia segura y expectativa de lectura.
+Conservan job/scene/shot, rol, MIME, extensión, checksum, tamaño, dimensiones, timestamp UTC y
+ruta POSIX contractual. Son modelos frozen con campos extra prohibidos; la metadata rechaza
+secretos y rutas absolutas, pero permite métricas no secretas como `input_tokens`.
+
+`BinaryAssetStore` combina los puertos `BinaryAssetWriter` y `BinaryAssetReader`.
+`BinaryAssetIntegrityValidator` compone validadores de MIME, SHA-256 y tamaño sin conocer
+filesystem, ORM, API o proveedores. El adaptador local conserva metadata en un sidecar JSON
+estricto y el archivo en `production/<job_id>/assets/images`. `ArtifactType.SOURCE_IMAGE` ya
+existe y se persiste como string, así que no se necesita migración.
+
 ## Principios
 
 - El dominio es importable sin FastAPI, OpenCV, FFmpeg, DaVinci o acceso a IO.

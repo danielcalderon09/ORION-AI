@@ -1,0 +1,1 @@
+"""Binary asset infrastructure tests."""

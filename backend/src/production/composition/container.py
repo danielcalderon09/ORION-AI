@@ -22,6 +22,26 @@ from backend.src.production.application.services.production_jobs import (
     ListProductionJobsService,
     RetryProductionJobService,
 )
+from backend.src.production.binary_assets.configuration import (
+    AssetStorageConfiguration,
+)
+from backend.src.production.binary_assets.filesystem_store import (
+    FilesystemBinaryAssetStore,
+)
+from backend.src.production.binary_assets.ports import (
+    BinaryAssetReader,
+    BinaryAssetStore,
+    BinaryAssetWriter,
+)
+from backend.src.production.binary_assets.reconciliation import (
+    FilesystemBinaryAssetReconciler,
+)
+from backend.src.production.binary_assets.validators import (
+    AssetHashValidator,
+    AssetMimeValidator,
+    AssetSizeValidator,
+    BinaryAssetIntegrityValidator,
+)
 from backend.src.production.domain.enums import ArtifactType
 from backend.src.production.infrastructure.durable_production_plan_reader import (
     DurableProductionPlanReader,
@@ -164,6 +184,12 @@ class ProductionContainer:
     scripting_provider: ScriptingProvider
     scene_planning_provider: ScenePlanningProvider
     visual_asset_planning_provider: VisualAssetPlanningProvider
+    binary_asset_configuration: AssetStorageConfiguration
+    binary_asset_store: BinaryAssetStore
+    binary_asset_writer: BinaryAssetWriter
+    binary_asset_reader: BinaryAssetReader
+    binary_asset_integrity_validator: BinaryAssetIntegrityValidator
+    binary_asset_reconciler: FilesystemBinaryAssetReconciler
     planning_artifact_reconciler: PlanningArtifactReconciler
     async_resources: tuple[AsyncClosable, ...]
 
@@ -273,6 +299,33 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         clock=clock,
         uuid_factory=uuid4,
     )
+    binary_asset_configuration = AssetStorageConfiguration(
+        workspace=settings.PROJECTS_DIR,
+        max_asset_size=settings.ORION_BINARY_ASSET_MAX_SIZE_BYTES,
+        allowed_mime_types=frozenset(
+            settings.ORION_BINARY_ASSET_ALLOWED_MIME_TYPES
+        ),
+        allowed_extensions=frozenset(
+            settings.ORION_BINARY_ASSET_ALLOWED_EXTENSIONS
+        ),
+    )
+    asset_mime_validator = AssetMimeValidator(binary_asset_configuration)
+    asset_hash_validator = AssetHashValidator()
+    asset_size_validator = AssetSizeValidator(binary_asset_configuration)
+    binary_asset_integrity_validator = BinaryAssetIntegrityValidator(
+        mime_validator=asset_mime_validator,
+        hash_validator=asset_hash_validator,
+        size_validator=asset_size_validator,
+    )
+    filesystem_binary_asset_store = FilesystemBinaryAssetStore(
+        configuration=binary_asset_configuration,
+        integrity_validator=binary_asset_integrity_validator,
+        clock=clock,
+    )
+    binary_asset_reconciler = FilesystemBinaryAssetReconciler(
+        configuration=binary_asset_configuration,
+        store=filesystem_binary_asset_store,
+    )
     planning_artifact_reconciler = LocalProductionArtifactReconciler(
         workspace_root=settings.PROJECTS_DIR,
         registered_reader=SQLAlchemyRegisteredPlanningArtifactReader(
@@ -290,6 +343,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         action=settings.ORION_PLANNING_ORPHAN_ACTION,
         quarantine_relative_path=settings.ORION_PLANNING_QUARANTINE_DIR,
         clock=clock,
+        binary_reconciler=binary_asset_reconciler,
     )
 
     leases = ProductionLeaseManager(
@@ -374,6 +428,12 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         scripting_provider=scripting_provider,
         scene_planning_provider=scene_planning_provider,
         visual_asset_planning_provider=visual_asset_planning_provider,
+        binary_asset_configuration=binary_asset_configuration,
+        binary_asset_store=filesystem_binary_asset_store,
+        binary_asset_writer=filesystem_binary_asset_store,
+        binary_asset_reader=filesystem_binary_asset_store,
+        binary_asset_integrity_validator=binary_asset_integrity_validator,
+        binary_asset_reconciler=binary_asset_reconciler,
         planning_artifact_reconciler=planning_artifact_reconciler,
         async_resources=(
             visual_asset_planning_provider,

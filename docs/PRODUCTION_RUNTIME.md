@@ -1,5 +1,19 @@
 # Runtime local de Production Pipeline
 
+## Almacenamiento binario durable
+
+Production compone un `FilesystemBinaryAssetStore` provider-neutral que implementa los puertos de
+lectura y escritura. Cada imagen se publica mediante temporal, `fsync` y replace atómico junto a
+metadata canónica. Cada lectura vuelve a validar archivo regular, MIME, extensión, dimensiones,
+tamaño y SHA-256 bajo `WorkspaceConfinement`; links, junctions, hard links, traversal y escapes se
+rechazan.
+
+El reconciliador común conserva su política cerrada para los cuatro JSON creativos y añade un
+diagnóstico separado de pares binario/sidecar únicamente en
+`production/<uuid>/assets/images`. Recovery reutiliza una pareja existente solo cuando bytes,
+integridad y metadata coinciden exactamente. Esta infraestructura no añade una etapa de
+generación ni inicia recursos async, clientes HTTP o tasks.
+
 ## VISUAL_ASSET_PLANNING durable (Fase 5D)
 
 La etapa se ejecuta inmediatamente después de SCENE_PLANNING. El

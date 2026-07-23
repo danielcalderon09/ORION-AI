@@ -76,6 +76,18 @@ class Settings(BaseSettings):
     ORION_VISUAL_ASSET_PLANNING_TEMPERATURE: float = 0.2
     ORION_VISUAL_ASSET_PLANNING_MAX_SCENE_PLAN_BYTES: int = 4_000_000
     ORION_VISUAL_ASSET_PLANNING_MAX_ARTIFACT_BYTES: int = 8_000_000
+    ORION_BINARY_ASSET_MAX_SIZE_BYTES: int = 25_000_000
+    ORION_BINARY_ASSET_ALLOWED_MIME_TYPES: tuple[str, ...] = (
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+    )
+    ORION_BINARY_ASSET_ALLOWED_EXTENSIONS: tuple[str, ...] = (
+        "png",
+        "jpg",
+        "jpeg",
+        "webp",
+    )
     ORION_OPENROUTER_HTTP_REFERER: str | None = None
     ORION_OPENROUTER_APP_TITLE: str | None = None
 
@@ -193,6 +205,7 @@ class Settings(BaseSettings):
             "ORION_SCENE_PLANNING_MAX_PLAN_BYTES": self.ORION_SCENE_PLANNING_MAX_PLAN_BYTES,
             "ORION_VISUAL_ASSET_PLANNING_MAX_SCENE_PLAN_BYTES": self.ORION_VISUAL_ASSET_PLANNING_MAX_SCENE_PLAN_BYTES,
             "ORION_VISUAL_ASSET_PLANNING_MAX_ARTIFACT_BYTES": self.ORION_VISUAL_ASSET_PLANNING_MAX_ARTIFACT_BYTES,
+            "ORION_BINARY_ASSET_MAX_SIZE_BYTES": self.ORION_BINARY_ASSET_MAX_SIZE_BYTES,
         }.items():
             if not 1 <= value <= 50_000_000:
                 raise ValueError(f"{name} is outside safe limits")

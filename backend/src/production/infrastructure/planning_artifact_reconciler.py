@@ -10,6 +10,9 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from uuid import UUID
 
+from backend.src.production.binary_assets.reconciliation import (
+    FilesystemBinaryAssetReconciler,
+)
 from backend.src.production.domain.path_rules import validate_relative_path
 from backend.src.production.planning.reconciliation import (
     PlanningArtifactReconciliationError,
@@ -236,7 +239,9 @@ class LocalProductionArtifactReconciler(LocalPlanningArtifactReconciler):
         action: str = "quarantine",
         quarantine_relative_path: str = "production-quarantine",
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        binary_reconciler: FilesystemBinaryAssetReconciler | None = None,
     ) -> None:
+        self._binary_reconciler = binary_reconciler
         super().__init__(
             workspace_root=workspace_root,
             registered_reader=registered_reader,
@@ -250,6 +255,19 @@ class LocalProductionArtifactReconciler(LocalPlanningArtifactReconciler):
                 SCENE_PLANNING_POLICY,
                 VISUAL_ASSET_PLANNING_POLICY,
             ),
+        )
+
+    async def reconcile(self) -> PlanningArtifactReconciliationReport:
+        json_report = await super().reconcile()
+        if self._binary_reconciler is None:
+            return json_report
+        binary_report = await self._binary_reconciler.reconcile()
+        return json_report.model_copy(
+            update={
+                "binary_scanned": binary_report.scanned,
+                "binary_valid": binary_report.valid,
+                "binary_issues": len(binary_report.issues),
+            }
         )
 
 
