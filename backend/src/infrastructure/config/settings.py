@@ -4,7 +4,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import SecretStr, model_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -104,6 +104,18 @@ class Settings(BaseSettings):
     ORION_IMAGE_ACQUISITION_MAX_PLAN_BYTES: int = 8_000_000
     ORION_IMAGE_ACQUISITION_MAX_MANIFEST_BYTES: int = 4_000_000
     ORION_IMAGE_ACQUISITION_PROVIDER_ONLY: str | None = None
+    ORION_VIDEO_CLIP_GENERATION_PROVIDER: Literal["simulated"] = "simulated"
+    ORION_VIDEO_CLIP_GENERATION_MODEL: str = "simulated-video-v1"
+    ORION_VIDEO_CLIP_GENERATION_OUTPUT_FORMAT: Literal["mp4"] = "mp4"
+    ORION_VIDEO_CLIP_GENERATION_CODEC: Literal["h264"] = "h264"
+    ORION_VIDEO_CLIP_GENERATION_FRAME_RATE: Literal[24, 30] = 24
+    ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS: float = 4
+    ORION_VIDEO_CLIP_GENERATION_MAX_DURATION_SECONDS: float = 10
+    ORION_VIDEO_CLIP_GENERATION_MAX_SOURCE_MANIFEST_BYTES: int = 4_000_000
+    ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES: int = 50_000_000
+    ORION_VIDEO_CLIP_GENERATION_MAX_MANIFEST_BYTES: int = 4_000_000
+    ORION_VIDEO_CLIP_GENERATION_FFMPEG_PATH: str | None = None
+    ORION_VIDEO_CLIP_GENERATION_FFPROBE_PATH: str | None = None
     ORION_OPENROUTER_HTTP_REFERER: str | None = None
     ORION_OPENROUTER_APP_TITLE: str | None = None
 
@@ -147,6 +159,17 @@ class Settings(BaseSettings):
     TELEMETRY_ENABLED: bool = True
     BENCHMARK_ENABLED: bool = True
 
+    @field_validator(
+        "ORION_VIDEO_CLIP_GENERATION_FFMPEG_PATH",
+        "ORION_VIDEO_CLIP_GENERATION_FFPROBE_PATH",
+        mode="before",
+    )
+    @classmethod
+    def empty_video_executable_path_is_unset(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         # Ensure directories exist
@@ -172,6 +195,8 @@ class Settings(BaseSettings):
             "ORION_VISUAL_ASSET_PLANNING_RETRY_BASE_DELAY_SECONDS": self.ORION_VISUAL_ASSET_PLANNING_RETRY_BASE_DELAY_SECONDS,
             "ORION_IMAGE_ACQUISITION_TIMEOUT_SECONDS": self.ORION_IMAGE_ACQUISITION_TIMEOUT_SECONDS,
             "ORION_IMAGE_ACQUISITION_RETRY_BASE_DELAY_SECONDS": self.ORION_IMAGE_ACQUISITION_RETRY_BASE_DELAY_SECONDS,
+            "ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS": self.ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS,
+            "ORION_VIDEO_CLIP_GENERATION_MAX_DURATION_SECONDS": self.ORION_VIDEO_CLIP_GENERATION_MAX_DURATION_SECONDS,
         }
         for name, value in positive.items():
             if value <= 0:
@@ -227,6 +252,9 @@ class Settings(BaseSettings):
             "ORION_IMAGE_ACQUISITION_MAX_DECODED_IMAGE_BYTES": self.ORION_IMAGE_ACQUISITION_MAX_DECODED_IMAGE_BYTES,
             "ORION_IMAGE_ACQUISITION_MAX_PLAN_BYTES": self.ORION_IMAGE_ACQUISITION_MAX_PLAN_BYTES,
             "ORION_IMAGE_ACQUISITION_MAX_MANIFEST_BYTES": self.ORION_IMAGE_ACQUISITION_MAX_MANIFEST_BYTES,
+            "ORION_VIDEO_CLIP_GENERATION_MAX_SOURCE_MANIFEST_BYTES": self.ORION_VIDEO_CLIP_GENERATION_MAX_SOURCE_MANIFEST_BYTES,
+            "ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES": self.ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES,
+            "ORION_VIDEO_CLIP_GENERATION_MAX_MANIFEST_BYTES": self.ORION_VIDEO_CLIP_GENERATION_MAX_MANIFEST_BYTES,
         }.items():
             if not 1 <= value <= 50_000_000:
                 raise ValueError(f"{name} is outside safe limits")
@@ -234,6 +262,27 @@ class Settings(BaseSettings):
             raise ValueError(
                 "ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES is outside safe limits"
             )
+        if (
+            self.ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS
+            > self.ORION_VIDEO_CLIP_GENERATION_MAX_DURATION_SECONDS
+        ):
+            raise ValueError(
+                "video clip duration cannot exceed the configured maximum"
+            )
+        if self.ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES > 250_000_000:
+            raise ValueError(
+                "ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES is outside safe limits"
+            )
+        for name in (
+            "ORION_VIDEO_CLIP_GENERATION_FFMPEG_PATH",
+            "ORION_VIDEO_CLIP_GENERATION_FFPROBE_PATH",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                normalized = value.strip()
+                if not normalized or any(ord(character) < 32 for character in normalized):
+                    raise ValueError(f"{name} is invalid")
+                setattr(self, name, normalized)
         if not 1 <= self.ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS <= 5:
             raise ValueError(
                 "ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS "

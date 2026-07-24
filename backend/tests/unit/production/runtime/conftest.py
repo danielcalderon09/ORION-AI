@@ -9,6 +9,7 @@ from backend.src.production.application.orchestration import (
     PipelineConfiguration,
     ProductionOrchestrator,
 )
+from backend.src.production.domain.enums import ArtifactType, ProductionStage
 from backend.src.production.infrastructure.persistence.models import ProductionBase
 from backend.src.production.infrastructure.persistence.session import (
     create_production_engine,
@@ -32,6 +33,17 @@ from backend.src.production.runtime import (
     StageContextFactory,
     create_simulated_handler_registry,
 )
+from backend.src.production.runtime.handlers.base import SimulatedStageHandler
+
+
+class TestVideoClipBoundaryHandler(SimulatedStageHandler):
+    """Legacy runtime test double; durable video behavior has dedicated tests."""
+
+    __test__ = False
+    supported_stages = frozenset({ProductionStage.GENERATING_VIDEO_CLIPS})
+    artifact_type = ArtifactType.MANIFEST
+    mime_type = "application/json"
+    extension = "json"
 
 
 class MutableClock:
@@ -86,7 +98,14 @@ def build_worker(
         lease_duration=timedelta(seconds=10),
     )
     stage_executor = executor or ProductionExecutor(
-        create_simulated_handler_registry(clock=clock, uuid_factory=uuids)
+        create_simulated_handler_registry(
+            clock=clock,
+            uuid_factory=uuids,
+            video_clip_generation_handler=TestVideoClipBoundaryHandler(
+                clock=clock,
+                uuid_factory=uuids,
+            ),
+        )
     )
     recovery = ProductionRecoveryService(
         state_reader,

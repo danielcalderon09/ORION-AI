@@ -22,6 +22,7 @@ class ProductionStage(StrEnum):
     SCENE_PLANNING = "scene_planning"
     VISUAL_ASSET_PLANNING = "visual_asset_planning"
     ACQUIRING_ASSETS = "acquiring_assets"
+    GENERATING_VIDEO_CLIPS = "generating_video_clips"
     GENERATING_NARRATION = "generating_narration"
     PREPARING_MUSIC = "preparing_music"
     GENERATING_SUBTITLES = "generating_subtitles"
@@ -60,7 +61,9 @@ class ArtifactType(StrEnum):
     PRODUCTION_IMAGE_ACQUISITION_MANIFEST = (
         "production_image_acquisition_manifest"
     )
+    PRODUCTION_VIDEO_CLIP_MANIFEST = "production_video_clip_manifest"
     SOURCE_IMAGE = "source_image"
+    SOURCE_VIDEO_CLIP = "source_video_clip"
     SOURCE_VIDEO = "source_video"
     NARRATION = "narration"
     MUSIC = "music"

@@ -69,3 +69,10 @@ convertirse en un escáner arbitrario del workspace.
 Las pruebas usan imágenes locales diminutas y `MockTransport`; no realizan red ni llamadas
 facturables. La infraestructura no implementa descarga, thumbnails, embeddings, visión, audio,
 timeline, render, DaVinci ni frontend.
+
+## Separación del store de video
+
+Fase 5F.1 no generaliza este store: las rutas, MIME y validación Pillow siguen cerradas a imágenes.
+Los MP4 usan `FilesystemVideoClipBinaryStore`, un componente paralelo con ffprobe, sidecar propio
+y ruta `production/<job_id>/assets/video-clips/`. Esta separación impide declarar una imagen como
+video o ampliar accidentalmente las allowlists existentes.

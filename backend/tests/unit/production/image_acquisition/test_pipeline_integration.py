@@ -139,9 +139,22 @@ async def test_full_pipeline_acquires_durable_images_without_real_network(
             if record[0]
             == ArtifactType.PRODUCTION_IMAGE_ACQUISITION_MANIFEST.value
         ]
+        video_clips = [
+            record
+            for record in rows
+            if record[0] == ArtifactType.SOURCE_VIDEO_CLIP.value
+        ]
+        video_manifests = [
+            record
+            for record in rows
+            if record[0]
+            == ArtifactType.PRODUCTION_VIDEO_CLIP_MANIFEST.value
+        ]
         assert len(images) == 1
         assert len(manifests) == 1
-        for record in (*images, *manifests):
+        assert len(video_clips) == 1
+        assert len(video_manifests) == 1
+        for record in (*images, *manifests, *video_clips, *video_manifests):
             target = settings.PROJECTS_DIR.joinpath(
                 *record[1].split("/")
             )
@@ -151,6 +164,12 @@ async def test_full_pipeline_acquires_durable_images_without_real_network(
             *images[0][1].split("/")
         )
         assert image_target.with_name(f"{image_target.name}.asset.json").is_file()
+        video_target = settings.PROJECTS_DIR.joinpath(
+            *video_clips[0][1].split("/")
+        )
+        assert video_target.with_name(f"{video_target.name}.asset.json").is_file()
+        assert video_clips[0][3]["has_audio"] is False
+        assert video_clips[0][3]["simulated"] is True
         assert "content" not in images[0][3]
         assert "base64" not in images[0][3]
         assert "prompt" not in images[0][3]

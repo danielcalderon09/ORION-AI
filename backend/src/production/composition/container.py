@@ -79,6 +79,9 @@ from backend.src.production.infrastructure.durable_production_visual_asset_plan_
 from backend.src.production.infrastructure.persistence.planning_artifact_reader import (
     SQLAlchemyRegisteredPlanningArtifactReader,
 )
+from backend.src.production.infrastructure.persistence.production_image_acquisition_manifest_query_repository import (
+    SQLAlchemyImageAcquisitionManifestQueryRepository,
+)
 from backend.src.production.infrastructure.persistence.production_plan_query_repository import (
     SQLAlchemyProductionPlanQueryRepository,
 )
@@ -167,6 +170,38 @@ from backend.src.production.scripting.providers.availability import (
     ScriptingProviderFactory,
     load_openrouter_scripting_provider,
 )
+from backend.src.production.video_clip_generation.configuration import (
+    VideoClipGenerationConfiguration,
+)
+from backend.src.production.video_clip_generation.handler import (
+    VideoClipGenerationHandler,
+)
+from backend.src.production.video_clip_generation.manifest_writer import (
+    LocalVideoClipManifestWriter,
+)
+from backend.src.production.video_clip_generation.media_probe import (
+    FFprobeMediaProbe,
+    VideoClipIntegrityValidator,
+)
+from backend.src.production.video_clip_generation.ports import (
+    VideoClipBinaryStore,
+    VideoClipGenerationProvider,
+)
+from backend.src.production.video_clip_generation.providers import (
+    SimulatedVideoClipGenerationProvider,
+)
+from backend.src.production.video_clip_generation.providers.availability import (
+    resolve_media_executable,
+)
+from backend.src.production.video_clip_generation.reader import (
+    DurableImageAcquisitionManifestReader,
+)
+from backend.src.production.video_clip_generation.reconciliation import (
+    FilesystemVideoClipReconciler,
+)
+from backend.src.production.video_clip_generation.video_store import (
+    FilesystemVideoClipBinaryStore,
+)
 from backend.src.production.visual_asset_planning.artifact_writer import (
     LocalVisualAssetPlanningArtifactWriter,
 )
@@ -212,12 +247,16 @@ class ProductionContainer:
     scene_planning_provider: ScenePlanningProvider
     visual_asset_planning_provider: VisualAssetPlanningProvider
     image_acquisition_provider: ImageAcquisitionProvider
+    video_clip_generation_provider: VideoClipGenerationProvider
     binary_asset_configuration: AssetStorageConfiguration
     binary_asset_store: BinaryAssetStore
     binary_asset_writer: BinaryAssetWriter
     binary_asset_reader: BinaryAssetReader
     binary_asset_integrity_validator: BinaryAssetIntegrityValidator
     binary_asset_reconciler: FilesystemBinaryAssetReconciler
+    video_clip_binary_store: VideoClipBinaryStore
+    video_clip_integrity_validator: VideoClipIntegrityValidator
+    video_clip_reconciler: FilesystemVideoClipReconciler
     planning_artifact_reconciler: PlanningArtifactReconciler
     async_resources: tuple[AsyncClosable, ...]
 
@@ -382,9 +421,79 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         prompt_builder=image_prompt_builder,
         clock=clock,
     )
+    video_clip_configuration = VideoClipGenerationConfiguration(
+        provider=settings.ORION_VIDEO_CLIP_GENERATION_PROVIDER,
+        model=settings.ORION_VIDEO_CLIP_GENERATION_MODEL,
+        output_format=settings.ORION_VIDEO_CLIP_GENERATION_OUTPUT_FORMAT,
+        codec=settings.ORION_VIDEO_CLIP_GENERATION_CODEC,
+        frame_rate=settings.ORION_VIDEO_CLIP_GENERATION_FRAME_RATE,
+        duration_seconds=settings.ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS,
+        max_duration_seconds=(
+            settings.ORION_VIDEO_CLIP_GENERATION_MAX_DURATION_SECONDS
+        ),
+    )
+    ffprobe_media_probe = FFprobeMediaProbe(
+        executable=resolve_media_executable(
+            settings.ORION_VIDEO_CLIP_GENERATION_FFPROBE_PATH,
+            "ffprobe",
+        )
+    )
+    video_clip_integrity_validator = VideoClipIntegrityValidator(
+        probe=ffprobe_media_probe,
+        max_video_bytes=settings.ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES,
+    )
+    filesystem_video_clip_store = FilesystemVideoClipBinaryStore(
+        workspace_root=settings.PROJECTS_DIR,
+        integrity_validator=video_clip_integrity_validator,
+        max_video_bytes=settings.ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES,
+        clock=clock,
+    )
+    video_clip_generation_provider = SimulatedVideoClipGenerationProvider(
+        ffmpeg_path=resolve_media_executable(
+            settings.ORION_VIDEO_CLIP_GENERATION_FFMPEG_PATH,
+            "ffmpeg",
+        ),
+        max_output_bytes=settings.ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES,
+    )
+    image_acquisition_manifest_reader = DurableImageAcquisitionManifestReader(
+        workspace_root=settings.PROJECTS_DIR,
+        repository=SQLAlchemyImageAcquisitionManifestQueryRepository(sessions),
+        binary_reader=filesystem_binary_asset_store,
+        max_manifest_bytes=(
+            settings.ORION_VIDEO_CLIP_GENERATION_MAX_SOURCE_MANIFEST_BYTES
+        ),
+    )
+    video_clip_generation_handler = VideoClipGenerationHandler(
+        manifest_reader=image_acquisition_manifest_reader,
+        provider=video_clip_generation_provider,
+        binary_store=filesystem_video_clip_store,
+        manifest_writer=LocalVideoClipManifestWriter(
+            settings.PROJECTS_DIR,
+            max_manifest_bytes=(
+                settings.ORION_VIDEO_CLIP_GENERATION_MAX_MANIFEST_BYTES
+            ),
+        ),
+        configuration=video_clip_configuration,
+        clock=clock,
+    )
     binary_asset_reconciler = FilesystemBinaryAssetReconciler(
         configuration=binary_asset_configuration,
         store=filesystem_binary_asset_store,
+    )
+    video_clip_reconciler = FilesystemVideoClipReconciler(
+        workspace_root=settings.PROJECTS_DIR,
+        store=filesystem_video_clip_store,
+        source_reader=image_acquisition_manifest_reader,
+        registered_reader=SQLAlchemyRegisteredPlanningArtifactReader(
+            sessions,
+            artifact_types=frozenset(
+                {
+                    ArtifactType.SOURCE_VIDEO_CLIP,
+                    ArtifactType.PRODUCTION_VIDEO_CLIP_MANIFEST,
+                }
+            ),
+        ),
+        max_manifest_bytes=settings.ORION_VIDEO_CLIP_GENERATION_MAX_MANIFEST_BYTES,
     )
     planning_artifact_reconciler = LocalProductionArtifactReconciler(
         workspace_root=settings.PROJECTS_DIR,
@@ -397,6 +506,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                     ArtifactType.PRODUCTION_SCENE_PLAN,
                     ArtifactType.PRODUCTION_VISUAL_ASSET_PLAN,
                     ArtifactType.PRODUCTION_IMAGE_ACQUISITION_MANIFEST,
+                    ArtifactType.PRODUCTION_VIDEO_CLIP_MANIFEST,
                 }
             ),
         ),
@@ -405,6 +515,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         quarantine_relative_path=settings.ORION_PLANNING_QUARANTINE_DIR,
         clock=clock,
         binary_reconciler=binary_asset_reconciler,
+        video_reconciler=video_clip_reconciler,
     )
 
     leases = ProductionLeaseManager(
@@ -441,6 +552,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                 scene_planning_handler=scene_planning_handler,
                 visual_asset_planning_handler=visual_asset_planning_handler,
                 image_acquisition_handler=image_acquisition_handler,
+                video_clip_generation_handler=video_clip_generation_handler,
                 clock=clock,
                 uuid_factory=uuid4,
             )
@@ -491,14 +603,19 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         scene_planning_provider=scene_planning_provider,
         visual_asset_planning_provider=visual_asset_planning_provider,
         image_acquisition_provider=image_acquisition_provider,
+        video_clip_generation_provider=video_clip_generation_provider,
         binary_asset_configuration=binary_asset_configuration,
         binary_asset_store=filesystem_binary_asset_store,
         binary_asset_writer=filesystem_binary_asset_store,
         binary_asset_reader=filesystem_binary_asset_store,
         binary_asset_integrity_validator=binary_asset_integrity_validator,
         binary_asset_reconciler=binary_asset_reconciler,
+        video_clip_binary_store=filesystem_video_clip_store,
+        video_clip_integrity_validator=video_clip_integrity_validator,
+        video_clip_reconciler=video_clip_reconciler,
         planning_artifact_reconciler=planning_artifact_reconciler,
         async_resources=(
+            video_clip_generation_provider,
             image_acquisition_provider,
             visual_asset_planning_provider,
             scene_planning_provider,

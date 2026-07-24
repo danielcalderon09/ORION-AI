@@ -1,7 +1,10 @@
 """Composition root for simulated Phase 3 handlers."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from backend.src.production.image_acquisition.handler import ImageAcquisitionHandler
@@ -28,18 +31,26 @@ from backend.src.production.runtime.handlers import (
 from backend.src.production.runtime.handlers import (
     VisualAssetPlanningHandler as SimulatedVisualAssetPlanningHandler,
 )
+from backend.src.production.runtime.handlers.base import StageHandler
 from backend.src.production.runtime.job_dispatcher import StageHandlerRegistry
 from backend.src.production.scene_planning.handler import ScenePlanningHandler
 from backend.src.production.visual_asset_planning.handler import (
     VisualAssetPlanningHandler,
 )
 
+if TYPE_CHECKING:
+    from backend.src.production.video_clip_generation.handler import (
+        VideoClipGenerationHandler,
+    )
+
 
 def create_simulated_handler_registry(
-    *, clock: Callable[[], datetime], uuid_factory: Callable[[], UUID]
+    *,
+    clock: Callable[[], datetime],
+    uuid_factory: Callable[[], UUID],
+    video_clip_generation_handler: StageHandler | None = None,
 ) -> StageHandlerRegistry:
-    return StageHandlerRegistry(
-        (
+    handlers: list[StageHandler] = [
             PlanningHandler(
                 provider=SimulatedPlanningProvider(),
                 artifact_writer=InMemoryPlanningArtifactWriter(),
@@ -53,6 +64,11 @@ def create_simulated_handler_registry(
                 uuid_factory=uuid_factory,
             ),
             AssetHandler(clock=clock, uuid_factory=uuid_factory),
+    ]
+    if video_clip_generation_handler is not None:
+        handlers.append(video_clip_generation_handler)
+    handlers.extend(
+        (
             NarrationHandler(clock=clock, uuid_factory=uuid_factory),
             MusicHandler(clock=clock, uuid_factory=uuid_factory),
             SubtitleHandler(clock=clock, uuid_factory=uuid_factory),
@@ -62,6 +78,7 @@ def create_simulated_handler_registry(
             ClipHandoffHandler(clock=clock, uuid_factory=uuid_factory),
         )
     )
+    return StageHandlerRegistry(handlers)
 
 
 def create_handler_registry(
@@ -71,13 +88,13 @@ def create_handler_registry(
     scene_planning_handler: ScenePlanningHandler | None = None,
     visual_asset_planning_handler: VisualAssetPlanningHandler | None = None,
     image_acquisition_handler: ImageAcquisitionHandler | None = None,
+    video_clip_generation_handler: VideoClipGenerationHandler | None = None,
     clock: Callable[[], datetime],
     uuid_factory: Callable[[], UUID],
 ) -> StageHandlerRegistry:
     """Inject durable early-stage handlers; later media stages remain simulated."""
 
-    return StageHandlerRegistry(
-        (
+    handlers: list[StageHandler] = [
             planning_handler,
             scripting_handler or ScriptHandler(clock=clock, uuid_factory=uuid_factory),
             scene_planning_handler
@@ -89,6 +106,11 @@ def create_handler_registry(
             ),
             image_acquisition_handler
             or AssetHandler(clock=clock, uuid_factory=uuid_factory),
+    ]
+    if video_clip_generation_handler is not None:
+        handlers.append(video_clip_generation_handler)
+    handlers.extend(
+        (
             NarrationHandler(clock=clock, uuid_factory=uuid_factory),
             MusicHandler(clock=clock, uuid_factory=uuid_factory),
             SubtitleHandler(clock=clock, uuid_factory=uuid_factory),
@@ -98,3 +120,4 @@ def create_handler_registry(
             ClipHandoffHandler(clock=clock, uuid_factory=uuid_factory),
         )
     )
+    return StageHandlerRegistry(handlers)

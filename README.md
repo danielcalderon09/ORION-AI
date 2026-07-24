@@ -98,6 +98,12 @@ binaria y publica `image-acquisition-manifest.json`. El provider default es simu
 determinista; OpenRouter Images API es opcional y no permite fallback. Consulta
 [`docs/PRODUCTION_IMAGE_ACQUISITION_PROVIDER.md`](docs/PRODUCTION_IMAGE_ACQUISITION_PROVIDER.md).
 
+GENERATING_VIDEO_CLIPS consume exclusivamente ese manifest completed y sus `SOURCE_IMAGE`
+verificados. El provider simulado offline anima cada imagen en un MP4 H.264 corto, sin audio, y
+publica clips, sidecars y `video-clip-generation-manifest.json` durables. Requiere ffmpeg/ffprobe
+locales y no conecta ningún proveedor remoto o facturable. Consulta
+[`docs/PRODUCTION_VIDEO_CLIP_GENERATION.md`](docs/PRODUCTION_VIDEO_CLIP_GENERATION.md).
+
 ### Frontend
 ```bash
 cd frontend

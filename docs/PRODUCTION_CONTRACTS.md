@@ -1,5 +1,17 @@
 # Contratos del bounded context `production`
 
+## Contratos ejecutables de GENERATING_VIDEO_CLIPS (Fase 5F.1)
+
+`ProductionVideoClipManifest`, `ProductionVideoClipEntry`, `ProductionVideoClipSummary`,
+`VideoClipProviderRequest/Response`, `GeneratedVideoClipPayload`, `VideoClipMetadata` y
+`VideoClipGenerationConfiguration` son frozen, `extra=forbid` y versionados. Un manifest
+`completed` exige todas las entries `stored`. Bytes de imagen/video se excluyen de repr y
+serialización.
+
+`ArtifactType.SOURCE_VIDEO_CLIP` y `PRODUCTION_VIDEO_CLIP_MANIFEST` son aditivos y no requieren
+migración. El provider recibe identificadores, metadata segura, bytes fuente excluidos, duración,
+fps, dimensiones y fingerprint; nunca recibe prompt, ORM, rutas, headers, API keys ni stores.
+
 ## Contratos ejecutables de ACQUIRING_ASSETS (Fase 5E.2)
 
 `ProductionImageAcquisitionManifest` registra la relación versionada entre un

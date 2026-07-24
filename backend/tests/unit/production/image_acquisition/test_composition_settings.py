@@ -51,7 +51,7 @@ def test_default_provider_is_simulated_and_first_to_close(tmp_path) -> None:
     assert type(container.image_acquisition_provider).__name__ == (
         "SimulatedImageAcquisitionProvider"
     )
-    assert container.async_resources[0] is container.image_acquisition_provider
+    assert container.async_resources[1] is container.image_acquisition_provider
     container.shutdown()
 
 

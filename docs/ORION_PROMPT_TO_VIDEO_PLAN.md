@@ -1,5 +1,16 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 5F.1
+
+GENERATING_VIDEO_CLIPS sigue a ACQUIRING_ASSETS. Consume únicamente el manifest durable y crea un
+MP4 H.264 sin audio por imagen mediante un provider simulado, determinista, offline y gratuito.
+Clips, sidecars y manifest soportan checkpoints, recovery, idempotencia, `uncertain`,
+reconciliación read-only y cancelación segura de ffmpeg.
+
+Todavía no existen provider real, video generativo, text-to-video, audio, TTS, música, SFX,
+subtítulos, timeline, render final, DaVinci ni frontend de producción. La siguiente fase
+recomendada es **Fase 5F.2 — Real Video Generation Provider**.
+
 ## Estado posterior a Fase 5E.2
 
 ACQUIRING_ASSETS consume `visual-asset-plan.json`, checkpointa un manifest por attempt y escribe

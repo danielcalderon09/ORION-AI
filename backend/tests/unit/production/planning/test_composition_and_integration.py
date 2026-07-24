@@ -28,7 +28,12 @@ from backend.src.production.planning.providers.openrouter_provider import (
 )
 from backend.src.production.runtime import ProductionExecutor, create_handler_registry
 from backend.src.production.runtime.handlers import PlanningHandler
-from backend.tests.unit.production.runtime.conftest import MutableClock, UUIDSequence, build_worker
+from backend.tests.unit.production.runtime.conftest import (
+    MutableClock,
+    TestVideoClipBoundaryHandler,
+    UUIDSequence,
+    build_worker,
+)
 from backend.tests.unit.production.runtime.test_worker import enqueue_job, job_status
 
 
@@ -198,6 +203,10 @@ async def test_pipeline_with_fake_real_provider_persists_matching_file(
     executor = ProductionExecutor(
         create_handler_registry(
             planning_handler=planning_handler,
+            video_clip_generation_handler=TestVideoClipBoundaryHandler(
+                clock=clock,
+                uuid_factory=uuids,
+            ),
             clock=clock,
             uuid_factory=uuids,
         )

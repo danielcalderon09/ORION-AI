@@ -95,5 +95,8 @@ completo, bytes, base64, Authorization, API key, headers, payload externo o ruta
 Todas las pruebas del provider real usan `httpx.MockTransport`; no hacen red ni generan costes.
 Rollback consiste en volver a `ORION_IMAGE_ACQUISITION_PROVIDER=simulated`.
 
-La siguiente fase recomendada es evaluar imágenes verificadas y preparar clips de video, sin
-incorporar todavía timeline, render, DaVinci o frontend.
+Fase 5F.1 consume ahora este manifest y sus imágenes verificadas para crear clips MP4 simulados.
+Image Acquisition conserva sus contratos públicos y allowlists sin cambios. Consulta
+`PRODUCTION_VIDEO_CLIP_GENERATION.md`.
+
+La siguiente fase recomendada es Fase 5F.2 — Real Video Generation Provider.

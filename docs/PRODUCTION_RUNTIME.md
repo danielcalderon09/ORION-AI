@@ -1,5 +1,17 @@
 # Runtime local de Production Pipeline
 
+## GENERATING_VIDEO_CLIPS durable (Fase 5F.1)
+
+Después de ACQUIRING_ASSETS y antes de audio, `VideoClipGenerationHandler` consume únicamente el
+manifest de imágenes completed y sus SOURCE_IMAGE verificados. Procesa secuencialmente, marca
+`pending -> generating` antes de ffmpeg y `generating -> stored` solo después de store y ffprobe.
+Publica MP4 H.264 sin audio y un manifest por attempt.
+
+La composición no ejecuta ffmpeg/ffprobe durante startup. El provider simulado offline se cierra
+antes del provider de imágenes. Recovery reutiliza clips válidos sin recodificar; un
+`generating` ambiguo sin clip válido pasa a `uncertain`. El reconciliador de video es read-only.
+Detalles en `PRODUCTION_VIDEO_CLIP_GENERATION.md`.
+
 ## ACQUIRING_ASSETS durable (Fase 5E.2)
 
 Después de VISUAL_ASSET_PLANNING, `ImageAcquisitionHandler` lee el plan visual durable, admite

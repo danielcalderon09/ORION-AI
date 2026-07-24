@@ -17,6 +17,9 @@ from backend.src.production.runtime import (
     create_simulated_handler_registry,
 )
 from backend.src.production.runtime.handlers import PlanningHandler
+from backend.tests.unit.production.runtime.conftest import (
+    TestVideoClipBoundaryHandler,
+)
 
 NOW = datetime(2026, 7, 17, 16, 0, tzinfo=UTC)
 
@@ -54,6 +57,10 @@ async def test_dispatcher_and_all_simulated_handlers_are_executable() -> None:
     registry = create_simulated_handler_registry(
         clock=lambda: NOW,
         uuid_factory=lambda: next(ids),
+        video_clip_generation_handler=TestVideoClipBoundaryHandler(
+            clock=lambda: NOW,
+            uuid_factory=lambda: next(ids),
+        ),
     )
     executable = set(ProductionStage) - {ProductionStage.CREATED, ProductionStage.COMPLETED}
     assert registry.registered_stages == executable

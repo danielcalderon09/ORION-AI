@@ -19,6 +19,9 @@ from backend.src.production.planning.reconciliation import (
     PlanningArtifactReconciliationReport,
     RegisteredPlanningArtifactReader,
 )
+from backend.src.production.video_clip_generation.reconciliation import (
+    FilesystemVideoClipReconciler,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +48,10 @@ VISUAL_ASSET_PLANNING_POLICY = JsonArtifactReconciliationPolicy(
 IMAGE_ACQUISITION_POLICY = JsonArtifactReconciliationPolicy(
     stage="acquiring_assets",
     filename="image-acquisition-manifest.json",
+)
+VIDEO_CLIP_GENERATION_POLICY = JsonArtifactReconciliationPolicy(
+    stage="generating_video_clips",
+    filename="video-clip-generation-manifest.json",
 )
 
 
@@ -181,6 +188,11 @@ class LocalPlanningArtifactReconciler:
             counts["registered"] += 1
             return
         counts["orphaned"] += 1
+        if relative.parts[2] == VIDEO_CLIP_GENERATION_POLICY.stage:
+            # Video reconciliation is strictly read-only: never delete, quarantine,
+            # or regenerate a video manifest automatically.
+            counts["skipped_recent"] += 1
+            return
         modified = datetime.fromtimestamp(candidate.stat().st_mtime, tz=UTC)
         if (now - modified).total_seconds() < self._minimum_age:
             counts["skipped_recent"] += 1
@@ -244,8 +256,10 @@ class LocalProductionArtifactReconciler(LocalPlanningArtifactReconciler):
         quarantine_relative_path: str = "production-quarantine",
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         binary_reconciler: FilesystemBinaryAssetReconciler | None = None,
+        video_reconciler: FilesystemVideoClipReconciler | None = None,
     ) -> None:
         self._binary_reconciler = binary_reconciler
+        self._video_reconciler = video_reconciler
         super().__init__(
             workspace_root=workspace_root,
             registered_reader=registered_reader,
@@ -259,21 +273,28 @@ class LocalProductionArtifactReconciler(LocalPlanningArtifactReconciler):
                 SCENE_PLANNING_POLICY,
                 VISUAL_ASSET_PLANNING_POLICY,
                 IMAGE_ACQUISITION_POLICY,
+                VIDEO_CLIP_GENERATION_POLICY,
             ),
         )
 
     async def reconcile(self) -> PlanningArtifactReconciliationReport:
         json_report = await super().reconcile()
-        if self._binary_reconciler is None:
-            return json_report
-        binary_report = await self._binary_reconciler.reconcile()
-        return json_report.model_copy(
-            update={
-                "binary_scanned": binary_report.scanned,
-                "binary_valid": binary_report.valid,
-                "binary_issues": len(binary_report.issues),
-            }
-        )
+        update: dict[str, int] = {}
+        if self._binary_reconciler is not None:
+            binary_report = await self._binary_reconciler.reconcile()
+            update.update(
+                binary_scanned=binary_report.scanned,
+                binary_valid=binary_report.valid,
+                binary_issues=len(binary_report.issues),
+            )
+        if self._video_reconciler is not None:
+            video_report = await self._video_reconciler.reconcile()
+            update.update(
+                video_scanned=video_report.scanned,
+                video_valid=video_report.valid,
+                video_issues=len(video_report.issues),
+            )
+        return json_report.model_copy(update=update)
 
 
 def _reject_symlink_path(root: Path, target: Path) -> None:

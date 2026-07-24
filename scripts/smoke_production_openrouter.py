@@ -26,6 +26,9 @@ from backend.src.production.scripting.prompt_builder import ScriptingPromptBuild
 from backend.src.production.scripting.providers.openrouter_provider import (
     OpenRouterScriptingProvider,
 )
+from backend.src.production.video_clip_generation.providers import (
+    SimulatedVideoClipGenerationProvider,
+)
 from backend.src.production.visual_asset_planning.prompt_builder import (
     VisualAssetPlanningPromptBuilder,
 )
@@ -100,6 +103,8 @@ async def smoke() -> None:
     )
     await image.close()
     assert image_client.is_closed
+    video = SimulatedVideoClipGenerationProvider()
+    await video.close()
     print("production OpenRouter installation smoke: OK (zero requests)")
 
 

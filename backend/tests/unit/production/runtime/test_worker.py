@@ -46,6 +46,7 @@ from backend.src.production.runtime.handlers import (
 from backend.src.production.runtime.runtime_models import StageExecutionOutput
 from backend.tests.unit.production.runtime.conftest import (
     MutableClock,
+    TestVideoClipBoundaryHandler,
     UUIDSequence,
     build_worker,
 )
@@ -85,8 +86,8 @@ async def test_worker_processes_one_complete_job(runtime_database) -> None:
     assert job_status(session_factory, job_id) is ProductionJobStatus.COMPLETED
     assert cycles[-1].processed is False
     with session_factory() as session:
-        assert session.scalar(select(func.count(StageResultRecord.command_id))) == 11
-        assert session.scalar(select(func.count(ArtifactRecord.artifact_id))) == 11
+        assert session.scalar(select(func.count(StageResultRecord.command_id))) == 12
+        assert session.scalar(select(func.count(ArtifactRecord.artifact_id))) == 12
         assert session.scalar(select(func.count(ProductionLeaseRecord.job_id))) == 0
 
 
@@ -124,7 +125,7 @@ async def test_worker_pipeline_with_clip_handoff_completes(runtime_database) -> 
     await worker.run_until_idle(max_cycles=20)
     assert job_status(session_factory, job_id) is ProductionJobStatus.COMPLETED
     with session_factory() as session:
-        assert session.scalar(select(func.count(StageResultRecord.command_id))) == 13
+        assert session.scalar(select(func.count(StageResultRecord.command_id))) == 14
 
 
 def retry_executor(clock, uuids) -> ProductionExecutor:
@@ -152,6 +153,7 @@ def retry_executor(clock, uuids) -> ProductionExecutor:
                 ScenePlanningHandler(**common),
                 VisualAssetPlanningHandler(**common),
                 AssetHandler(**common),
+                TestVideoClipBoundaryHandler(**common),
                 NarrationHandler(**common),
                 MusicHandler(**common),
                 SubtitleHandler(**common),

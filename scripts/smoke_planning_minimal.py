@@ -41,6 +41,9 @@ def main() -> None:
             SimulatedScenePlanningProvider,
         )
         from backend.src.production.scripting.providers import SimulatedScriptingProvider
+        from backend.src.production.video_clip_generation.providers import (
+            SimulatedVideoClipGenerationProvider,
+        )
         from backend.src.production.visual_asset_planning.providers import (
             SimulatedVisualAssetPlanningProvider,
         )
@@ -59,6 +62,7 @@ def main() -> None:
         assert SimulatedScenePlanningProvider is not None
         assert SimulatedVisualAssetPlanningProvider is not None
         assert SimulatedImageAcquisitionProvider is not None
+        assert SimulatedVideoClipGenerationProvider is not None
         assert app is not None
         assert "backend.src.production.planning.providers.openrouter_provider" not in sys.modules
         assert "backend.src.production.scripting.providers.openrouter_provider" not in sys.modules

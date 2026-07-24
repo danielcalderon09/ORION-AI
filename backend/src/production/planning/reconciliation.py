@@ -18,6 +18,9 @@ class PlanningArtifactReconciliationReport(ContractModel):
     binary_scanned: int = Field(default=0, ge=0)
     binary_valid: int = Field(default=0, ge=0)
     binary_issues: int = Field(default=0, ge=0)
+    video_scanned: int = Field(default=0, ge=0)
+    video_valid: int = Field(default=0, ge=0)
+    video_issues: int = Field(default=0, ge=0)
 
 
 class PlanningArtifactReconciliationError(RuntimeError):

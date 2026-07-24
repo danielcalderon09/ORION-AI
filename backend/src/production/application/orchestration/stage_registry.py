@@ -17,6 +17,7 @@ class StageRegistry:
         ProductionStage.SCENE_PLANNING,
         ProductionStage.VISUAL_ASSET_PLANNING,
         ProductionStage.ACQUIRING_ASSETS,
+        ProductionStage.GENERATING_VIDEO_CLIPS,
         ProductionStage.GENERATING_NARRATION,
         ProductionStage.PREPARING_MUSIC,
         ProductionStage.GENERATING_SUBTITLES,

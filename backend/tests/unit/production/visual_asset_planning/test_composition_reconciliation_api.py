@@ -41,7 +41,7 @@ def test_visual_asset_planning_defaults_to_simulated(tmp_path) -> None:
     assert type(container.visual_asset_planning_provider).__name__ == (
         "SimulatedVisualAssetPlanningProvider"
     )
-    assert container.async_resources[1] is container.visual_asset_planning_provider
+    assert container.async_resources[2] is container.visual_asset_planning_provider
     container.shutdown()
 
 

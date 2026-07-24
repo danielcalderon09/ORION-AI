@@ -1,5 +1,15 @@
 # Production Jobs API interna (Fase 4)
 
+## Compatibilidad con Video Clip Generation de Fase 5F.1
+
+Los endpoints existentes pueden listar metadata de `SOURCE_VIDEO_CLIP` y
+`PRODUCTION_VIDEO_CLIP_MANIFEST`. No existe endpoint de descarga o streaming: la API no devuelve
+MP4, bytes, base64, `file://`, rutas absolutas, comandos ffmpeg ni configuración privada. Jobs
+históricos continúan siendo legibles porque los nuevos enum values son aditivos.
+
+Provider, codec, fps, duración y paths de ejecutables son configuración global. La creación de
+jobs rechaza `video_clip_generation`.
+
 ## Compatibilidad con Image Acquisition de Fase 5E.2
 
 No existen rutas nuevas. El listado puede incluir `source_image` y
