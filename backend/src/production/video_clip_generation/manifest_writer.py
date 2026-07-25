@@ -45,20 +45,14 @@ class InMemoryVideoClipManifestWriter:
         self.contents: dict[str, bytes] = {}
         self.checkpoint_count = 0
 
-    async def read_existing(
-        self, *, context: StageContext
-    ) -> ProductionVideoClipManifest | None:
+    async def read_existing(self, *, context: StageContext) -> ProductionVideoClipManifest | None:
         content = self.contents.get(video_clip_manifest_relative_path(context))
         return deserialize_video_clip_manifest(content) if content is not None else None
 
-    async def create(
-        self, *, context: StageContext, manifest: ProductionVideoClipManifest
-    ) -> None:
+    async def create(self, *, context: StageContext, manifest: ProductionVideoClipManifest) -> None:
         path = video_clip_manifest_relative_path(context)
         if path in self.contents:
-            raise VideoClipManifestConflictException(
-                "video clip manifest already exists"
-            )
+            raise VideoClipManifestConflictException("video clip manifest already exists")
         self.contents[path] = serialize_video_clip_manifest(manifest)
         self.checkpoint_count += 1
 
@@ -72,9 +66,7 @@ class InMemoryVideoClipManifestWriter:
         _validate_transition(previous, current)
         path = video_clip_manifest_relative_path(context)
         if self.contents.get(path) != serialize_video_clip_manifest(previous):
-            raise VideoClipManifestConflictException(
-                "video clip checkpoint changed concurrently"
-            )
+            raise VideoClipManifestConflictException("video clip checkpoint changed concurrently")
         self.contents[path] = serialize_video_clip_manifest(current)
         self.checkpoint_count += 1
 
@@ -86,9 +78,7 @@ class InMemoryVideoClipManifestWriter:
         current: ProductionVideoClipManifest,
     ) -> None:
         if current.status is not VideoClipManifestStatus.COMPLETED:
-            raise VideoClipManifestConflictException(
-                "final video clip manifest must be completed"
-            )
+            raise VideoClipManifestConflictException("final video clip manifest must be completed")
         await self.checkpoint(context=context, previous=previous, current=current)
 
     def written(self, *, context: StageContext) -> WrittenVideoClipManifest:
@@ -103,14 +93,10 @@ class LocalVideoClipManifestWriter:
         self._confinement = WorkspaceConfinement(workspace_root)
         self._maximum = max_manifest_bytes
 
-    async def read_existing(
-        self, *, context: StageContext
-    ) -> ProductionVideoClipManifest | None:
+    async def read_existing(self, *, context: StageContext) -> ProductionVideoClipManifest | None:
         return await asyncio.to_thread(self._read_existing_sync, context)
 
-    async def create(
-        self, *, context: StageContext, manifest: ProductionVideoClipManifest
-    ) -> None:
+    async def create(self, *, context: StageContext, manifest: ProductionVideoClipManifest) -> None:
         await asyncio.to_thread(self._create_sync, context, manifest)
 
     async def checkpoint(
@@ -130,25 +116,19 @@ class LocalVideoClipManifestWriter:
         current: ProductionVideoClipManifest,
     ) -> None:
         if current.status is not VideoClipManifestStatus.COMPLETED:
-            raise VideoClipManifestConflictException(
-                "final video clip manifest must be completed"
-            )
+            raise VideoClipManifestConflictException("final video clip manifest must be completed")
         await self.checkpoint(context=context, previous=previous, current=current)
 
     async def written(self, *, context: StageContext) -> WrittenVideoClipManifest:
         return await asyncio.to_thread(self._written_sync, context)
 
-    def _read_existing_sync(
-        self, context: StageContext
-    ) -> ProductionVideoClipManifest | None:
+    def _read_existing_sync(self, context: StageContext) -> ProductionVideoClipManifest | None:
         target = self._target(context)
         if not target.exists():
             return None
         return self._read(target)
 
-    def _create_sync(
-        self, context: StageContext, manifest: ProductionVideoClipManifest
-    ) -> None:
+    def _create_sync(self, context: StageContext, manifest: ProductionVideoClipManifest) -> None:
         target = self._target(context)
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -159,9 +139,7 @@ class LocalVideoClipManifestWriter:
             ) from exc
         with self._exclusive_lock(target):
             if target.exists() or target.is_symlink():
-                raise VideoClipManifestConflictException(
-                    "video clip manifest already exists"
-                )
+                raise VideoClipManifestConflictException("video clip manifest already exists")
             self._replace(target, serialize_video_clip_manifest(manifest))
 
     def _checkpoint_sync(
@@ -181,17 +159,13 @@ class LocalVideoClipManifestWriter:
 
     def _written_sync(self, context: StageContext) -> WrittenVideoClipManifest:
         target = self._target(context)
-        return _written(
-            video_clip_manifest_relative_path(context), self._read_limited(target)
-        )
+        return _written(video_clip_manifest_relative_path(context), self._read_limited(target))
 
     def _target(self, context: StageContext) -> Path:
         try:
             return self._confinement.resolve(video_clip_manifest_relative_path(context))
         except Exception as exc:
-            raise VideoClipManifestCorruptException(
-                "video clip manifest path is unsafe"
-            ) from exc
+            raise VideoClipManifestCorruptException("video clip manifest path is unsafe") from exc
 
     def _read(self, target: Path) -> ProductionVideoClipManifest:
         try:
@@ -199,9 +173,7 @@ class LocalVideoClipManifestWriter:
         except VideoClipManifestCorruptException:
             raise
         except (UnicodeError, ValueError, TypeError) as exc:
-            raise VideoClipManifestCorruptException(
-                "video clip manifest is invalid"
-            ) from exc
+            raise VideoClipManifestCorruptException("video clip manifest is invalid") from exc
 
     def _read_limited(self, target: Path) -> bytes:
         try:
@@ -219,16 +191,12 @@ class LocalVideoClipManifestWriter:
                 "video clip manifest could not be read safely"
             ) from exc
         if len(content) > self._maximum:
-            raise VideoClipManifestCorruptException(
-                "video clip manifest exceeds configured limit"
-            )
+            raise VideoClipManifestCorruptException("video clip manifest exceeds configured limit")
         return content
 
     def _replace(self, target: Path, content: bytes) -> None:
         if len(content) > self._maximum:
-            raise VideoClipManifestConflictException(
-                "video clip manifest exceeds configured limit"
-            )
+            raise VideoClipManifestConflictException("video clip manifest exceeds configured limit")
         descriptor = -1
         temporary: Path | None = None
         try:
@@ -297,9 +265,7 @@ def video_clip_manifest_relative_path(context: StageContext) -> str:
         f"{context.workspace_relative_path}/video-clip-generation-manifest.json"
     )
     if normalized != expected or "\\" in normalized:
-        raise VideoClipManifestConflictException(
-            "video clip manifest path is not contractual"
-        )
+        raise VideoClipManifestConflictException("video clip manifest path is not contractual")
     return normalized
 
 
@@ -317,9 +283,7 @@ def _written(path: str, content: bytes) -> WrittenVideoClipManifest:
     try:
         manifest = deserialize_video_clip_manifest(content)
     except (UnicodeError, ValueError, TypeError) as exc:
-        raise VideoClipManifestCorruptException(
-            "video clip manifest is invalid"
-        ) from exc
+        raise VideoClipManifestCorruptException("video clip manifest is invalid") from exc
     return WrittenVideoClipManifest(
         relative_path=path,
         size_bytes=len(content),

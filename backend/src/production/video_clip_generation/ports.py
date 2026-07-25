@@ -74,9 +74,7 @@ class ImageAcquisitionManifestArtifactQueryRepository(Protocol):
 
 
 class VerifiedSourceImage(ContractModel):
-    visual_asset_id: str = Field(
-        pattern=r"^asset-s[0-9]{3}-q[0-9]{3}-v[0-9]{3}$"
-    )
+    visual_asset_id: str = Field(pattern=r"^asset-s[0-9]{3}-q[0-9]{3}-v[0-9]{3}$")
     artifact_id: UUID
     binary_asset_id: str
     sha256: str
@@ -104,9 +102,7 @@ class VerifiedSourceImage(ContractModel):
     def validate_mapping(self) -> VerifiedSourceImage:
         if self.scene_id != f"scene-{self.scene_number:03d}":
             raise ValueError("verified source image scene mapping is inconsistent")
-        if self.shot_id != (
-            f"scene-{self.scene_number:03d}-shot-{self.shot_number:03d}"
-        ):
+        if self.shot_id != (f"scene-{self.scene_number:03d}-shot-{self.shot_number:03d}"):
             raise ValueError("verified source image shot mapping is inconsistent")
         return self
 
@@ -153,9 +149,7 @@ class ReadImageAcquisitionManifest(ContractModel):
                 or image.shot_number != entry.shot_number
                 or image.role != entry.role.value
             ):
-                raise ValueError(
-                    "verified source image metadata differs from manifest entry"
-                )
+                raise ValueError("verified source image metadata differs from manifest entry")
         return self
 
 
@@ -174,6 +168,11 @@ class VideoClipProviderRequest(ContractModel):
     source_image_artifact_id: UUID
     source_image_sha256: str
     source_image_mime_type: str
+    source_image_size_bytes: int = Field(gt=0, le=250_000_000)
+    source_image_width: int = Field(gt=0, le=16_384)
+    source_image_height: int = Field(gt=0, le=16_384)
+    source_role: str = Field(min_length=1, max_length=100)
+    source_metadata: dict[str, Any] = Field(default_factory=dict)
     source_image_content: bytes = Field(repr=False, exclude=True, min_length=1)
     duration_seconds: float = Field(gt=0, le=10)
     frame_rate: int = Field(gt=0, le=120)
@@ -181,6 +180,14 @@ class VideoClipProviderRequest(ContractModel):
     height: int = Field(gt=0, le=16_384)
     configuration: VideoClipGenerationConfiguration
     fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @field_validator("source_metadata")
+    @classmethod
+    def safe_source_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
+        result = validate_safe_json(value, path="video_clip_request.source_metadata")
+        if not isinstance(result, dict):
+            raise ValueError("source metadata must be an object")
+        return result
 
 
 class GeneratedVideoClipPayload(ContractModel):
@@ -235,9 +242,7 @@ class VideoClipBinaryStore(Protocol):
         self, *, job_id: UUID, visual_asset_id: str
     ) -> ReadProductionVideoClipAsset: ...
 
-    async def read(
-        self, *, asset: ProductionVideoClipAsset
-    ) -> ReadProductionVideoClipAsset: ...
+    async def read(self, *, asset: ProductionVideoClipAsset) -> ReadProductionVideoClipAsset: ...
 
 
 class VideoClipManifestWriter(Protocol):

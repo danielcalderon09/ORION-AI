@@ -6,6 +6,8 @@ from io import BytesIO
 from pathlib import Path
 from uuid import UUID
 
+import httpx
+import pytest
 from PIL import Image
 
 from backend.src.production.application.commands import StageCommand
@@ -59,6 +61,16 @@ VISUAL_PLAN_ID = UUID("50000000-0000-4000-8000-000000001001")
 VISUAL_ASSET_ID = "asset-s001-q001-v001"
 
 
+@pytest.fixture(autouse=True)
+def deny_real_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every video test must use an in-process fake transport."""
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("real network access is forbidden in video tests")
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", forbidden)
+
+
 def command_context(
     *, attempt: int = 1, input_ids: tuple[UUID, ...] = (MANIFEST_ID,)
 ) -> tuple[StageCommand, StageContext]:
@@ -78,9 +90,7 @@ def command_context(
         stage=ProductionStage.GENERATING_VIDEO_CLIPS,
         attempt_number=attempt,
         input_artifact_ids=input_ids,
-        workspace_relative_path=(
-            f"production/{JOB_ID}/generating_video_clips/attempt-{attempt}"
-        ),
+        workspace_relative_path=(f"production/{JOB_ID}/generating_video_clips/attempt-{attempt}"),
         correlation_id=JOB_ID,
     )
     return command, context
@@ -128,17 +138,11 @@ class FakeImageManifestRepository:
         return self.manifests
 
     def list_input_artifacts(self, *, artifact_ids):
-        return {
-            key: value
-            for key, value in self.input_artifacts.items()
-            if key in artifact_ids
-        }
+        return {key: value for key, value in self.input_artifacts.items() if key in artifact_ids}
 
     def get_source_image(self, *, job_id, artifact_id):
         return (
-            self.image
-            if self.image is not None and artifact_id == self.image.artifact_id
-            else None
+            self.image if self.image is not None and artifact_id == self.image.artifact_id else None
         )
 
 
@@ -209,10 +213,7 @@ async def durable_source(root: Path):
         metadata={"checkpointed": True},
     )
     manifest_content = serialize_image_acquisition_manifest(manifest)
-    relative = (
-        f"production/{JOB_ID}/acquiring_assets/attempt-1/"
-        "image-acquisition-manifest.json"
-    )
+    relative = f"production/{JOB_ID}/acquiring_assets/attempt-1/image-acquisition-manifest.json"
     target = root.joinpath(*relative.split("/"))
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(manifest_content)

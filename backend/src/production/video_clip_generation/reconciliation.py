@@ -1,6 +1,8 @@
 """Read-only reconciliation for durable video clips and manifests."""
 
 import logging
+from collections.abc import Callable
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from uuid import UUID
@@ -27,7 +29,12 @@ from backend.src.production.video_clip_generation.ports import (
     ReadImageAcquisitionManifest,
     VideoClipBinaryStore,
 )
+from backend.src.production.video_clip_generation.providers.openrouter_models import (
+    OpenRouterRemoteStatus,
+    RemoteVideoJobRecord,
+)
 from backend.src.production.video_clip_generation.serialization import (
+    deserialize_remote_video_job,
     deserialize_video_clip_manifest,
 )
 
@@ -45,6 +52,11 @@ class VideoClipReconciliationIssueKind(StrEnum):
     SOURCE_MISMATCH = "source_mismatch"
     UNSAFE_PATH = "unsafe_path"
     DUPLICATE = "duplicate"
+    REMOTE_JOB_WITHOUT_ENTRY = "remote_job_without_entry"
+    REMOTE_COMPLETED_WITHOUT_CLIP = "remote_completed_without_clip"
+    REMOTE_STATE_MISMATCH = "remote_state_mismatch"
+    EXPIRED_PUBLICATION = "expired_publication"
+    SENSITIVE_REMOTE_METADATA = "sensitive_remote_metadata"
 
 
 class VideoClipReconciliationIssue(ContractModel):
@@ -70,6 +82,7 @@ class FilesystemVideoClipReconciler:
         source_reader: ImageAcquisitionManifestReader,
         registered_reader: RegisteredPlanningArtifactReader,
         max_manifest_bytes: int,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._root = workspace_root
         self._confinement = WorkspaceConfinement(workspace_root)
@@ -77,14 +90,16 @@ class FilesystemVideoClipReconciler:
         self._source_reader = source_reader
         self._registered_reader = registered_reader
         self._maximum = max_manifest_bytes
+        self._clock = clock
         self.latest_report = VideoClipReconciliationReport()
 
     async def reconcile(self) -> VideoClipReconciliationReport:
         registered = self._registered_reader.list_registered_paths()
-        manifests, clip_files = self._scan()
+        manifests, clip_files, remote_files = self._scan()
         issues: list[VideoClipReconciliationIssue] = []
         entry_paths: set[str] = set()
         valid = 0
+        manifest_entries: dict[tuple[str, int, str], ProductionVideoClipEntry] = {}
         for path in manifests:
             relative = self._relative(path)
             try:
@@ -99,15 +114,11 @@ class FilesystemVideoClipReconciler:
                         context=_source_context(relative, manifest)
                     )
                     if (
-                        source.artifact_id
-                        != manifest.source_image_manifest_artifact_id
+                        source.artifact_id != manifest.source_image_manifest_artifact_id
                         or source.sha256 != manifest.source_image_manifest_sha256
-                        or source.schema_version
-                        != manifest.source_image_manifest_schema_version
+                        or source.schema_version != manifest.source_image_manifest_schema_version
                     ):
-                        raise ValueError(
-                            "source image manifest differs from video manifest"
-                        )
+                        raise ValueError("source image manifest differs from video manifest")
                 except (ImageAcquisitionManifestReadError, ValueError):
                     source = None
                     issues.append(
@@ -118,15 +129,16 @@ class FilesystemVideoClipReconciler:
                         )
                     )
                 source_images = (
-                    {
-                        image.visual_asset_id: image
-                        for image in source.source_images
-                    }
+                    {image.visual_asset_id: image for image in source.source_images}
                     if source is not None
                     else {}
                 )
                 seen: set[str] = set()
                 for entry in manifest.entries:
+                    parts = PurePosixPath(relative).parts
+                    manifest_entries[
+                        (parts[1], int(parts[3][8:]), entry.visual_asset_id)
+                    ] = entry
                     if entry.visual_asset_id in seen:
                         issues.append(
                             self._issue(
@@ -159,8 +171,7 @@ class FilesystemVideoClipReconciler:
                         if source is not None and (
                             image is None
                             or image.artifact_id != entry.source_image_artifact_id
-                            or image.binary_asset_id
-                            != entry.source_image_binary_asset_id
+                            or image.binary_asset_id != entry.source_image_binary_asset_id
                             or image.sha256 != entry.source_image_sha256
                             or image.scene_id != entry.source_scene_id
                             or image.shot_id != entry.source_shot_id
@@ -189,6 +200,91 @@ class FilesystemVideoClipReconciler:
                         VideoClipReconciliationIssueKind.INVALID_MANIFEST,
                         relative,
                         "video clip manifest is invalid or unsafe",
+                    )
+                )
+        for path in remote_files:
+            relative = self._relative(path)
+            try:
+                self._confinement.reject_unsafe_file(path)
+                content = path.read_bytes()
+                if (
+                    not content
+                    or len(content) > self._maximum
+                    or _contains_sensitive_remote_metadata(content)
+                ):
+                    kind = (
+                        VideoClipReconciliationIssueKind.SENSITIVE_REMOTE_METADATA
+                        if _contains_sensitive_remote_metadata(content)
+                        else VideoClipReconciliationIssueKind.REMOTE_STATE_MISMATCH
+                    )
+                    raise _RemoteIssueError(kind)
+                remote = deserialize_remote_video_job(content)
+                remote_entry = manifest_entries.get(
+                    (
+                        remote.job_id,
+                        remote.attempt_number,
+                        remote.visual_asset_id,
+                    )
+                )
+                if remote_entry is None:
+                    issues.append(
+                        self._issue(
+                            VideoClipReconciliationIssueKind.REMOTE_JOB_WITHOUT_ENTRY,
+                            relative,
+                            "remote video job has no matching manifest entry",
+                        )
+                    )
+                    continue
+                mismatch = not _remote_matches_entry(remote, remote_entry)
+                if mismatch:
+                    issues.append(
+                        self._issue(
+                            VideoClipReconciliationIssueKind.REMOTE_STATE_MISMATCH,
+                            relative,
+                            "remote video metadata differs from manifest entry",
+                        )
+                    )
+                if (
+                    remote.remote_status is OpenRouterRemoteStatus.COMPLETED
+                    and remote_entry.status.value != "stored"
+                ):
+                    issues.append(
+                        self._issue(
+                            VideoClipReconciliationIssueKind.REMOTE_COMPLETED_WITHOUT_CLIP,
+                            relative,
+                            "remote video completed without a stored clip",
+                        )
+                    )
+                if (
+                    remote.publication_expires_at is not None
+                    and remote.publication_expires_at <= self._clock()
+                    and remote.remote_status
+                    in {
+                        OpenRouterRemoteStatus.PENDING,
+                        OpenRouterRemoteStatus.IN_PROGRESS,
+                    }
+                ):
+                    issues.append(
+                        self._issue(
+                            VideoClipReconciliationIssueKind.EXPIRED_PUBLICATION,
+                            relative,
+                            "source publication expired while remote job is active",
+                        )
+                    )
+            except _RemoteIssueError as exc:
+                issues.append(
+                    self._issue(
+                        exc.kind,
+                        relative,
+                        "remote video job metadata is unsafe or invalid",
+                    )
+                )
+            except Exception:
+                issues.append(
+                    self._issue(
+                        VideoClipReconciliationIssueKind.REMOTE_STATE_MISMATCH,
+                        relative,
+                        "remote video job checkpoint is invalid",
                     )
                 )
         for clip_relative in clip_files:
@@ -233,9 +329,7 @@ class FilesystemVideoClipReconciler:
                     )
             elif registered_path.endswith(
                 "/video-clip-generation-manifest.json"
-            ) and registered_path not in {
-                self._relative(item) for item in manifests
-            }:
+            ) and registered_path not in {self._relative(item) for item in manifests}:
                 issues.append(
                     self._issue(
                         VideoClipReconciliationIssueKind.INVALID_MANIFEST,
@@ -244,7 +338,7 @@ class FilesystemVideoClipReconciler:
                     )
                 )
         report = VideoClipReconciliationReport(
-            scanned=len(manifests) + len(clip_files),
+            scanned=len(manifests) + len(clip_files) + len(remote_files),
             valid=valid,
             issues=tuple(issues),
         )
@@ -259,12 +353,15 @@ class FilesystemVideoClipReconciler:
         )
         return report
 
-    def _scan(self) -> tuple[tuple[Path, ...], frozenset[str]]:
+    def _scan(
+        self,
+    ) -> tuple[tuple[Path, ...], frozenset[str], tuple[Path, ...]]:
         production = self._root / "production"
         if not production.exists():
-            return (), frozenset()
+            return (), frozenset(), ()
         manifests: list[Path] = []
         clips: set[str] = set()
+        remote_files: list[Path] = []
         for job in sorted(production.iterdir(), key=lambda item: item.name):
             try:
                 UUID(job.name)
@@ -281,13 +378,24 @@ class FilesystemVideoClipReconciler:
                         candidate = attempt / "video-clip-generation-manifest.json"
                         if candidate.exists() or candidate.is_symlink():
                             manifests.append(candidate)
+                        remote_directory = attempt / "remote-jobs"
+                        if remote_directory.is_dir():
+                            remote_files.extend(
+                                candidate
+                                for candidate in sorted(
+                                    remote_directory.iterdir(),
+                                    key=lambda item: item.name,
+                                )
+                                if candidate.name.startswith("video-")
+                                and candidate.suffix == ".json"
+                            )
             directory = job / "assets" / "video-clips"
             if directory.is_dir():
                 for candidate in sorted(directory.iterdir(), key=lambda item: item.name):
                     if candidate.name.startswith("."):
                         continue
                     clips.add(self._relative(candidate))
-        return tuple(manifests), frozenset(clips)
+        return tuple(manifests), frozenset(clips), tuple(remote_files)
 
     def _relative(self, path: Path) -> str:
         return PurePosixPath(*path.relative_to(self._root).parts).as_posix()
@@ -296,18 +404,12 @@ class FilesystemVideoClipReconciler:
     def _issue(
         kind: VideoClipReconciliationIssueKind, path: str, detail: str
     ) -> VideoClipReconciliationIssue:
-        return VideoClipReconciliationIssue(
-            kind=kind, relative_path=path, detail=detail
-        )
+        return VideoClipReconciliationIssue(kind=kind, relative_path=path, detail=detail)
 
 
 def _job_id(relative_path: str) -> UUID:
     parts = PurePosixPath(relative_path).parts
-    if (
-        len(parts) != 5
-        or parts[0] != "production"
-        or parts[2:4] != ("assets", "video-clips")
-    ):
+    if len(parts) != 5 or parts[0] != "production" or parts[2:4] != ("assets", "video-clips"):
         raise ValueError("video clip path is not contractual")
     return UUID(parts[1])
 
@@ -365,17 +467,71 @@ def _asset_matches_entry(
         and asset.scene_id == entry.source_scene_id
         and asset.shot_id == entry.source_shot_id
         and asset.role == entry.role
-        and metadata.source_image_manifest_artifact_id
-        == manifest.source_image_manifest_artifact_id
-        and metadata.source_image_manifest_sha256
-        == manifest.source_image_manifest_sha256
+        and metadata.source_image_manifest_artifact_id == manifest.source_image_manifest_artifact_id
+        and metadata.source_image_manifest_sha256 == manifest.source_image_manifest_sha256
         and metadata.source_image_artifact_id == entry.source_image_artifact_id
-        and metadata.source_image_binary_asset_id
-        == entry.source_image_binary_asset_id
+        and metadata.source_image_binary_asset_id == entry.source_image_binary_asset_id
         and metadata.source_image_sha256 == entry.source_image_sha256
         and metadata.source_visual_asset_id == entry.visual_asset_id
         and metadata.source_scene_id == entry.source_scene_id
         and metadata.source_shot_id == entry.source_shot_id
-        and metadata.configuration_fingerprint
-        == manifest.configuration_fingerprint
+        and metadata.configuration_fingerprint == manifest.configuration_fingerprint
+    )
+
+
+class _RemoteIssueError(Exception):
+    def __init__(self, kind: VideoClipReconciliationIssueKind) -> None:
+        self.kind = kind
+        super().__init__(kind.value)
+
+
+def _contains_sensitive_remote_metadata(content: bytes) -> bool:
+    lowered = content.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            b"https://",
+            b"http://",
+            b"authorization",
+            b"api_key",
+            b"signed_url",
+            b"content_url",
+            b"polling_url",
+            b"access_token",
+            b"refresh_token",
+            b"response_body",
+            b"?signature=",
+            b"?token=",
+        )
+    )
+
+
+def _remote_matches_entry(
+    remote: RemoteVideoJobRecord, entry: ProductionVideoClipEntry
+) -> bool:
+    if entry.remote_provider is None:
+        return False
+    return (
+        entry.remote_provider == remote.provider
+        and entry.remote_job_id == remote.remote_job_id
+        and entry.remote_generation_id == remote.remote_generation_id
+        and entry.remote_status is not None
+        and entry.remote_status.value == remote.remote_status.value
+        and entry.remote_submitted_at == remote.submitted_at
+        and entry.remote_last_polled_at == remote.last_polled_at
+        and entry.remote_poll_attempts == remote.poll_attempts
+        and entry.remote_terminal_at == remote.terminal_at
+        and entry.remote_content_available == remote.remote_content_available
+        and entry.estimated_cost_usd == remote.estimated_cost_usd
+        and entry.reported_cost_usd == remote.reported_cost_usd
+        and entry.pricing_snapshot_at == remote.pricing_snapshot_at
+        and entry.pricing_sku == remote.pricing_sku
+        and entry.prompt_sha256 == remote.prompt_sha256
+        and entry.source_publication_id == remote.publication_id
+        and entry.source_publication_expires_at == remote.publication_expires_at
+        and entry.publication_provider == remote.publication_provider
+        and entry.provider_request_fingerprint
+        == remote.provider_request_fingerprint
+        and entry.capability_snapshot_hash == remote.capability_snapshot_hash
+        and (entry.requested_model or entry.reported_model) == remote.model
     )

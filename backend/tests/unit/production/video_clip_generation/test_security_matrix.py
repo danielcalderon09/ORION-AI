@@ -26,33 +26,26 @@ from backend.tests.unit.production.video_clip_generation.conftest import (
     VISUAL_ASSET_ID,
 )
 
-_INVALID_CONFIGURATIONS = [
-    {"provider": value}
-    for value in (
-        "openrouter",
-        "veo",
-        "kling",
-        "runway",
-        "luma",
-        "pika",
-        "replicate",
-        "fal",
-        "remote",
-        "",
-    )
-] + [
-    {"output_format": value}
-    for value in ("webm", "mov", "avi", "gif", "mpegts")
-] + [
-    {"codec": value}
-    for value in ("vp8", "vp9", "av1", "hevc", "mpeg4")
-] + [
-    {"frame_rate": value}
-    for value in (0, 1, 23, 25, 29, 31)
-] + [
-    {"duration_seconds": value}
-    for value in (-10, -1, 0, 10.1)
-]
+_INVALID_CONFIGURATIONS = (
+    [
+        {"provider": value}
+        for value in (
+            "veo",
+            "kling",
+            "runway",
+            "luma",
+            "pika",
+            "replicate",
+            "fal",
+            "remote",
+            "",
+        )
+    ]
+    + [{"output_format": value} for value in ("webm", "mov", "avi", "gif", "mpegts")]
+    + [{"codec": value} for value in ("vp8", "vp9", "av1", "hevc", "mpeg4")]
+    + [{"frame_rate": value} for value in (0, 1, 23, 25, 29, 31)]
+    + [{"duration_seconds": value} for value in (-10, -1, 0, 10.1)]
+)
 
 
 @pytest.mark.parametrize("overrides", _INVALID_CONFIGURATIONS)
@@ -61,49 +54,53 @@ def test_remote_formats_codecs_and_unbounded_media_are_closed(overrides) -> None
         VideoClipGenerationConfiguration(**overrides)
 
 
-_UNSAFE_METADATA = [
-    {key: "sensitive"}
-    for key in (
-        "api_key",
-        "provider_api_key",
-        "authorization",
-        "authorization_header",
-        "credential",
-        "provider_credential",
-        "http_referer",
-        "password",
-        "db_password",
-        "secret",
-        "client_secret",
-        "token",
-        "access_token",
-        "refresh_token",
-        "x-openrouter-title",
-        "x_title",
-    )
-] + [
-    {"path": value}
-    for value in (
-        "C:\\Users\\operator\\clip.mp4",
-        "D:\\temp\\video.mp4",
-        "/home/operator/video.mp4",
-        "/tmp/video.mp4",
-        "\\\\server\\share\\video.mp4",
-    )
-] + [
-    {"nested": {key: "sensitive"}}
-    for key in (
-        "api_key",
-        "authorization",
-        "credential",
-        "password",
-        "secret",
-        "token",
-        "http_referer",
-        "x_title",
-        "access_token",
-    )
-]
+_UNSAFE_METADATA = (
+    [
+        {key: "sensitive"}
+        for key in (
+            "api_key",
+            "provider_api_key",
+            "authorization",
+            "authorization_header",
+            "credential",
+            "provider_credential",
+            "http_referer",
+            "password",
+            "db_password",
+            "secret",
+            "client_secret",
+            "token",
+            "access_token",
+            "refresh_token",
+            "x-openrouter-title",
+            "x_title",
+        )
+    ]
+    + [
+        {"path": value}
+        for value in (
+            "C:\\Users\\operator\\clip.mp4",
+            "D:\\temp\\video.mp4",
+            "/home/operator/video.mp4",
+            "/tmp/video.mp4",
+            "\\\\server\\share\\video.mp4",
+        )
+    ]
+    + [
+        {"nested": {key: "sensitive"}}
+        for key in (
+            "api_key",
+            "authorization",
+            "credential",
+            "password",
+            "secret",
+            "token",
+            "http_referer",
+            "x_title",
+            "access_token",
+        )
+    ]
+)
 
 
 @pytest.mark.parametrize("metadata", _UNSAFE_METADATA)

@@ -80,9 +80,7 @@ class FFprobeMediaProbe:
         except asyncio.CancelledError:
             raise
         except SubprocessOutputLimitError as exc:
-            raise VideoClipIntegrityError(
-                "ffprobe output exceeds the safe limit"
-            ) from exc
+            raise VideoClipIntegrityError("ffprobe output exceeds the safe limit") from exc
         if process.returncode != 0:
             _bounded_detail(stderr)
             raise VideoClipIntegrityError("ffprobe rejected video clip")
@@ -169,10 +167,7 @@ class VideoClipIntegrityValidator:
             raise VideoClipIntegrityError("video clip codec is not allowed")
         if inspected.has_audio or inspected.audio_codec is not None:
             raise VideoClipIntegrityError("video clip contains unexpected audio")
-        if (
-            abs(inspected.duration_seconds - expected_duration_seconds)
-            > self._duration_tolerance
-        ):
+        if abs(inspected.duration_seconds - expected_duration_seconds) > self._duration_tolerance:
             raise VideoClipIntegrityError("video clip duration differs from configuration")
         if abs(inspected.frame_rate - expected_frame_rate) > self._fps_tolerance:
             raise VideoClipIntegrityError("video clip frame rate differs from configuration")
@@ -202,11 +197,7 @@ def _parse_probe(payload: Any) -> ProbedVideoClip:
         raise VideoClipIntegrityError("video clip contains chapters")
     videos = [item for item in streams if item.get("codec_type") == "video"]
     audios = [item for item in streams if item.get("codec_type") == "audio"]
-    unexpected = [
-        item
-        for item in streams
-        if item.get("codec_type") not in {"video", "audio"}
-    ]
+    unexpected = [item for item in streams if item.get("codec_type") not in {"video", "audio"}]
     if len(videos) != 1 or audios or unexpected:
         raise VideoClipIntegrityError("video clip stream layout is not allowed")
     video = videos[0]
@@ -220,9 +211,7 @@ def _parse_probe(payload: Any) -> ProbedVideoClip:
     frame_rate = _parse_rate(video.get("avg_frame_rate"))
     frame_count_raw = video.get("nb_frames")
     frame_count = (
-        int(frame_count_raw)
-        if str(frame_count_raw).isdigit()
-        else round(duration * frame_rate)
+        int(frame_count_raw) if str(frame_count_raw).isdigit() else round(duration * frame_rate)
     )
     return ProbedVideoClip(
         width=int(video.get("width", 0)),

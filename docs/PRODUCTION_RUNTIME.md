@@ -227,3 +227,11 @@ inmediatas y deterministas. Nunca se comparte una `Session` entre threads y no e
   disponibles pero el worker no se inicia automáticamente.
 - No hay proveedores reales, editor, render real, archivos multimedia ni publicación de eventos.
 - La creación de jobs sigue siendo responsabilidad de un futuro servicio de aplicación/API.
+# Extensión runtime de Fase 5F.2
+
+OpenRouter video es una selección global opcional. No se importa ni construye
+en modo simulated. En modo OpenRouter, composición exige autorización
+facturable, `SecretStr` y publisher real; como Fase 5F.2 solo entrega publisher
+disabled, falla cerrado sin abrir red. Los tests remotos usan MockTransport y
+publisher in-memory. Remote jobs se checkpointan antes del primer poll y
+recovery nunca repite un POST facturable.

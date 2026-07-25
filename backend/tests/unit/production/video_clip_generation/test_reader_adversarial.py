@@ -135,9 +135,7 @@ async def test_reader_rejects_absolute_traversal_and_noncontractual_paths(
 ) -> None:
     _, binary_store, repository = await durable_source(tmp_path)
     repository.manifests = (
-        repository.manifests[0].model_copy(
-            update={"relative_path": unsafe_path}
-        ),
+        repository.manifests[0].model_copy(update={"relative_path": unsafe_path}),
     )
     _, context = command_context(input_ids=())
     with pytest.raises(ImageAcquisitionManifestPathException):

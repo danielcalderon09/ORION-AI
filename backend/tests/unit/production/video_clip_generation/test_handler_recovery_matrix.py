@@ -127,9 +127,7 @@ async def test_handler_processes_multiple_images_sequentially(tmp_path) -> None:
         entries=image_entries,
         summary=summarize_image_entries(image_entries),
     )
-    image_manifest = ProductionImageAcquisitionManifest.model_validate(
-        manifest_payload
-    )
+    image_manifest = ProductionImageAcquisitionManifest.model_validate(manifest_payload)
     first_image = source.source_images[0]
     second_image = first_image.model_copy(
         update={
@@ -188,9 +186,7 @@ async def test_generating_entry_with_valid_clip_is_recovered(tmp_path) -> None:
     generating = initial.model_copy(
         update={
             "entries": (
-                initial.entries[0].model_copy(
-                    update={"status": VideoClipEntryStatus.GENERATING}
-                ),
+                initial.entries[0].model_copy(update={"status": VideoClipEntryStatus.GENERATING}),
             )
         }
     )

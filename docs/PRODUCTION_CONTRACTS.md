@@ -312,3 +312,11 @@ El ejemplo validable completo está en `backend/tests/fixtures/production/edit_p
 ```
 
 El JSON resumido es ilustrativo; las cadenas dentro de `scenes` y `artifacts` no validan como contrato. La fixture completa sí debe validarse mediante `EditPackage.model_validate_json()`.
+# Contratos OpenRouter Video de Fase 5F.2
+
+El schema de manifest 1.0.0 continúa compatible y añade campos opcionales:
+remote provider/job/generation/status, timestamps, polling attempts,
+disponibilidad de contenido, costes `Decimal`, pricing SKU/timestamp,
+prompt/capability/fingerprint SHA-256 y publication ID/provider. Un entry
+OpenRouter `stored` exige estado remoto `completed` y metadata completa. URLs,
+query strings, firmas, keys, headers, prompts y bytes están prohibidos.

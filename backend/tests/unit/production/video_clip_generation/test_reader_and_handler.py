@@ -166,9 +166,7 @@ async def test_reader_fallback_is_deterministic(tmp_path) -> None:
         ),
     ],
 )
-async def test_reader_rejects_wrong_type_path_and_checksum(
-    tmp_path, mutation, error
-) -> None:
+async def test_reader_rejects_wrong_type_path_and_checksum(tmp_path, mutation, error) -> None:
     _, binary_store, repository = await durable_source(tmp_path)
     repository.manifests = (mutation(repository.manifests[0]),)
     reader = DurableImageAcquisitionManifestReader(
@@ -238,13 +236,9 @@ async def test_reader_rejects_non_completed_manifest(tmp_path) -> None:
 async def test_handler_success_artifacts_checkpoints_and_safe_metadata(tmp_path) -> None:
     source, _, _ = await durable_source(tmp_path)
     provider = CountingProvider()
-    writer = LocalVideoClipManifestWriter(
-        tmp_path, max_manifest_bytes=200_000
-    )
+    writer = LocalVideoClipManifestWriter(tmp_path, max_manifest_bytes=200_000)
     command, context = command_context()
-    output = await handler(
-        tmp_path, source, provider, writer=writer
-    ).execute(command, context)
+    output = await handler(tmp_path, source, provider, writer=writer).execute(command, context)
     assert output.result.outcome is StageOutcome.SUCCEEDED
     assert provider.calls == [VISUAL_ASSET_ID]
     assert [artifact.artifact_type for artifact in output.artifacts] == [
@@ -280,9 +274,7 @@ async def test_handler_second_run_and_new_attempt_reuse_without_provider(
     ).result.outcome is StageOutcome.SUCCEEDED
     second_command, second_context = command_context(attempt=2)
     assert (
-        await handler(tmp_path, source, provider).execute(
-            second_command, second_context
-        )
+        await handler(tmp_path, source, provider).execute(second_command, second_context)
     ).result.outcome is StageOutcome.SUCCEEDED
     assert provider.calls == [VISUAL_ASSET_ID]
 
@@ -292,14 +284,10 @@ async def test_reader_failure_prevents_provider_invocation(tmp_path) -> None:
     provider = CountingProvider()
     command, context = command_context()
     component = VideoClipGenerationHandler(
-        manifest_reader=FakeReader(
-            error=ImageAcquisitionManifestNotFoundException("missing")
-        ),
+        manifest_reader=FakeReader(error=ImageAcquisitionManifestNotFoundException("missing")),
         provider=provider,
         binary_store=video_store(tmp_path),
-        manifest_writer=LocalVideoClipManifestWriter(
-            tmp_path, max_manifest_bytes=200_000
-        ),
+        manifest_writer=LocalVideoClipManifestWriter(tmp_path, max_manifest_bytes=200_000),
         configuration=VideoClipGenerationConfiguration(duration_seconds=1),
         clock=lambda: NOW,
     )
@@ -319,14 +307,10 @@ async def test_handler_cancellation_propagates_and_keeps_generating_checkpoint(
             self.calls.append(request.visual_asset_id)
             raise asyncio.CancelledError
 
-    writer = LocalVideoClipManifestWriter(
-        tmp_path, max_manifest_bytes=200_000
-    )
+    writer = LocalVideoClipManifestWriter(tmp_path, max_manifest_bytes=200_000)
     command, context = command_context()
     with pytest.raises(asyncio.CancelledError):
-        await handler(
-            tmp_path, source, CancelProvider(), writer=writer
-        ).execute(command, context)
+        await handler(tmp_path, source, CancelProvider(), writer=writer).execute(command, context)
     manifest = await writer.read_existing(context=context)
     assert manifest is not None
     assert manifest.entries[0].status.value == "generating"
@@ -335,18 +319,14 @@ async def test_handler_cancellation_propagates_and_keeps_generating_checkpoint(
 @pytest.mark.asyncio
 async def test_restart_generating_without_clip_becomes_uncertain(tmp_path) -> None:
     source, _, _ = await durable_source(tmp_path)
-    writer = LocalVideoClipManifestWriter(
-        tmp_path, max_manifest_bytes=200_000
-    )
+    writer = LocalVideoClipManifestWriter(tmp_path, max_manifest_bytes=200_000)
     component = handler(tmp_path, source, CountingProvider(), writer=writer)
     command, context = command_context()
     initial = component._initial_manifest(source=source, attempt_number=1)
     generating = initial.model_copy(
         update={
             "entries": (
-                initial.entries[0].model_copy(
-                    update={"status": VideoClipEntryStatus.GENERATING}
-                ),
+                initial.entries[0].model_copy(update={"status": VideoClipEntryStatus.GENERATING}),
             ),
         }
     )

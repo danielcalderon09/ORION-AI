@@ -51,10 +51,13 @@ def test_stage_is_immediately_after_assets_and_before_audio() -> None:
     index = stages.index(ProductionStage.ACQUIRING_ASSETS)
     assert stages[index + 1] is ProductionStage.GENERATING_VIDEO_CLIPS
     assert stages[index + 2] is ProductionStage.GENERATING_NARRATION
-    assert StageRegistry.previous_stage(
-        ProductionStage.GENERATING_VIDEO_CLIPS,
-        generate_clips_after_render=False,
-    ) is ProductionStage.ACQUIRING_ASSETS
+    assert (
+        StageRegistry.previous_stage(
+            ProductionStage.GENERATING_VIDEO_CLIPS,
+            generate_clips_after_render=False,
+        )
+        is ProductionStage.ACQUIRING_ASSETS
+    )
 
 
 def test_composition_defaults_to_simulated_without_subprocess_startup(
@@ -118,10 +121,7 @@ def test_job_api_rejects_private_video_configuration() -> None:
 
 def test_artifact_types_are_public_metadata_only() -> None:
     assert ArtifactType.SOURCE_VIDEO_CLIP.value == "source_video_clip"
-    assert (
-        ArtifactType.PRODUCTION_VIDEO_CLIP_MANIFEST.value
-        == "production_video_clip_manifest"
-    )
+    assert ArtifactType.PRODUCTION_VIDEO_CLIP_MANIFEST.value == "production_video_clip_manifest"
 
 
 class RegisteredPaths:
@@ -149,14 +149,10 @@ async def test_reconciler_ignores_unknown_json_and_detects_orphan_pairs(
     unknown = tmp_path / "production" / str(JOB_ID) / "unknown" / "attempt-1"
     unknown.mkdir(parents=True)
     (unknown / "other.json").write_text("{}", encoding="utf-8")
-    clips = (
-        tmp_path / "production" / str(JOB_ID) / "assets" / "video-clips"
-    )
+    clips = tmp_path / "production" / str(JOB_ID) / "assets" / "video-clips"
     clips.mkdir(parents=True)
     (clips / "video-asset-s001-q001-v001.mp4").write_bytes(b"invalid")
-    (clips / "video-asset-s001-q002-v001.mp4.asset.json").write_text(
-        "{}", encoding="utf-8"
-    )
+    (clips / "video-asset-s001-q002-v001.mp4.asset.json").write_text("{}", encoding="utf-8")
     reconciler = FilesystemVideoClipReconciler(
         workspace_root=tmp_path,
         store=MissingStore(),
@@ -182,9 +178,7 @@ async def test_reconciler_validates_clip_manifest_and_durable_source(
     component = handler(tmp_path, source, provider)
     command, context = command_context()
     output = await component.execute(command, context)
-    registered = RegisteredPaths(
-        artifact.relative_path for artifact in output.artifacts
-    )
+    registered = RegisteredPaths(artifact.relative_path for artifact in output.artifacts)
     reconciler = FilesystemVideoClipReconciler(
         workspace_root=tmp_path,
         store=component._store,
@@ -200,9 +194,7 @@ async def test_reconciler_validates_clip_manifest_and_durable_source(
     reconciler = FilesystemVideoClipReconciler(
         workspace_root=tmp_path,
         store=component._store,
-        source_reader=FakeReader(
-            error=SourceImageMissingException("source missing")
-        ),
+        source_reader=FakeReader(error=SourceImageMissingException("source missing")),
         registered_reader=registered,
         max_manifest_bytes=200_000,
     )

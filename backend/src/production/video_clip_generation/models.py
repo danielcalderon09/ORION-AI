@@ -39,6 +39,15 @@ class VideoClipGenerationMode(StrEnum):
     STILL_IMAGE_TO_VIDEO = "still_image_to_video"
 
 
+class VideoClipRemoteStatus(StrEnum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+
+
 class VideoClipMetadata(ContractModel):
     schema_version: str = Field(default="1.0.0", pattern=r"^\d+\.\d+\.\d+$")
     source_image_manifest_artifact_id: UUID
@@ -100,9 +109,7 @@ class ProductionVideoClipAsset(ContractModel):
     def validate_asset(self) -> ProductionVideoClipAsset:
         if self.schema_version not in SUPPORTED_VIDEO_CLIP_ASSET_VERSIONS:
             raise ValueError("video clip asset schema version is unsupported")
-        expected = (
-            f"production/{self.job_id}/assets/video-clips/{self.asset_id}.mp4"
-        )
+        expected = f"production/{self.job_id}/assets/video-clips/{self.asset_id}.mp4"
         if self.storage_path != expected:
             raise ValueError("video clip path is not contractual")
         if self.mime_type != "video/mp4" or self.extension != "mp4":
@@ -171,9 +178,29 @@ class ProductionVideoClipEntry(ContractModel):
     cost_usd: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=9)
     attempt_number: int = Field(ge=1)
     error_code: str | None = Field(default=None, pattern=r"^[a-z0-9_]{1,100}$")
+    remote_provider: str | None = Field(default=None, max_length=100)
+    remote_job_id: str | None = Field(default=None, max_length=200)
+    remote_generation_id: str | None = Field(default=None, max_length=200)
+    remote_status: VideoClipRemoteStatus | None = None
+    remote_submitted_at: datetime | None = None
+    remote_last_polled_at: datetime | None = None
+    remote_poll_attempts: int | None = Field(default=None, ge=0)
+    remote_terminal_at: datetime | None = None
+    remote_content_available: bool | None = None
+    estimated_cost_usd: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=9)
+    reported_cost_usd: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=9)
+    pricing_snapshot_at: datetime | None = None
+    pricing_sku: str | None = Field(default=None, max_length=100)
+    prompt_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    source_publication_id: str | None = Field(default=None, max_length=200)
+    source_publication_expires_at: datetime | None = None
+    publication_provider: str | None = Field(default=None, max_length=100)
+    provider_request_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    capability_snapshot_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    remote_url_metadata: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("metadata")
+    @field_validator("metadata", "remote_url_metadata")
     @classmethod
     def safe_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
         result = validate_safe_json(value, path="video_clip_entry.metadata")
@@ -215,12 +242,36 @@ class ProductionVideoClipEntry(ContractModel):
                 raise ValueError("stored video clip cannot contain an error")
         elif any(item is not None for item in stored):
             raise ValueError("non-stored entry cannot claim durable video metadata")
-        if self.status in {
-            VideoClipEntryStatus.FAILED_PERMANENT,
-            VideoClipEntryStatus.FAILED_TRANSIENT,
-            VideoClipEntryStatus.UNCERTAIN,
-        } and self.error_code is None:
+        if (
+            self.status
+            in {
+                VideoClipEntryStatus.FAILED_PERMANENT,
+                VideoClipEntryStatus.FAILED_TRANSIENT,
+                VideoClipEntryStatus.UNCERTAIN,
+            }
+            and self.error_code is None
+        ):
             raise ValueError("failed or uncertain entry requires an error code")
+        remote_fields = (
+            self.remote_job_id,
+            self.remote_status,
+            self.remote_submitted_at,
+            self.remote_poll_attempts,
+            self.estimated_cost_usd,
+            self.prompt_sha256,
+            self.source_publication_id,
+            self.publication_provider,
+            self.provider_request_fingerprint,
+            self.capability_snapshot_hash,
+        )
+        if self.remote_provider == "openrouter" and self.status is VideoClipEntryStatus.STORED:
+            if any(item is None for item in remote_fields):
+                raise ValueError("stored OpenRouter clip requires durable remote metadata")
+            if (
+                self.remote_status is not VideoClipRemoteStatus.COMPLETED
+                or self.remote_content_available is not True
+            ):
+                raise ValueError("stored OpenRouter clip requires completed remote state")
         return self
 
 
@@ -293,7 +344,8 @@ def summarize_entries(
             for entry in entries
         ),
         failed=sum(
-            entry.status in {
+            entry.status
+            in {
                 VideoClipEntryStatus.FAILED_PERMANENT,
                 VideoClipEntryStatus.FAILED_TRANSIENT,
             }
@@ -358,8 +410,7 @@ def validate_manifest_transition(
 ) -> None:
     if (
         previous.schema_version != current.schema_version
-        or previous.source_image_manifest_artifact_id
-        != current.source_image_manifest_artifact_id
+        or previous.source_image_manifest_artifact_id != current.source_image_manifest_artifact_id
         or previous.source_image_manifest_sha256 != current.source_image_manifest_sha256
         or previous.configuration_fingerprint != current.configuration_fingerprint
         or tuple(entry.visual_asset_id for entry in previous.entries)

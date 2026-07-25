@@ -1,4 +1,4 @@
-"""Sequential durable handler for simulated video clip generation."""
+"""Sequential durable provider-neutral video clip generation handler."""
 
 import asyncio
 import hashlib
@@ -22,6 +22,10 @@ from backend.src.production.video_clip_generation.configuration import (
 )
 from backend.src.production.video_clip_generation.exceptions import (
     ImageAcquisitionManifestReadError,
+    OpenRouterVideoRateLimitError,
+    OpenRouterVideoServerError,
+    OpenRouterVideoTransportError,
+    OpenRouterVideoUncertainSubmissionError,
     VideoClipConflictError,
     VideoClipGenerationError,
     VideoClipIntegrityError,
@@ -42,6 +46,7 @@ from backend.src.production.video_clip_generation.models import (
     VideoClipEntryStatus,
     VideoClipManifestStatus,
     VideoClipMetadata,
+    VideoClipRemoteStatus,
     VideoClipWriteRequest,
     replace_manifest_entry,
     summarize_entries,
@@ -89,18 +94,14 @@ class VideoClipGenerationHandler:
         self._clock = clock
         self._recipe_builder = recipe_builder or VideoClipAnimationRecipeBuilder()
 
-    async def execute(
-        self, command: StageCommand, context: StageContext
-    ) -> StageExecutionOutput:
+    async def execute(self, command: StageCommand, context: StageContext) -> StageExecutionOutput:
         if command.stage is not ProductionStage.GENERATING_VIDEO_CLIPS:
             raise ValueError("handler supports only generating_video_clips")
         if context.command_id != command.command_id:
             raise ValueError("StageContext does not belong to StageCommand")
         started_at = self._aware_now()
         try:
-            source = await self._reader.read_for_video_clip_generation(
-                context=context
-            )
+            source = await self._reader.read_for_video_clip_generation(context=context)
             existing = await self._writer.read_existing(context=context)
             manifest = existing or self._initial_manifest(
                 source=source, attempt_number=command.attempt_number
@@ -120,7 +121,7 @@ class VideoClipGenerationHandler:
                             "metadata": {
                                 **entry.metadata,
                                 "recovered": True,
-                                "simulated": True,
+                                "simulated": asset.metadata.attributes.get("simulated", False),
                                 "deterministic": asset.metadata.deterministic,
                             }
                         }
@@ -222,9 +223,7 @@ class VideoClipGenerationHandler:
                     }
                 )
                 current = replace_manifest_entry(manifest, generating)
-                await self._writer.checkpoint(
-                    context=context, previous=manifest, current=current
-                )
+                await self._writer.checkpoint(context=context, previous=manifest, current=current)
                 manifest = current
                 try:
                     response = await self._provider.generate_clip(
@@ -272,13 +271,48 @@ class VideoClipGenerationHandler:
                             "has_audio": False,
                             "size_bytes": verified.asset.size_bytes,
                             "latency_ms": response.latency_ms,
-                            "cost_usd": None,
-                            "simulated": True,
+                            "cost_usd": (
+                                str(response.cost_usd) if response.cost_usd is not None else None
+                            ),
+                            "simulated": response.metadata.get("simulated", False),
                             "recovered": False,
                         },
                     )
                 except asyncio.CancelledError:
                     raise
+                except OpenRouterVideoUncertainSubmissionError:
+                    await self._checkpoint_error(
+                        context=context,
+                        manifest=manifest,
+                        entry=generating,
+                        status=VideoClipEntryStatus.UNCERTAIN,
+                        error_code="video_remote_uncertain",
+                    )
+                    return self._failure(
+                        command,
+                        started_at,
+                        StageOutcome.NEEDS_USER_ACTION,
+                        "video_remote_uncertain",
+                    )
+                except (
+                    OpenRouterVideoRateLimitError,
+                    OpenRouterVideoServerError,
+                    OpenRouterVideoTransportError,
+                ):
+                    await self._checkpoint_error(
+                        context=context,
+                        manifest=manifest,
+                        entry=generating,
+                        status=VideoClipEntryStatus.FAILED_TRANSIENT,
+                        error_code="video_provider_transient",
+                    )
+                    return self._failure(
+                        command,
+                        started_at,
+                        StageOutcome.FAILED_TRANSIENT,
+                        "video_provider_transient",
+                        retry_after_seconds=5,
+                    )
                 except VideoClipProviderTimeoutException:
                     await self._checkpoint_error(
                         context=context,
@@ -323,12 +357,8 @@ class VideoClipGenerationHandler:
                         "video_clip_invalid",
                     )
 
-            completed = manifest.model_copy(
-                update={"status": VideoClipManifestStatus.COMPLETED}
-            )
-            await self._writer.finalize(
-                context=context, previous=manifest, current=completed
-            )
+            completed = manifest.model_copy(update={"status": VideoClipManifestStatus.COMPLETED})
+            await self._writer.finalize(context=context, previous=manifest, current=completed)
             return self._success(
                 command=command,
                 context=context,
@@ -378,9 +408,7 @@ class VideoClipGenerationHandler:
                 status=VideoClipEntryStatus.PENDING,
                 attempt_number=attempt_number,
             )
-            for image in sorted(
-                source.source_images, key=lambda item: item.visual_asset_id
-            )
+            for image in sorted(source.source_images, key=lambda item: item.visual_asset_id)
         )
         return ProductionVideoClipManifest(
             source_image_manifest_schema_version=source.schema_version,
@@ -395,7 +423,7 @@ class VideoClipGenerationHandler:
             metadata={
                 "sequential": True,
                 "checkpointed": True,
-                "simulated": True,
+                "simulated": self._configuration.provider == "simulated",
                 "generation_mode": "still_image_to_video",
             },
         )
@@ -409,19 +437,14 @@ class VideoClipGenerationHandler:
             manifest.source_image_manifest_artifact_id != source.artifact_id
             or manifest.source_image_manifest_sha256 != source.sha256
             or manifest.source_image_manifest_schema_version != source.schema_version
-            or manifest.configuration_fingerprint
-            != self._configuration.fingerprint()
+            or manifest.configuration_fingerprint != self._configuration.fingerprint()
             or tuple(entry.visual_asset_id for entry in manifest.entries)
             != tuple(
                 image.visual_asset_id
-                for image in sorted(
-                    source.source_images, key=lambda item: item.visual_asset_id
-                )
+                for image in sorted(source.source_images, key=lambda item: item.visual_asset_id)
             )
         ):
-            raise VideoClipIntegrityError(
-                "video clip manifest source or configuration changed"
-            )
+            raise VideoClipIntegrityError("video clip manifest source or configuration changed")
 
     async def _recover_optional(
         self,
@@ -457,22 +480,23 @@ class VideoClipGenerationHandler:
         source: ReadImageAcquisitionManifest,
     ) -> ProductionVideoClipAsset:
         metadata = asset.metadata
+        expected_width, expected_height = self._configuration.output_dimensions(
+            image.width, image.height
+        )
         if (
             asset.asset_id != f"video-{image.visual_asset_id}"
             or asset.scene_id != image.scene_id
             or asset.shot_id != image.shot_id
-            or asset.width != image.width
-            or asset.height != image.height
-            or abs(asset.duration_seconds - self._configuration.duration_seconds)
-            > 0.08
+            or asset.width != expected_width
+            or asset.height != expected_height
+            or abs(asset.duration_seconds - self._configuration.duration_seconds) > 0.08
             or abs(asset.frame_rate - self._configuration.frame_rate) > 0.01
             or metadata.source_image_manifest_artifact_id != source.artifact_id
             or metadata.source_image_manifest_sha256 != source.sha256
             or metadata.source_image_artifact_id != image.artifact_id
             or metadata.source_image_sha256 != image.sha256
             or metadata.source_visual_asset_id != image.visual_asset_id
-            or metadata.configuration_fingerprint
-            != self._configuration.fingerprint()
+            or metadata.configuration_fingerprint != self._configuration.fingerprint()
             or (
                 entry.status is VideoClipEntryStatus.STORED
                 and (
@@ -493,6 +517,7 @@ class VideoClipGenerationHandler:
         context: StageContext,
         image: VerifiedSourceImage,
     ) -> VideoClipProviderRequest:
+        width, height = self._configuration.output_dimensions(image.width, image.height)
         return VideoClipProviderRequest(
             job_id=command.job_id,
             command_id=command.command_id,
@@ -502,11 +527,16 @@ class VideoClipGenerationHandler:
             source_image_artifact_id=image.artifact_id,
             source_image_sha256=image.sha256,
             source_image_mime_type=image.mime_type,
+            source_image_size_bytes=image.size_bytes,
+            source_image_width=image.width,
+            source_image_height=image.height,
+            source_role=image.role,
+            source_metadata=image.metadata,
             source_image_content=image.content,
             duration_seconds=self._configuration.duration_seconds,
             frame_rate=self._configuration.frame_rate,
-            width=image.width,
-            height=image.height,
+            width=width,
+            height=height,
             configuration=self._configuration,
             fingerprint=self._configuration.fingerprint(),
         )
@@ -518,15 +548,19 @@ class VideoClipGenerationHandler:
         image: VerifiedSourceImage,
         response: VideoClipProviderResponse,
     ) -> VideoClipWriteRequest:
-        recipe = self._recipe_builder.build(image.visual_asset_id)
+        width, height = self._configuration.output_dimensions(image.width, image.height)
+        simulated = bool(response.metadata.get("simulated", False))
+        attributes = {**response.metadata, "simulated": simulated}
+        if simulated:
+            attributes["animation_recipe"] = self._recipe_builder.build(image.visual_asset_id)
         return VideoClipWriteRequest(
             job_id=source.job_id,
             visual_asset_id=image.visual_asset_id,
             scene_id=image.scene_id,
             shot_id=image.shot_id,
             role=VisualAssetRole(image.role),
-            expected_width=image.width,
-            expected_height=image.height,
+            expected_width=width,
+            expected_height=height,
             expected_duration_seconds=self._configuration.duration_seconds,
             expected_frame_rate=self._configuration.frame_rate,
             metadata=VideoClipMetadata(
@@ -542,11 +576,8 @@ class VideoClipGenerationHandler:
                 provider=response.provider,
                 requested_model=response.requested_model,
                 reported_model=response.reported_model,
-                deterministic=True,
-                attributes={
-                    "simulated": True,
-                    "animation_recipe": recipe,
-                },
+                deterministic=bool(response.metadata.get("deterministic", simulated)),
+                attributes=attributes,
             ),
         )
 
@@ -558,13 +589,13 @@ class VideoClipGenerationHandler:
         response: VideoClipProviderResponse | None,
         recovered: bool,
     ) -> ProductionVideoClipEntry:
-        return entry.model_copy(
-            update={
+        remote = _remote_entry_fields(response.metadata if response else asset.metadata.attributes)
+        values = entry.model_dump(mode="python")
+        values.update(
+            {
                 "status": VideoClipEntryStatus.STORED,
                 "video_binary_asset_id": asset.asset_id,
-                "video_artifact_id": _video_artifact_id(
-                    asset.job_id, entry.visual_asset_id
-                ),
+                "video_artifact_id": _video_artifact_id(asset.job_id, entry.visual_asset_id),
                 "storage_path": asset.storage_path,
                 "mime_type": asset.mime_type,
                 "extension": asset.extension,
@@ -580,26 +611,24 @@ class VideoClipGenerationHandler:
                 "has_audio": False,
                 "provider": response.provider if response else asset.metadata.provider,
                 "requested_model": (
-                    response.requested_model
-                    if response
-                    else asset.metadata.requested_model
+                    response.requested_model if response else asset.metadata.requested_model
                 ),
                 "reported_model": (
-                    response.reported_model
-                    if response
-                    else asset.metadata.reported_model
+                    response.reported_model if response else asset.metadata.reported_model
                 ),
                 "provider_request_id": response.request_id if response else None,
                 "latency_ms": response.latency_ms if response else 0,
                 "cost_usd": response.cost_usd if response else None,
                 "error_code": None,
+                **remote,
                 "metadata": {
                     "recovered": recovered,
-                    "simulated": True,
+                    "simulated": asset.metadata.attributes.get("simulated", False),
                     "deterministic": asset.metadata.deterministic,
                 },
             }
         )
+        return ProductionVideoClipEntry.model_validate(values)
 
     async def _checkpoint_error(
         self,
@@ -610,15 +639,17 @@ class VideoClipGenerationHandler:
         status: VideoClipEntryStatus,
         error_code: str,
     ) -> None:
-        failed = entry.model_copy(
-            update={"status": status, "error_code": error_code}
-        )
+        failed = entry.model_copy(update={"status": status, "error_code": error_code})
         current = replace_manifest_entry(
-            manifest, failed, status=VideoClipManifestStatus.FAILED
+            manifest,
+            failed,
+            status=(
+                VideoClipManifestStatus.UNCERTAIN
+                if status is VideoClipEntryStatus.UNCERTAIN
+                else VideoClipManifestStatus.FAILED
+            ),
         )
-        await self._writer.checkpoint(
-            context=context, previous=manifest, current=current
-        )
+        await self._writer.checkpoint(context=context, previous=manifest, current=current)
 
     def _success(
         self,
@@ -635,9 +666,7 @@ class VideoClipGenerationHandler:
             asset = stored_assets[entry.visual_asset_id]
             artifacts.append(
                 Artifact(
-                    artifact_id=_video_artifact_id(
-                        command.job_id, entry.visual_asset_id
-                    ),
+                    artifact_id=_video_artifact_id(command.job_id, entry.visual_asset_id),
                     job_id=command.job_id,
                     artifact_type=ArtifactType.SOURCE_VIDEO_CLIP,
                     relative_path=asset.storage_path,
@@ -653,12 +682,8 @@ class VideoClipGenerationHandler:
                     metadata={
                         "source_image_manifest_artifact_id": str(source.artifact_id),
                         "source_image_manifest_sha256": source.sha256,
-                        "source_image_artifact_id": str(
-                            entry.source_image_artifact_id
-                        ),
-                        "source_image_binary_asset_id": (
-                            entry.source_image_binary_asset_id
-                        ),
+                        "source_image_artifact_id": str(entry.source_image_artifact_id),
+                        "source_image_binary_asset_id": (entry.source_image_binary_asset_id),
                         "source_image_sha256": entry.source_image_sha256,
                         "source_visual_asset_id": entry.visual_asset_id,
                         "source_scene_id": entry.source_scene_id,
@@ -675,26 +700,33 @@ class VideoClipGenerationHandler:
                         "reported_model": entry.reported_model,
                         "provider_request_id": entry.provider_request_id,
                         "latency_ms": entry.latency_ms,
-                        "cost_usd": (
-                            str(entry.cost_usd)
-                            if entry.cost_usd is not None
+                        "cost_usd": (str(entry.cost_usd) if entry.cost_usd is not None else None),
+                        "simulated": entry.metadata.get("simulated", False),
+                        "deterministic": entry.metadata.get("deterministic", False),
+                        "recovered": entry.metadata.get("recovered", False),
+                        "remote_job_id": entry.remote_job_id,
+                        "remote_generation_id": entry.remote_generation_id,
+                        "remote_status": (
+                            entry.remote_status.value if entry.remote_status is not None else None
+                        ),
+                        "remote_poll_attempts": entry.remote_poll_attempts,
+                        "reported_cost_usd": (
+                            str(entry.reported_cost_usd)
+                            if entry.reported_cost_usd is not None
                             else None
                         ),
-                        "simulated": True,
-                        "deterministic": True,
-                        "recovered": entry.metadata.get("recovered", False),
-                        "configuration_fingerprint": (
-                            manifest.configuration_fingerprint
-                        ),
+                        "prompt_sha256": entry.prompt_sha256,
+                        "capability_snapshot_hash": (entry.capability_snapshot_hash),
+                        "publication_provider": entry.publication_provider,
+                        "provider_request_fingerprint": (entry.provider_request_fingerprint),
+                        "configuration_fingerprint": (manifest.configuration_fingerprint),
                     },
                 )
             )
         content = serialize_video_clip_manifest(manifest)
         artifacts.append(
             Artifact(
-                artifact_id=_manifest_artifact_id(
-                    command.job_id, command.attempt_number
-                ),
+                artifact_id=_manifest_artifact_id(command.job_id, command.attempt_number),
                 job_id=command.job_id,
                 artifact_type=ArtifactType.PRODUCTION_VIDEO_CLIP_MANIFEST,
                 relative_path=video_clip_manifest_relative_path(context),
@@ -711,9 +743,7 @@ class VideoClipGenerationHandler:
                     "entry_count": len(manifest.entries),
                     "stored_count": manifest.summary.stored,
                     "checkpointed": True,
-                    "configuration_fingerprint": (
-                        manifest.configuration_fingerprint
-                    ),
+                    "configuration_fingerprint": (manifest.configuration_fingerprint),
                 },
             )
         )
@@ -726,7 +756,7 @@ class VideoClipGenerationHandler:
                 "provider": self._configuration.provider,
                 "requested_model": self._configuration.model,
                 "clip_count": len(stored_assets),
-                "simulated": True,
+                "simulated": self._configuration.provider == "simulated",
             },
         )
         return StageExecutionOutput(
@@ -745,7 +775,7 @@ class VideoClipGenerationHandler:
                     "requested_model": self._configuration.model,
                     "clip_count": len(stored_assets),
                     "checkpointed": True,
-                    "simulated": True,
+                    "simulated": self._configuration.provider == "simulated",
                 },
             ),
             artifacts=tuple(artifacts),
@@ -799,11 +829,7 @@ class VideoClipGenerationHandler:
 def _entry_for(
     manifest: ProductionVideoClipManifest, visual_asset_id: str
 ) -> ProductionVideoClipEntry:
-    return next(
-        entry
-        for entry in manifest.entries
-        if entry.visual_asset_id == visual_asset_id
-    )
+    return next(entry for entry in manifest.entries if entry.visual_asset_id == visual_asset_id)
 
 
 def _video_artifact_id(job_id: UUID, visual_asset_id: str) -> UUID:
@@ -815,3 +841,44 @@ def _manifest_artifact_id(job_id: UUID, attempt_number: int) -> UUID:
         NAMESPACE_URL,
         f"orion:{job_id}:video-clip-generation-manifest:{attempt_number}",
     )
+
+
+def _remote_entry_fields(metadata: dict[str, object]) -> dict[str, object]:
+    if metadata.get("remote_provider") != "openrouter":
+        return {}
+    status = metadata.get("remote_status")
+    return {
+        "remote_provider": "openrouter",
+        "remote_job_id": metadata.get("remote_job_id"),
+        "remote_generation_id": metadata.get("remote_generation_id"),
+        "remote_status": VideoClipRemoteStatus(str(status)),
+        "remote_submitted_at": _metadata_datetime(metadata.get("remote_submitted_at")),
+        "remote_last_polled_at": _metadata_datetime(metadata.get("remote_last_polled_at")),
+        "remote_poll_attempts": metadata.get("remote_poll_attempts"),
+        "remote_terminal_at": _metadata_datetime(metadata.get("remote_terminal_at")),
+        "remote_content_available": metadata.get("remote_content_available"),
+        "estimated_cost_usd": metadata.get("estimated_cost_usd"),
+        "reported_cost_usd": metadata.get("reported_cost_usd"),
+        "pricing_snapshot_at": _metadata_datetime(metadata.get("pricing_snapshot_at")),
+        "pricing_sku": metadata.get("pricing_sku"),
+        "prompt_sha256": metadata.get("prompt_sha256"),
+        "source_publication_id": metadata.get("source_publication_id"),
+        "source_publication_expires_at": _metadata_datetime(
+            metadata.get("source_publication_expires_at")
+        ),
+        "publication_provider": metadata.get("publication_provider"),
+        "provider_request_fingerprint": metadata.get("provider_request_fingerprint"),
+        "capability_snapshot_hash": metadata.get("capability_snapshot_hash"),
+        "remote_url_metadata": {},
+    }
+
+
+def _metadata_datetime(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise VideoClipProviderResponseException("provider remote timestamp is invalid")
+    result = datetime.fromisoformat(value)
+    if result.tzinfo is None:
+        raise VideoClipProviderResponseException("provider remote timestamp is not timezone-aware")
+    return result

@@ -63,6 +63,10 @@ def request(
         source_image_artifact_id=IMAGE_ARTIFACT_ID,
         source_image_sha256=hashlib.sha256(content).hexdigest(),
         source_image_mime_type="image/png",
+        source_image_size_bytes=len(content),
+        source_image_width=64,
+        source_image_height=64,
+        source_role="hero",
         source_image_content=content,
         duration_seconds=duration,
         frame_rate=24,
@@ -85,9 +89,7 @@ async def test_simulated_provider_produces_valid_stable_distinct_offline_mp4() -
     provider = SimulatedVideoClipGenerationProvider(timeout_seconds=20)
     first = await provider.generate_clip(request())
     second = await provider.generate_clip(request())
-    different = await provider.generate_clip(
-        request("asset-s001-q002-v001")
-    )
+    different = await provider.generate_clip(request("asset-s001-q002-v001"))
     assert first.clips[0].content == second.clips[0].content
     assert first.clips[0].content != different.clips[0].content
     assert first.cost_usd is None
@@ -111,9 +113,7 @@ async def test_simulated_provider_produces_valid_stable_distinct_offline_mp4() -
 
 @pytest.mark.asyncio
 async def test_provider_missing_dependency_is_typed_and_close_is_safe() -> None:
-    provider = SimulatedVideoClipGenerationProvider(
-        ffmpeg_path="definitely-missing-orion-ffmpeg"
-    )
+    provider = SimulatedVideoClipGenerationProvider(ffmpeg_path="definitely-missing-orion-ffmpeg")
     with pytest.raises(VideoClipProviderDependencyException):
         await provider.generate_clip(request())
     await provider.close()
@@ -204,9 +204,7 @@ async def test_store_write_read_resolve_sidecar_and_idempotence(tmp_path) -> Non
     )
     assert repeated == asset
     read = await store.read(asset=asset)
-    resolved = await store.resolve(
-        job_id=JOB_ID, visual_asset_id=VISUAL_ASSET_ID
-    )
+    resolved = await store.resolve(job_id=JOB_ID, visual_asset_id=VISUAL_ASSET_ID)
     assert read.content == content == resolved.content
     assert asset.sha256 == hashlib.sha256(content).hexdigest()
     assert asset.storage_path == video_clip_relative_path(
@@ -223,8 +221,10 @@ async def test_store_write_read_resolve_sidecar_and_idempotence(tmp_path) -> Non
 async def test_store_never_overwrites_conflicting_or_corrupt_content(tmp_path) -> None:
     provider_request = request()
     content = (
-        await SimulatedVideoClipGenerationProvider().generate_clip(provider_request)
-    ).clips[0].content
+        (await SimulatedVideoClipGenerationProvider().generate_clip(provider_request))
+        .clips[0]
+        .content
+    )
     store = FilesystemVideoClipBinaryStore(
         workspace_root=tmp_path,
         integrity_validator=validator(),

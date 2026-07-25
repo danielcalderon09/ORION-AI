@@ -184,8 +184,10 @@ def test_probe_rejects_attachments_and_chapters(payload) -> None:
 async def _written_store(tmp_path):
     provider_request = request()
     content = (
-        await SimulatedVideoClipGenerationProvider().generate_clip(provider_request)
-    ).clips[0].content
+        (await SimulatedVideoClipGenerationProvider().generate_clip(provider_request))
+        .clips[0]
+        .content
+    )
     store = FilesystemVideoClipBinaryStore(
         workspace_root=tmp_path,
         integrity_validator=validator(),
@@ -268,8 +270,10 @@ async def test_store_uses_atomic_replace_and_fsync(
 ) -> None:
     provider_request = request()
     content = (
-        await SimulatedVideoClipGenerationProvider().generate_clip(provider_request)
-    ).clips[0].content
+        (await SimulatedVideoClipGenerationProvider().generate_clip(provider_request))
+        .clips[0]
+        .content
+    )
     replace_calls = 0
     fsync_calls = 0
     original_replace = os.replace

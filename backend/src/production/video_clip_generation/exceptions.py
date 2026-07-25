@@ -102,9 +102,7 @@ class SourceImageProvenanceException(ImageAcquisitionManifestReadError):
     pass
 
 
-class ImageAcquisitionManifestTransientReadException(
-    ImageAcquisitionManifestReadError
-):
+class ImageAcquisitionManifestTransientReadException(ImageAcquisitionManifestReadError):
     pass
 
 
@@ -141,4 +139,102 @@ class VideoClipManifestConflictException(VideoClipManifestError):
 
 
 class VideoClipManifestCorruptException(VideoClipManifestError):
+    pass
+
+
+class OpenRouterVideoError(VideoClipProviderError):
+    """Base typed OpenRouter video failure."""
+
+
+class OpenRouterVideoConfigurationError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoAuthenticationError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoPermissionError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoInsufficientCreditsError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoInvalidRequestError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoUnsupportedModelError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoCapabilityError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoRateLimitError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoServerError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoTransportError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoTimeoutError(
+    VideoClipProviderTimeoutException, OpenRouterVideoError
+):
+    pass
+
+
+class OpenRouterVideoInvalidResponseError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoResponseTooLargeError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoDownloadError(OpenRouterVideoTransportError):
+    pass
+
+
+class OpenRouterVideoContentTypeError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoRemoteFailedError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoRemoteCancelledError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoRemoteExpiredError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoUncertainSubmissionError(OpenRouterVideoError):
+    pass
+
+
+class OpenRouterVideoCostPolicyError(OpenRouterVideoError):
+    pass
+
+
+class VideoFramePublicationUnavailableError(OpenRouterVideoError):
+    pass
+
+
+class RemoteVideoJobStoreError(OpenRouterVideoError):
+    pass
+
+
+class RemoteVideoJobConflictError(RemoteVideoJobStoreError):
     pass

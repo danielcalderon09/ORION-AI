@@ -1,5 +1,6 @@
 """Application settings and configuration."""
 
+from decimal import Decimal
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -96,18 +97,18 @@ class Settings(BaseSettings):
     ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS: int = 2
     ORION_IMAGE_ACQUISITION_RETRY_BASE_DELAY_SECONDS: float = 1.0
     ORION_IMAGE_ACQUISITION_OUTPUT_FORMAT: Literal["png", "jpeg", "webp"] = "png"
-    ORION_IMAGE_ACQUISITION_QUALITY: Literal[
-        "auto", "low", "medium", "high"
-    ] = "auto"
+    ORION_IMAGE_ACQUISITION_QUALITY: Literal["auto", "low", "medium", "high"] = "auto"
     ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES: int = 40_000_000
     ORION_IMAGE_ACQUISITION_MAX_DECODED_IMAGE_BYTES: int = 25_000_000
     ORION_IMAGE_ACQUISITION_MAX_PLAN_BYTES: int = 8_000_000
     ORION_IMAGE_ACQUISITION_MAX_MANIFEST_BYTES: int = 4_000_000
     ORION_IMAGE_ACQUISITION_PROVIDER_ONLY: str | None = None
-    ORION_VIDEO_CLIP_GENERATION_PROVIDER: Literal["simulated"] = "simulated"
+    ORION_VIDEO_CLIP_GENERATION_PROVIDER: Literal["simulated", "openrouter"] = "simulated"
     ORION_VIDEO_CLIP_GENERATION_MODEL: str = "simulated-video-v1"
     ORION_VIDEO_CLIP_GENERATION_OUTPUT_FORMAT: Literal["mp4"] = "mp4"
     ORION_VIDEO_CLIP_GENERATION_CODEC: Literal["h264"] = "h264"
+    ORION_VIDEO_CLIP_GENERATION_RESOLUTION: Literal["720p", "1080p"] = "720p"
+    ORION_VIDEO_CLIP_GENERATION_GENERATE_AUDIO: Literal[False] = False
     ORION_VIDEO_CLIP_GENERATION_FRAME_RATE: Literal[24, 30] = 24
     ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS: float = 4
     ORION_VIDEO_CLIP_GENERATION_MAX_DURATION_SECONDS: float = 10
@@ -116,6 +117,18 @@ class Settings(BaseSettings):
     ORION_VIDEO_CLIP_GENERATION_MAX_MANIFEST_BYTES: int = 4_000_000
     ORION_VIDEO_CLIP_GENERATION_FFMPEG_PATH: str | None = None
     ORION_VIDEO_CLIP_GENERATION_FFPROBE_PATH: str | None = None
+    ORION_VIDEO_CLIP_GENERATION_OPENROUTER_API_KEY: SecretStr | None = None
+    ORION_VIDEO_CLIP_GENERATION_OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    ORION_VIDEO_CLIP_GENERATION_OPENROUTER_TIMEOUT_SECONDS: float = 30
+    ORION_VIDEO_CLIP_GENERATION_OPENROUTER_POLL_INTERVAL_SECONDS: float = 5
+    ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_SECONDS: float = 900
+    ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_ATTEMPTS: int = 180
+    ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_RESPONSE_BYTES: int = 2_000_000
+    ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_VIDEO_BYTES: int = 50_000_000
+    ORION_VIDEO_CLIP_GENERATION_OPENROUTER_CAPABILITY_CACHE_TTL_SECONDS: float = 3600
+    ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD: Decimal = Decimal("1.00")
+    ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS: bool = False
+    ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER: Literal["disabled"] = "disabled"
     ORION_OPENROUTER_HTTP_REFERER: str | None = None
     ORION_OPENROUTER_APP_TITLE: str | None = None
 
@@ -170,6 +183,16 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @field_validator(
+        "ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD",
+        mode="before",
+    )
+    @classmethod
+    def reject_float_video_cost(cls, value: Any) -> Any:
+        if isinstance(value, float):
+            raise ValueError("OpenRouter video cost must not use float")
+        return value
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         # Ensure directories exist
@@ -197,6 +220,10 @@ class Settings(BaseSettings):
             "ORION_IMAGE_ACQUISITION_RETRY_BASE_DELAY_SECONDS": self.ORION_IMAGE_ACQUISITION_RETRY_BASE_DELAY_SECONDS,
             "ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS": self.ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS,
             "ORION_VIDEO_CLIP_GENERATION_MAX_DURATION_SECONDS": self.ORION_VIDEO_CLIP_GENERATION_MAX_DURATION_SECONDS,
+            "ORION_VIDEO_CLIP_GENERATION_OPENROUTER_TIMEOUT_SECONDS": self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_TIMEOUT_SECONDS,
+            "ORION_VIDEO_CLIP_GENERATION_OPENROUTER_POLL_INTERVAL_SECONDS": self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_POLL_INTERVAL_SECONDS,
+            "ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_SECONDS": self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_SECONDS,
+            "ORION_VIDEO_CLIP_GENERATION_OPENROUTER_CAPABILITY_CACHE_TTL_SECONDS": self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_CAPABILITY_CACHE_TTL_SECONDS,
         }
         for name, value in positive.items():
             if value <= 0:
@@ -221,26 +248,19 @@ class Settings(BaseSettings):
         if not 0 <= self.ORION_SCRIPTING_TEMPERATURE <= 2:
             raise ValueError("ORION_SCRIPTING_TEMPERATURE must be between 0 and 2")
         if not 1 <= self.ORION_SCENE_PLANNING_MAX_TRANSPORT_ATTEMPTS <= 5:
-            raise ValueError(
-                "ORION_SCENE_PLANNING_MAX_TRANSPORT_ATTEMPTS must be between 1 and 5"
-            )
+            raise ValueError("ORION_SCENE_PLANNING_MAX_TRANSPORT_ATTEMPTS must be between 1 and 5")
         if not 1 <= self.ORION_SCENE_PLANNING_MAX_OUTPUT_TOKENS <= 100_000:
             raise ValueError("ORION_SCENE_PLANNING_MAX_OUTPUT_TOKENS is outside safe limits")
         if not 0 <= self.ORION_SCENE_PLANNING_TEMPERATURE <= 2:
             raise ValueError("ORION_SCENE_PLANNING_TEMPERATURE must be between 0 and 2")
         if not 1 <= self.ORION_VISUAL_ASSET_PLANNING_MAX_TRANSPORT_ATTEMPTS <= 5:
             raise ValueError(
-                "ORION_VISUAL_ASSET_PLANNING_MAX_TRANSPORT_ATTEMPTS "
-                "must be between 1 and 5"
+                "ORION_VISUAL_ASSET_PLANNING_MAX_TRANSPORT_ATTEMPTS must be between 1 and 5"
             )
         if not 1 <= self.ORION_VISUAL_ASSET_PLANNING_MAX_OUTPUT_TOKENS <= 100_000:
-            raise ValueError(
-                "ORION_VISUAL_ASSET_PLANNING_MAX_OUTPUT_TOKENS is outside safe limits"
-            )
+            raise ValueError("ORION_VISUAL_ASSET_PLANNING_MAX_OUTPUT_TOKENS is outside safe limits")
         if not 0 <= self.ORION_VISUAL_ASSET_PLANNING_TEMPERATURE <= 2:
-            raise ValueError(
-                "ORION_VISUAL_ASSET_PLANNING_TEMPERATURE must be between 0 and 2"
-            )
+            raise ValueError("ORION_VISUAL_ASSET_PLANNING_TEMPERATURE must be between 0 and 2")
         for name, value in {
             "ORION_SCRIPTING_MAX_PLAN_BYTES": self.ORION_SCRIPTING_MAX_PLAN_BYTES,
             "ORION_SCRIPTING_MAX_SCRIPT_BYTES": self.ORION_SCRIPTING_MAX_SCRIPT_BYTES,
@@ -255,24 +275,53 @@ class Settings(BaseSettings):
             "ORION_VIDEO_CLIP_GENERATION_MAX_SOURCE_MANIFEST_BYTES": self.ORION_VIDEO_CLIP_GENERATION_MAX_SOURCE_MANIFEST_BYTES,
             "ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES": self.ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES,
             "ORION_VIDEO_CLIP_GENERATION_MAX_MANIFEST_BYTES": self.ORION_VIDEO_CLIP_GENERATION_MAX_MANIFEST_BYTES,
+            "ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_RESPONSE_BYTES": self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_RESPONSE_BYTES,
+            "ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_VIDEO_BYTES": self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_VIDEO_BYTES,
         }.items():
             if not 1 <= value <= 50_000_000:
                 raise ValueError(f"{name} is outside safe limits")
         if not 1 <= self.ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES <= 100_000_000:
-            raise ValueError(
-                "ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES is outside safe limits"
-            )
+            raise ValueError("ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES is outside safe limits")
         if (
             self.ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS
             > self.ORION_VIDEO_CLIP_GENERATION_MAX_DURATION_SECONDS
         ):
-            raise ValueError(
-                "video clip duration cannot exceed the configured maximum"
-            )
+            raise ValueError("video clip duration cannot exceed the configured maximum")
         if self.ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES > 250_000_000:
+            raise ValueError("ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES is outside safe limits")
+        if not 1 <= self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_ATTEMPTS <= 1000:
+            raise ValueError("OpenRouter video poll attempts are outside safe limits")
+        if self.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD <= 0:
+            raise ValueError("OpenRouter video maximum cost must be positive")
+        parsed_video_url = urlsplit(
+            self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_BASE_URL
+        )
+        if (
+            parsed_video_url.scheme != "https"
+            or parsed_video_url.hostname != "openrouter.ai"
+            or parsed_video_url.path.rstrip("/") != "/api/v1"
+            or parsed_video_url.username is not None
+            or parsed_video_url.password is not None
+            or parsed_video_url.query
+            or parsed_video_url.fragment
+        ):
+            raise ValueError("OpenRouter video base URL must be the official API")
+        if (
+            self.ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS
+            and self.ORION_VIDEO_CLIP_GENERATION_PROVIDER != "openrouter"
+        ):
             raise ValueError(
-                "ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES is outside safe limits"
+                "billable video authorization requires provider=openrouter"
             )
+        if (
+            self.ORION_VIDEO_CLIP_GENERATION_PROVIDER == "openrouter"
+            and (
+                not self.ORION_VIDEO_CLIP_GENERATION_MODEL.strip()
+                or self.ORION_VIDEO_CLIP_GENERATION_MODEL
+                == "simulated-video-v1"
+            )
+        ):
+            raise ValueError("OpenRouter video requires an explicit model ID")
         for name in (
             "ORION_VIDEO_CLIP_GENERATION_FFMPEG_PATH",
             "ORION_VIDEO_CLIP_GENERATION_FFPROBE_PATH",
@@ -285,16 +334,13 @@ class Settings(BaseSettings):
                 setattr(self, name, normalized)
         if not 1 <= self.ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS <= 5:
             raise ValueError(
-                "ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS "
-                "must be between 1 and 5"
+                "ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS must be between 1 and 5"
             )
         if (
             self.ORION_IMAGE_ACQUISITION_MAX_DECODED_IMAGE_BYTES
             > self.ORION_BINARY_ASSET_MAX_SIZE_BYTES
         ):
-            raise ValueError(
-                "decoded image limit cannot exceed binary asset storage limit"
-            )
+            raise ValueError("decoded image limit cannot exceed binary asset storage limit")
         if self.ORION_IMAGE_ACQUISITION_PROVIDER_ONLY is not None:
             provider_only = self.ORION_IMAGE_ACQUISITION_PROVIDER_ONLY.strip().lower()
             if (
@@ -306,9 +352,7 @@ class Settings(BaseSettings):
                     for character in provider_only
                 )
             ):
-                raise ValueError(
-                    "ORION_IMAGE_ACQUISITION_PROVIDER_ONLY is invalid"
-                )
+                raise ValueError("ORION_IMAGE_ACQUISITION_PROVIDER_ONLY is invalid")
             self.ORION_IMAGE_ACQUISITION_PROVIDER_ONLY = provider_only
         if self.ORION_PLANNING_ORPHAN_MIN_AGE_SECONDS < 0:
             raise ValueError("ORION_PLANNING_ORPHAN_MIN_AGE_SECONDS cannot be negative")
@@ -340,11 +384,7 @@ class Settings(BaseSettings):
             self.ORION_OPENROUTER_HTTP_REFERER = referer
         if self.ORION_OPENROUTER_APP_TITLE is not None:
             title = self.ORION_OPENROUTER_APP_TITLE.strip()
-            if (
-                not title
-                or len(title) > 200
-                or any(ord(char) < 32 for char in title)
-            ):
+            if not title or len(title) > 200 or any(ord(char) < 32 for char in title):
                 raise ValueError("ORION_OPENROUTER_APP_TITLE is invalid")
             self.ORION_OPENROUTER_APP_TITLE = title
         return self

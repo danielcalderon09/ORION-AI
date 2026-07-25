@@ -7,6 +7,9 @@ from backend.src.production.video_clip_generation.models import (
     ProductionVideoClipAsset,
     ProductionVideoClipManifest,
 )
+from backend.src.production.video_clip_generation.providers.openrouter_models import (
+    RemoteVideoJobRecord,
+)
 
 
 def _serialize(value: dict[str, Any]) -> bytes:
@@ -36,6 +39,14 @@ def serialize_video_clip_asset(asset: ProductionVideoClipAsset) -> bytes:
 
 def deserialize_video_clip_asset(content: bytes) -> ProductionVideoClipAsset:
     return ProductionVideoClipAsset.model_validate(_deserialize(content))
+
+
+def serialize_remote_video_job(record: RemoteVideoJobRecord) -> bytes:
+    return _serialize(record.model_dump(mode="json"))
+
+
+def deserialize_remote_video_job(content: bytes) -> RemoteVideoJobRecord:
+    return RemoteVideoJobRecord.model_validate(_deserialize(content))
 
 
 def _deserialize(content: bytes) -> Any:

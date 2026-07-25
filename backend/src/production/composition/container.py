@@ -173,6 +173,10 @@ from backend.src.production.scripting.providers.availability import (
 from backend.src.production.video_clip_generation.configuration import (
     VideoClipGenerationConfiguration,
 )
+from backend.src.production.video_clip_generation.exceptions import (
+    OpenRouterVideoConfigurationError,
+    VideoFramePublicationUnavailableError,
+)
 from backend.src.production.video_clip_generation.handler import (
     VideoClipGenerationHandler,
 )
@@ -280,11 +284,10 @@ class ProductionContainer:
 def build_production_container(settings: Settings) -> ProductionContainer:
     def clock() -> datetime:
         return datetime.now(UTC)
+
     scripting_factory = _resolve_scripting_provider_factory(settings)
     scene_planning_factory = _resolve_scene_planning_provider_factory(settings)
-    visual_asset_planning_factory = (
-        _resolve_visual_asset_planning_provider_factory(settings)
-    )
+    visual_asset_planning_factory = _resolve_visual_asset_planning_provider_factory(settings)
     image_acquisition_factory = _resolve_image_acquisition_provider_factory(settings)
     engine = create_production_engine(
         settings.production_database_url,
@@ -357,16 +360,12 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         scene_plan_reader=DurableProductionScenePlanReader(
             workspace_root=settings.PROJECTS_DIR,
             repository=SQLAlchemyProductionScenePlanQueryRepository(sessions),
-            max_scene_plan_bytes=(
-                settings.ORION_VISUAL_ASSET_PLANNING_MAX_SCENE_PLAN_BYTES
-            ),
+            max_scene_plan_bytes=(settings.ORION_VISUAL_ASSET_PLANNING_MAX_SCENE_PLAN_BYTES),
         ),
         provider=visual_asset_planning_provider,
         artifact_writer=LocalVisualAssetPlanningArtifactWriter(
             settings.PROJECTS_DIR,
-            max_artifact_bytes=(
-                settings.ORION_VISUAL_ASSET_PLANNING_MAX_ARTIFACT_BYTES
-            ),
+            max_artifact_bytes=(settings.ORION_VISUAL_ASSET_PLANNING_MAX_ARTIFACT_BYTES),
         ),
         clock=clock,
         uuid_factory=uuid4,
@@ -374,12 +373,8 @@ def build_production_container(settings: Settings) -> ProductionContainer:
     binary_asset_configuration = AssetStorageConfiguration(
         workspace=settings.PROJECTS_DIR,
         max_asset_size=settings.ORION_BINARY_ASSET_MAX_SIZE_BYTES,
-        allowed_mime_types=frozenset(
-            settings.ORION_BINARY_ASSET_ALLOWED_MIME_TYPES
-        ),
-        allowed_extensions=frozenset(
-            settings.ORION_BINARY_ASSET_ALLOWED_EXTENSIONS
-        ),
+        allowed_mime_types=frozenset(settings.ORION_BINARY_ASSET_ALLOWED_MIME_TYPES),
+        allowed_extensions=frozenset(settings.ORION_BINARY_ASSET_ALLOWED_EXTENSIONS),
     )
     asset_mime_validator = AssetMimeValidator(binary_asset_configuration)
     asset_hash_validator = AssetHashValidator()
@@ -415,9 +410,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             quality=settings.ORION_IMAGE_ACQUISITION_QUALITY,
         ),
         provider_name=settings.ORION_IMAGE_ACQUISITION_PROVIDER.strip().lower(),
-        requested_model=(
-            settings.ORION_IMAGE_ACQUISITION_MODEL.strip() or None
-        ),
+        requested_model=(settings.ORION_IMAGE_ACQUISITION_MODEL.strip() or None),
         prompt_builder=image_prompt_builder,
         clock=clock,
     )
@@ -426,11 +419,11 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         model=settings.ORION_VIDEO_CLIP_GENERATION_MODEL,
         output_format=settings.ORION_VIDEO_CLIP_GENERATION_OUTPUT_FORMAT,
         codec=settings.ORION_VIDEO_CLIP_GENERATION_CODEC,
+        resolution=settings.ORION_VIDEO_CLIP_GENERATION_RESOLUTION,
+        generate_audio=settings.ORION_VIDEO_CLIP_GENERATION_GENERATE_AUDIO,
         frame_rate=settings.ORION_VIDEO_CLIP_GENERATION_FRAME_RATE,
         duration_seconds=settings.ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS,
-        max_duration_seconds=(
-            settings.ORION_VIDEO_CLIP_GENERATION_MAX_DURATION_SECONDS
-        ),
+        max_duration_seconds=(settings.ORION_VIDEO_CLIP_GENERATION_MAX_DURATION_SECONDS),
     )
     ffprobe_media_probe = FFprobeMediaProbe(
         executable=resolve_media_executable(
@@ -448,20 +441,12 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         max_video_bytes=settings.ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES,
         clock=clock,
     )
-    video_clip_generation_provider = SimulatedVideoClipGenerationProvider(
-        ffmpeg_path=resolve_media_executable(
-            settings.ORION_VIDEO_CLIP_GENERATION_FFMPEG_PATH,
-            "ffmpeg",
-        ),
-        max_output_bytes=settings.ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES,
-    )
+    video_clip_generation_provider = _build_video_clip_generation_provider(settings)
     image_acquisition_manifest_reader = DurableImageAcquisitionManifestReader(
         workspace_root=settings.PROJECTS_DIR,
         repository=SQLAlchemyImageAcquisitionManifestQueryRepository(sessions),
         binary_reader=filesystem_binary_asset_store,
-        max_manifest_bytes=(
-            settings.ORION_VIDEO_CLIP_GENERATION_MAX_SOURCE_MANIFEST_BYTES
-        ),
+        max_manifest_bytes=(settings.ORION_VIDEO_CLIP_GENERATION_MAX_SOURCE_MANIFEST_BYTES),
     )
     video_clip_generation_handler = VideoClipGenerationHandler(
         manifest_reader=image_acquisition_manifest_reader,
@@ -469,9 +454,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         binary_store=filesystem_video_clip_store,
         manifest_writer=LocalVideoClipManifestWriter(
             settings.PROJECTS_DIR,
-            max_manifest_bytes=(
-                settings.ORION_VIDEO_CLIP_GENERATION_MAX_MANIFEST_BYTES
-            ),
+            max_manifest_bytes=(settings.ORION_VIDEO_CLIP_GENERATION_MAX_MANIFEST_BYTES),
         ),
         configuration=video_clip_configuration,
         clock=clock,
@@ -521,9 +504,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
     leases = ProductionLeaseManager(
         SQLAlchemyLeaseRepository(sessions),
         clock=clock,
-        lease_duration=timedelta(
-            seconds=settings.ORION_PRODUCTION_LEASE_DURATION_SECONDS
-        ),
+        lease_duration=timedelta(seconds=settings.ORION_PRODUCTION_LEASE_DURATION_SECONDS),
     )
     recovery = ProductionRecoveryService(
         RuntimeStateReader(sessions),
@@ -541,9 +522,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         decision_store=persister,
         heartbeat=ProductionHeartbeat(
             leases,
-            interval=timedelta(
-                seconds=settings.ORION_PRODUCTION_HEARTBEAT_INTERVAL_SECONDS
-            ),
+            interval=timedelta(seconds=settings.ORION_PRODUCTION_HEARTBEAT_INTERVAL_SECONDS),
         ),
         executor=ProductionExecutor(
             create_handler_registry(
@@ -722,9 +701,7 @@ def _resolve_scene_planning_provider_factory(
             "scene-planning provider credential is missing"
         )
     if not settings.ORION_SCENE_PLANNING_MODEL.strip():
-        raise ScenePlanningProviderConfigurationException(
-            "scene-planning model is missing"
-        )
+        raise ScenePlanningProviderConfigurationException("scene-planning model is missing")
     _validate_https_provider_url(
         settings.ORION_SCENE_PLANNING_BASE_URL,
         error_type=ScenePlanningProviderConfigurationException,
@@ -752,12 +729,8 @@ def _build_scene_planning_provider(
         ),
         base_url=settings.ORION_SCENE_PLANNING_BASE_URL,
         timeout_seconds=settings.ORION_SCENE_PLANNING_TIMEOUT_SECONDS,
-        max_transport_attempts=(
-            settings.ORION_SCENE_PLANNING_MAX_TRANSPORT_ATTEMPTS
-        ),
-        retry_base_delay_seconds=(
-            settings.ORION_SCENE_PLANNING_RETRY_BASE_DELAY_SECONDS
-        ),
+        max_transport_attempts=(settings.ORION_SCENE_PLANNING_MAX_TRANSPORT_ATTEMPTS),
+        retry_base_delay_seconds=(settings.ORION_SCENE_PLANNING_RETRY_BASE_DELAY_SECONDS),
         max_output_tokens=settings.ORION_SCENE_PLANNING_MAX_OUTPUT_TOKENS,
         temperature=settings.ORION_SCENE_PLANNING_TEMPERATURE,
         http_referer=settings.ORION_OPENROUTER_HTTP_REFERER,
@@ -806,18 +779,12 @@ def _build_visual_asset_planning_provider(
         api_key=settings.ORION_VISUAL_ASSET_PLANNING_API_KEY.get_secret_value(),
         model=settings.ORION_VISUAL_ASSET_PLANNING_MODEL,
         prompt_builder=VisualAssetPlanningPromptBuilder(
-            max_scene_plan_bytes=(
-                settings.ORION_VISUAL_ASSET_PLANNING_MAX_SCENE_PLAN_BYTES
-            )
+            max_scene_plan_bytes=(settings.ORION_VISUAL_ASSET_PLANNING_MAX_SCENE_PLAN_BYTES)
         ),
         base_url=settings.ORION_VISUAL_ASSET_PLANNING_BASE_URL,
         timeout_seconds=settings.ORION_VISUAL_ASSET_PLANNING_TIMEOUT_SECONDS,
-        max_transport_attempts=(
-            settings.ORION_VISUAL_ASSET_PLANNING_MAX_TRANSPORT_ATTEMPTS
-        ),
-        retry_base_delay_seconds=(
-            settings.ORION_VISUAL_ASSET_PLANNING_RETRY_BASE_DELAY_SECONDS
-        ),
+        max_transport_attempts=(settings.ORION_VISUAL_ASSET_PLANNING_MAX_TRANSPORT_ATTEMPTS),
+        retry_base_delay_seconds=(settings.ORION_VISUAL_ASSET_PLANNING_RETRY_BASE_DELAY_SECONDS),
         max_output_tokens=settings.ORION_VISUAL_ASSET_PLANNING_MAX_OUTPUT_TOKENS,
         temperature=settings.ORION_VISUAL_ASSET_PLANNING_TEMPERATURE,
         http_referer=settings.ORION_OPENROUTER_HTTP_REFERER,
@@ -840,9 +807,7 @@ def _resolve_image_acquisition_provider_factory(
             "image acquisition provider credential is missing"
         )
     if not settings.ORION_IMAGE_ACQUISITION_MODEL.strip():
-        raise ImageAcquisitionProviderConfigurationException(
-            "image acquisition model is missing"
-        )
+        raise ImageAcquisitionProviderConfigurationException("image acquisition model is missing")
     _validate_https_provider_url(
         settings.ORION_IMAGE_ACQUISITION_BASE_URL,
         error_type=ImageAcquisitionProviderConfigurationException,
@@ -870,19 +835,39 @@ def _build_image_acquisition_provider(
         ),
         base_url=settings.ORION_IMAGE_ACQUISITION_BASE_URL,
         timeout_seconds=settings.ORION_IMAGE_ACQUISITION_TIMEOUT_SECONDS,
-        max_transport_attempts=(
-            settings.ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS
-        ),
-        retry_base_delay_seconds=(
-            settings.ORION_IMAGE_ACQUISITION_RETRY_BASE_DELAY_SECONDS
-        ),
+        max_transport_attempts=(settings.ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS),
+        retry_base_delay_seconds=(settings.ORION_IMAGE_ACQUISITION_RETRY_BASE_DELAY_SECONDS),
         max_response_bytes=settings.ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES,
-        max_decoded_image_bytes=(
-            settings.ORION_IMAGE_ACQUISITION_MAX_DECODED_IMAGE_BYTES
-        ),
+        max_decoded_image_bytes=(settings.ORION_IMAGE_ACQUISITION_MAX_DECODED_IMAGE_BYTES),
         provider_only=settings.ORION_IMAGE_ACQUISITION_PROVIDER_ONLY,
         http_referer=settings.ORION_OPENROUTER_HTTP_REFERER,
         app_title=settings.ORION_OPENROUTER_APP_TITLE,
+    )
+
+
+def _build_video_clip_generation_provider(
+    settings: Settings,
+) -> VideoClipGenerationProvider:
+    if settings.ORION_VIDEO_CLIP_GENERATION_PROVIDER == "simulated":
+        return SimulatedVideoClipGenerationProvider(
+            ffmpeg_path=resolve_media_executable(
+                settings.ORION_VIDEO_CLIP_GENERATION_FFMPEG_PATH,
+                "ffmpeg",
+            ),
+            max_output_bytes=settings.ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES,
+        )
+    if not settings.ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS:
+        raise OpenRouterVideoConfigurationError(
+            "OpenRouter video requires explicit billable authorization"
+        )
+    if settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_API_KEY is None:
+        raise OpenRouterVideoConfigurationError("OpenRouter video credential is missing")
+    if settings.ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER == "disabled":
+        raise VideoFramePublicationUnavailableError(
+            "OpenRouter video requires a real secure frame publisher"
+        )
+    raise OpenRouterVideoConfigurationError(
+        "configured OpenRouter video frame publisher is unsupported"
     )
 
 

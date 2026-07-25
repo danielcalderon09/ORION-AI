@@ -123,8 +123,22 @@ Las pruebas usan perfiles temporales, ffmpeg/ffprobe locales y cero red o coste.
 operativo mantiene `simulated`; el rollback de código revierte la etapa, artifacts y módulos sin
 migración porque `ArtifactType` se persiste como string.
 
-Todavía no existe proveedor real de video, image-to-video generativo, text-to-video, audio, TTS,
-música, SFX, captions, subtítulos, transiciones, montaje, timeline, render final, DaVinci ni
-frontend de producción.
+El alcance original 5F.1 no incluía proveedor real. Fase 5F.2 añade el
+adaptador OpenRouter, pero permanece bloqueado sin un publisher HTTPS real y no
+realiza live generation.
+# Extensión OpenRouter de Fase 5F.2
 
-La siguiente fase recomendada es **Fase 5F.2 — Real Video Generation Provider**.
+La infraestructura 5F.1 se conserva: el mismo handler/store/validator/manifest
+admite metadata remota opcional y `simulated` continúa como default. El
+adaptador OpenRouter añade capabilities, cost gate, remote job durable, polling
+y descarga segura. Está bloqueado por default y no puede ejecutarse sin un
+publisher HTTPS real, ausente en esta fase. Consulta
+`PRODUCTION_OPENROUTER_VIDEO_PROVIDER.md`.
+
+Los campos remotos son aditivos al schema 1.0.0. Provider, modelo, key,
+publisher, base URL, duración, resolución, polling, coste máximo y autorización
+facturable son globales privados y nunca se aceptan por job.
+
+La siguiente fase recomendada es Fase 5F.3 — Secure Public Frame Publishing and
+Controlled Live Validation. Todavía no existen publisher real, live
+generation, audio, webhooks, timeline, render, DaVinci ni frontend.

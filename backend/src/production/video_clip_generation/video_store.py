@@ -90,20 +90,14 @@ class FilesystemVideoClipBinaryStore:
         await self._validate_asset_file(result)
         return result
 
-    async def resolve(
-        self, *, job_id: UUID, visual_asset_id: str
-    ) -> ReadProductionVideoClipAsset:
-        relative_path = video_clip_relative_path(
-            job_id=job_id, visual_asset_id=visual_asset_id
-        )
+    async def resolve(self, *, job_id: UUID, visual_asset_id: str) -> ReadProductionVideoClipAsset:
+        relative_path = video_clip_relative_path(job_id=job_id, visual_asset_id=visual_asset_id)
         asset = await asyncio.to_thread(self._read_sidecar_sync, relative_path)
         if asset.job_id != job_id or asset.asset_id != f"video-{visual_asset_id}":
             raise VideoClipIntegrityError("video clip identity differs from sidecar")
         return await self.read(asset=asset)
 
-    async def read(
-        self, *, asset: ProductionVideoClipAsset
-    ) -> ReadProductionVideoClipAsset:
+    async def read(self, *, asset: ProductionVideoClipAsset) -> ReadProductionVideoClipAsset:
         target, content = await asyncio.to_thread(self._read_content_sync, asset)
         await self._validate_asset_file(asset, target=target)
         if hashlib.sha256(content).hexdigest() != asset.sha256:
@@ -121,25 +115,17 @@ class FilesystemVideoClipBinaryStore:
         with self._exclusive_lock(target):
             if target.exists() or sidecar.exists():
                 if not target.exists() or not sidecar.exists():
-                    raise VideoClipConflictError(
-                        "video clip has incomplete durable metadata"
-                    )
+                    raise VideoClipConflictError("video clip has incomplete durable metadata")
                 existing = self._read_sidecar_file(sidecar)
                 if existing != asset:
                     # created_at and provider latency are descriptive; integrity and
                     # provenance remain strict for safe idempotent reuse.
-                    comparable = existing.model_copy(
-                        update={"created_at": asset.created_at}
-                    )
+                    comparable = existing.model_copy(update={"created_at": asset.created_at})
                     if comparable != asset:
-                        raise VideoClipConflictError(
-                            "existing video clip is incompatible"
-                        )
+                        raise VideoClipConflictError("existing video clip is incompatible")
                 _, existing_content = self._read_content_sync(existing)
                 if hashlib.sha256(existing_content).hexdigest() != existing.sha256:
-                    raise VideoClipConflictError(
-                        "existing video clip failed checksum validation"
-                    )
+                    raise VideoClipConflictError("existing video clip failed checksum validation")
                 return existing
             self._atomic_write(target, content)
             self._atomic_write(sidecar, serialize_video_clip_asset(asset))
@@ -161,9 +147,7 @@ class FilesystemVideoClipBinaryStore:
             or inspected.video_codec != asset.video_codec
             or inspected.has_audio != asset.has_audio
         ):
-            raise VideoClipIntegrityError(
-                "video clip probe metadata differs from sidecar"
-            )
+            raise VideoClipIntegrityError("video clip probe metadata differs from sidecar")
 
     def _read_sidecar_sync(self, relative_path: str) -> ProductionVideoClipAsset:
         sidecar = self._resolve(f"{relative_path}.asset.json", require_exists=True)
@@ -185,9 +169,7 @@ class FilesystemVideoClipBinaryStore:
         except (OSError, UnicodeError, ValueError, TypeError) as exc:
             raise VideoClipIntegrityError("video clip sidecar is invalid") from exc
 
-    def _read_content_sync(
-        self, asset: ProductionVideoClipAsset
-    ) -> tuple[Path, bytes]:
+    def _read_content_sync(self, asset: ProductionVideoClipAsset) -> tuple[Path, bytes]:
         target = self._resolve(asset.storage_path, require_exists=True)
         try:
             self._confinement.reject_unsafe_file(target)
@@ -208,9 +190,7 @@ class FilesystemVideoClipBinaryStore:
 
     def _resolve(self, relative_path: str, *, require_exists: bool = False) -> Path:
         try:
-            return self._confinement.resolve(
-                relative_path, require_exists=require_exists
-            )
+            return self._confinement.resolve(relative_path, require_exists=require_exists)
         except BinaryAssetLinkError as exc:
             raise VideoClipLinkError("video clip path contains a link") from exc
         except BinaryAssetPathError as exc:
@@ -225,9 +205,7 @@ class FilesystemVideoClipBinaryStore:
             parent.mkdir(parents=True, exist_ok=True)
             self._confinement.reject_unsafe_components(parent)
         except (OSError, BinaryAssetLinkError, BinaryAssetPathError) as exc:
-            raise VideoClipPathError(
-                "video clip directory could not be created safely"
-            ) from exc
+            raise VideoClipPathError("video clip directory could not be created safely") from exc
 
     @contextmanager
     def _exclusive_lock(self, target: Path) -> Iterator[None]:
@@ -235,9 +213,7 @@ class FilesystemVideoClipBinaryStore:
         try:
             descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError as exc:
-            raise VideoClipConflictError(
-                "video clip is already being written"
-            ) from exc
+            raise VideoClipConflictError("video clip is already being written") from exc
         except OSError as exc:
             raise VideoClipStoreError("video clip lock could not be created") from exc
         try:
@@ -247,9 +223,7 @@ class FilesystemVideoClipBinaryStore:
             try:
                 lock.unlink(missing_ok=True)
             except OSError as exc:
-                raise VideoClipStoreError(
-                    "video clip lock could not be released"
-                ) from exc
+                raise VideoClipStoreError("video clip lock could not be released") from exc
 
     def _atomic_write(self, target: Path, content: bytes) -> None:
         descriptor = -1
@@ -265,9 +239,7 @@ class FilesystemVideoClipBinaryStore:
                 stream.flush()
                 os.fsync(stream.fileno())
             if target.exists() or target.is_symlink():
-                raise VideoClipConflictError(
-                    "video clip target appeared concurrently"
-                )
+                raise VideoClipConflictError("video clip target appeared concurrently")
             os.replace(temporary, target)
             temporary = None
             _fsync_directory(target.parent)
@@ -290,9 +262,7 @@ class FilesystemVideoClipBinaryStore:
 
 
 def video_clip_relative_path(*, job_id: UUID, visual_asset_id: str) -> str:
-    return (
-        f"production/{job_id}/assets/video-clips/video-{visual_asset_id}.mp4"
-    )
+    return f"production/{job_id}/assets/video-clips/video-{visual_asset_id}.mp4"
 
 
 def _fsync_directory(directory: Path) -> None:

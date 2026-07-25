@@ -42,9 +42,7 @@ async def test_shutdown_continues_in_order_when_video_close_fails(tmp_path) -> N
         "scripting",
         "planning",
     )
-    resources = tuple(
-        CloseRecorder(name, calls, fail=name == "video") for name in names
-    )
+    resources = tuple(CloseRecorder(name, calls, fail=name == "video") for name in names)
     controlled = replace(
         built,
         engine=DisposeRecorder(calls),

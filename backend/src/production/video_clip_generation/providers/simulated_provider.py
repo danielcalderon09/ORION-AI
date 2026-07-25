@@ -50,16 +50,12 @@ class SimulatedVideoClipGenerationProvider:
         self._maximum = max_output_bytes
         self._closed = False
 
-    async def generate_clip(
-        self, request: VideoClipProviderRequest
-    ) -> VideoClipProviderResponse:
+    async def generate_clip(self, request: VideoClipProviderRequest) -> VideoClipProviderResponse:
         if self._closed:
             raise VideoClipProviderDependencyException("video clip provider is closed")
         suffix = _MIME_EXTENSION.get(request.source_image_mime_type)
         if suffix is None:
-            raise VideoClipProviderResponseException(
-                "source image MIME type is unsupported"
-            )
+            raise VideoClipProviderResponseException("source image MIME type is unsupported")
         started = monotonic()
         with tempfile.TemporaryDirectory(prefix="orion-video-clip-") as directory:
             root = Path(directory)
@@ -82,9 +78,7 @@ class SimulatedVideoClipGenerationProvider:
             )
             frame_count = round(request.duration_seconds * request.frame_rate)
             pixel_format = (
-                "yuv420p"
-                if request.width % 2 == 0 and request.height % 2 == 0
-                else "yuv444p"
+                "yuv420p" if request.width % 2 == 0 and request.height % 2 == 0 else "yuv444p"
             )
             command = (
                 self._ffmpeg,
@@ -207,9 +201,7 @@ class SimulatedVideoClipGenerationProvider:
         if process.returncode != 0:
             # stderr is deliberately bounded above and not exposed: it may contain
             # private temporary paths or build environment details.
-            raise VideoClipProviderResponseException(
-                "ffmpeg failed to create a clip"
-            )
+            raise VideoClipProviderResponseException("ffmpeg failed to create a clip")
 
     async def close(self) -> None:
         self._closed = True

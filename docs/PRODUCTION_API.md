@@ -103,3 +103,11 @@ heartbeat debe ser menor que lease.
 
 Esta fase no incluye frontend, WebSockets/SSE, providers, multimedia, DaVinci, FFmpeg,
 OpenCV, MCP, EventBus ni ejecución distribuida. Los handlers siguen simulados.
+# Compatibilidad con OpenRouter Video de Fase 5F.2
+
+No se añaden endpoints ni parámetros. Provider, modelo, key, publisher, base
+URL, duración, resolución, polling, coste máximo y opt-in facturable son
+configuración global privada. La metadata listable puede incluir remote
+job/generation ID, estado terminal, intentos, coste decimal, prompt hash y
+capability hash; nunca URL pública/signed/polling/content, Authorization, key,
+response body, prompt completo, imagen, MP4 o base64.

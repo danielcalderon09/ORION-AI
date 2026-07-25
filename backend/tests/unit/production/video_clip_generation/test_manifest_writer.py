@@ -68,9 +68,7 @@ async def test_local_manifest_rejects_corruption_lock_and_excessive_size(
         second_root,
         max_manifest_bytes=200_000,
     )
-    second_target = second_root.joinpath(
-        *video_clip_manifest_relative_path(context).split("/")
-    )
+    second_target = second_root.joinpath(*video_clip_manifest_relative_path(context).split("/"))
     second_target.parent.mkdir(parents=True)
     lock = second_target.with_name(f".{second_target.name}.lock")
     lock.write_bytes(b"locked")
@@ -133,8 +131,6 @@ async def test_local_manifest_checkpoint_uses_atomic_replace_and_fsync(
 
 def test_manifest_path_rejects_noncontractual_stage_workspace() -> None:
     _, context = command_context()
-    unsafe = context.model_copy(
-        update={"workspace_relative_path": "production/not-contractual"}
-    )
+    unsafe = context.model_copy(update={"workspace_relative_path": "production/not-contractual"})
     with pytest.raises(VideoClipManifestConflictException):
         video_clip_manifest_relative_path(unsafe)

@@ -195,9 +195,5 @@ def test_configuration_is_closed(overrides) -> None:
 
 def test_configuration_fingerprint_is_stable_and_sensitive() -> None:
     first = VideoClipGenerationConfiguration(duration_seconds=1)
-    assert first.fingerprint() == VideoClipGenerationConfiguration(
-        duration_seconds=1
-    ).fingerprint()
-    assert first.fingerprint() != VideoClipGenerationConfiguration(
-        duration_seconds=2
-    ).fingerprint()
+    assert first.fingerprint() == VideoClipGenerationConfiguration(duration_seconds=1).fingerprint()
+    assert first.fingerprint() != VideoClipGenerationConfiguration(duration_seconds=2).fingerprint()

@@ -99,4 +99,10 @@ Fase 5F.1 consume ahora este manifest y sus imágenes verificadas para crear cli
 Image Acquisition conserva sus contratos públicos y allowlists sin cambios. Consulta
 `PRODUCTION_VIDEO_CLIP_GENERATION.md`.
 
-La siguiente fase recomendada es Fase 5F.2 — Real Video Generation Provider.
+La integración OpenRouter de Fase 5F.2 queda desactivada hasta disponer de un publisher real.
+# Integración posterior de Fase 5F.2
+
+OpenRouter video consume exclusivamente la imagen verificada por este manifest,
+pero no expone el BinaryAssetStore. Un puerto separado exige publicación HTTPS
+segura; su implementación productiva permanece desactivada. La siguiente fase
+es Fase 5F.3 — Secure Public Frame Publishing and Controlled Live Validation.

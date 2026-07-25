@@ -103,9 +103,7 @@ class DurableImageAcquisitionManifestReader:
                 artifact_id=entry.binary_artifact_id,
             )
             if artifact is None:
-                raise SourceImageMissingException(
-                    "referenced SOURCE_IMAGE artifact is missing"
-                )
+                raise SourceImageMissingException("referenced SOURCE_IMAGE artifact is missing")
             try:
                 resolved = await self._binary_reader.resolve(
                     job_id=context.job_id,
@@ -153,9 +151,7 @@ class DurableImageAcquisitionManifestReader:
                 != manifest.source_visual_asset_plan_sha256
                 or str(binary.metadata.source_visual_asset_plan_artifact_id)
                 != str(manifest.source_visual_asset_plan_artifact_id)
-                or binary.metadata.attributes.get(
-                    "source_visual_asset_plan_sha256"
-                )
+                or binary.metadata.attributes.get("source_visual_asset_plan_sha256")
                 != manifest.source_visual_asset_plan_sha256
             ):
                 raise SourceImageProvenanceException(
@@ -212,10 +208,7 @@ class DurableImageAcquisitionManifestReader:
             raise ImageAcquisitionManifestJobException(
                 "image acquisition manifest belongs to another job"
             )
-        if (
-            selected.artifact_type
-            is not ArtifactType.PRODUCTION_IMAGE_ACQUISITION_MANIFEST
-        ):
+        if selected.artifact_type is not ArtifactType.PRODUCTION_IMAGE_ACQUISITION_MANIFEST:
             raise ImageAcquisitionManifestTypeException(
                 "input artifact is not an image acquisition manifest"
             )
@@ -255,8 +248,7 @@ class DurableImageAcquisitionManifestReader:
             schema_version = payload.get("schema_version")
             if (
                 schema_version is not None
-                and schema_version
-                not in SUPPORTED_IMAGE_ACQUISITION_MANIFEST_VERSIONS
+                and schema_version not in SUPPORTED_IMAGE_ACQUISITION_MANIFEST_VERSIONS
             ):
                 raise ImageAcquisitionManifestVersionException(
                     "image acquisition manifest version is unsupported"
@@ -270,8 +262,7 @@ class DurableImageAcquisitionManifestReader:
                     )
                 if isinstance(entries, list) and any(
                     isinstance(entry, dict)
-                    and entry.get("status")
-                    != ImageAcquisitionEntryStatus.STORED.value
+                    and entry.get("status") != ImageAcquisitionEntryStatus.STORED.value
                     for entry in entries
                 ):
                     raise ImageAcquisitionManifestIncompleteException(
@@ -295,8 +286,7 @@ class DurableImageAcquisitionManifestReader:
                 "image acquisition manifest version is unsupported"
             )
         if manifest.status is not ImageAcquisitionManifestStatus.COMPLETED or any(
-            entry.status is not ImageAcquisitionEntryStatus.STORED
-            for entry in manifest.entries
+            entry.status is not ImageAcquisitionEntryStatus.STORED for entry in manifest.entries
         ):
             raise ImageAcquisitionManifestIncompleteException(
                 "image acquisition manifest is not completed"
@@ -309,11 +299,7 @@ class DurableImageAcquisitionManifestReader:
         context: StageContext,
     ) -> ImageManifestArtifactCandidate:
         by_id = {item.artifact_id: item for item in candidates}
-        preferred = tuple(
-            by_id[item]
-            for item in context.input_artifact_ids
-            if item in by_id
-        )
+        preferred = tuple(by_id[item] for item in context.input_artifact_ids if item in by_id)
         if len(preferred) > 1:
             raise ImageAcquisitionManifestAmbiguousException(
                 "multiple image acquisition manifests were supplied"
@@ -326,8 +312,7 @@ class DurableImageAcquisitionManifestReader:
         input_manifests = tuple(
             artifact
             for artifact in input_artifacts.values()
-            if artifact.artifact_type
-            is ArtifactType.PRODUCTION_IMAGE_ACQUISITION_MANIFEST
+            if artifact.artifact_type is ArtifactType.PRODUCTION_IMAGE_ACQUISITION_MANIFEST
         )
         if any(artifact.job_id != context.job_id for artifact in input_manifests):
             raise ImageAcquisitionManifestJobException(
@@ -428,9 +413,7 @@ def _attempt(path: str) -> int:
 
 
 def _safe_metadata(value: dict[str, Any]) -> dict[str, Any]:
-    filtered = {
-        key: value[key] for key in sorted(value) if key in _SOURCE_METADATA_ALLOWLIST
-    }
+    filtered = {key: value[key] for key in sorted(value) if key in _SOURCE_METADATA_ALLOWLIST}
     result = validate_safe_json(filtered, path="source_image_manifest.metadata")
     if not isinstance(result, dict):
         raise ImageAcquisitionManifestSchemaException(

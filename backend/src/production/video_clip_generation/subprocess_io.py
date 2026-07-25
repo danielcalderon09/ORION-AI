@@ -60,6 +60,4 @@ async def _read_limited(
             return bytes(content)
         content.extend(chunk)
         if len(content) > maximum:
-            raise SubprocessOutputLimitError(
-                "media subprocess output exceeded its safe limit"
-            )
+            raise SubprocessOutputLimitError("media subprocess output exceeded its safe limit")

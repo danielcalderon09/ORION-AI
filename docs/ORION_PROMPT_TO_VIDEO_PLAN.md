@@ -1,15 +1,19 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
-## Estado posterior a Fase 5F.1
+## Estado posterior a Fase 5F.2
 
 GENERATING_VIDEO_CLIPS sigue a ACQUIRING_ASSETS. Consume únicamente el manifest durable y crea un
 MP4 H.264 sin audio por imagen mediante un provider simulado, determinista, offline y gratuito.
 Clips, sidecars y manifest soportan checkpoints, recovery, idempotencia, `uncertain`,
 reconciliación read-only y cancelación segura de ffmpeg.
 
-Todavía no existen provider real, video generativo, text-to-video, audio, TTS, música, SFX,
+OpenRouter dispone ahora de un adaptador asíncrono opt-in con capabilities, publicación de frame
+mediante puerto, gate de coste, submit único, remote jobs durables, polling y descarga segura.
+Permanece inejecutable en producción porque el publisher real no forma parte de esta fase.
+
+Todavía no existen publisher real, live generation, text-to-video, audio, TTS, música, SFX,
 subtítulos, timeline, render final, DaVinci ni frontend de producción. La siguiente fase
-recomendada es **Fase 5F.2 — Real Video Generation Provider**.
+recomendada es **Fase 5F.3 — Secure Public Frame Publishing and Controlled Live Validation**.
 
 ## Estado posterior a Fase 5E.2
 
@@ -563,3 +567,13 @@ Cada fase queda detrás de bandera y en módulos nuevos. El rollback operativo c
 4. Proveedores futuros de planificación, voz, recursos y música; ninguno se integra en esta ejecución.
 5. Tolerancias exactas de duración/FPS por preset de render.
 6. Estrategia de autenticación si FastAPI deja de escuchar solo en loopback.
+# Estado posterior a Fase 5F.2
+
+El adaptador OpenRouter asíncrono dispone de discovery de capacidades, cost
+gate, publicación por puerto, submit único, remote job/polling durable, descarga
+segura y recovery sin doble cobro. Está desactivado por default y no ejecuta
+live generation porque todavía no existe publisher HTTPS real. No hay audio,
+webhooks, timeline, DaVinci, render ni frontend.
+
+La próxima fase recomendada es Fase 5F.3 — Secure Public Frame Publishing and
+Controlled Live Validation.
