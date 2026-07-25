@@ -129,6 +129,12 @@ class Settings(BaseSettings):
     ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD: Decimal = Decimal("1.00")
     ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS: bool = False
     ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER: Literal["disabled"] = "disabled"
+    ORION_ASSET_PUBLISHING_PUBLISHER: Literal["null", "filesystem"] = "null"
+    ORION_ASSET_PUBLISHING_PUBLIC_ROOT: Path | None = None
+    ORION_ASSET_PUBLISHING_PUBLIC_BASE_URL: str = "https://assets.orion.test"
+    ORION_ASSET_PUBLISHING_LIFETIME_SECONDS: int = 900
+    ORION_ASSET_PUBLISHING_MAX_ASSET_BYTES: int = 250_000_000
+    ORION_ASSET_PUBLISHING_MAX_MANIFEST_BYTES: int = 4_000_000
     ORION_OPENROUTER_HTTP_REFERER: str | None = None
     ORION_OPENROUTER_APP_TITLE: str | None = None
 
@@ -183,6 +189,13 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @field_validator("ORION_ASSET_PUBLISHING_PUBLIC_ROOT", mode="before")
+    @classmethod
+    def empty_asset_public_root_is_unset(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator(
         "ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD",
         mode="before",
@@ -224,6 +237,7 @@ class Settings(BaseSettings):
             "ORION_VIDEO_CLIP_GENERATION_OPENROUTER_POLL_INTERVAL_SECONDS": self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_POLL_INTERVAL_SECONDS,
             "ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_SECONDS": self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_SECONDS,
             "ORION_VIDEO_CLIP_GENERATION_OPENROUTER_CAPABILITY_CACHE_TTL_SECONDS": self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_CAPABILITY_CACHE_TTL_SECONDS,
+            "ORION_ASSET_PUBLISHING_LIFETIME_SECONDS": self.ORION_ASSET_PUBLISHING_LIFETIME_SECONDS,
         }
         for name, value in positive.items():
             if value <= 0:
@@ -277,8 +291,14 @@ class Settings(BaseSettings):
             "ORION_VIDEO_CLIP_GENERATION_MAX_MANIFEST_BYTES": self.ORION_VIDEO_CLIP_GENERATION_MAX_MANIFEST_BYTES,
             "ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_RESPONSE_BYTES": self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_RESPONSE_BYTES,
             "ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_VIDEO_BYTES": self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_VIDEO_BYTES,
+            "ORION_ASSET_PUBLISHING_MAX_ASSET_BYTES": self.ORION_ASSET_PUBLISHING_MAX_ASSET_BYTES,
+            "ORION_ASSET_PUBLISHING_MAX_MANIFEST_BYTES": self.ORION_ASSET_PUBLISHING_MAX_MANIFEST_BYTES,
         }.items():
-            if not 1 <= value <= 50_000_000:
+            maximum = {
+                "ORION_ASSET_PUBLISHING_MAX_ASSET_BYTES": 250_000_000,
+                "ORION_ASSET_PUBLISHING_MAX_MANIFEST_BYTES": 16_000_000,
+            }.get(name, 50_000_000)
+            if not 1 <= value <= maximum:
                 raise ValueError(f"{name} is outside safe limits")
         if not 1 <= self.ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES <= 100_000_000:
             raise ValueError("ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES is outside safe limits")
@@ -289,6 +309,8 @@ class Settings(BaseSettings):
             raise ValueError("video clip duration cannot exceed the configured maximum")
         if self.ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES > 250_000_000:
             raise ValueError("ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES is outside safe limits")
+        if not 30 <= self.ORION_ASSET_PUBLISHING_LIFETIME_SECONDS <= 86_400:
+            raise ValueError("asset publication lifetime is outside safe limits")
         if not 1 <= self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_ATTEMPTS <= 1000:
             raise ValueError("OpenRouter video poll attempts are outside safe limits")
         if self.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD <= 0:

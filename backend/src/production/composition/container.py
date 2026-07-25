@@ -22,6 +22,27 @@ from backend.src.production.application.services.production_jobs import (
     ListProductionJobsService,
     RetryProductionJobService,
 )
+from backend.src.production.asset_publishing.cleanup import (
+    PublishedAssetCleanupService,
+)
+from backend.src.production.asset_publishing.configuration import (
+    AssetPublishingConfiguration,
+)
+from backend.src.production.asset_publishing.manifest_store import (
+    LocalPublishedAssetManifestStore,
+)
+from backend.src.production.asset_publishing.ports import AssetPublisher
+from backend.src.production.asset_publishing.publishers import (
+    FilesystemPublisher,
+    NullPublisher,
+)
+from backend.src.production.asset_publishing.reconciliation import (
+    PublishedAssetReconciler,
+)
+from backend.src.production.asset_publishing.service import AssetPublishingService
+from backend.src.production.asset_publishing.sources import (
+    ManifestPublishableAssetCollector,
+)
 from backend.src.production.binary_assets.configuration import (
     AssetStorageConfiguration,
 )
@@ -261,6 +282,11 @@ class ProductionContainer:
     video_clip_binary_store: VideoClipBinaryStore
     video_clip_integrity_validator: VideoClipIntegrityValidator
     video_clip_reconciler: FilesystemVideoClipReconciler
+    asset_publisher: AssetPublisher
+    asset_publishing_service: AssetPublishingService
+    asset_publishing_cleanup: PublishedAssetCleanupService
+    asset_publishing_reconciler: PublishedAssetReconciler
+    publishable_asset_collector: ManifestPublishableAssetCollector
     planning_artifact_reconciler: PlanningArtifactReconciler
     async_resources: tuple[AsyncClosable, ...]
 
@@ -441,6 +467,51 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         max_video_bytes=settings.ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES,
         clock=clock,
     )
+    asset_publishing_configuration = AssetPublishingConfiguration(
+        publisher=settings.ORION_ASSET_PUBLISHING_PUBLISHER,
+        public_root=(
+            settings.ORION_ASSET_PUBLISHING_PUBLIC_ROOT
+            or settings.PROJECTS_DIR / ".published-assets"
+        ),
+        public_base_url=settings.ORION_ASSET_PUBLISHING_PUBLIC_BASE_URL,
+        lifetime_seconds=settings.ORION_ASSET_PUBLISHING_LIFETIME_SECONDS,
+        max_asset_bytes=settings.ORION_ASSET_PUBLISHING_MAX_ASSET_BYTES,
+        max_manifest_bytes=settings.ORION_ASSET_PUBLISHING_MAX_MANIFEST_BYTES,
+    )
+    asset_publisher: AssetPublisher
+    if asset_publishing_configuration.publisher == "filesystem":
+        asset_publisher = FilesystemPublisher(
+            public_root=asset_publishing_configuration.public_root,
+            public_base_url=asset_publishing_configuration.public_base_url,
+            max_asset_bytes=asset_publishing_configuration.max_asset_bytes,
+            clock=clock,
+        )
+    else:
+        asset_publisher = NullPublisher()
+    published_asset_manifests = LocalPublishedAssetManifestStore(
+        settings.PROJECTS_DIR,
+        max_bytes=asset_publishing_configuration.max_manifest_bytes,
+    )
+    asset_publishing_service = AssetPublishingService(
+        publisher=asset_publisher,
+        manifest_store=published_asset_manifests,
+        lifetime_seconds=asset_publishing_configuration.lifetime_seconds,
+        clock=clock,
+    )
+    asset_publishing_cleanup = PublishedAssetCleanupService(
+        publisher=asset_publisher,
+        manifests=published_asset_manifests,
+        clock=clock,
+    )
+    asset_publishing_reconciler = PublishedAssetReconciler(
+        manifests=published_asset_manifests,
+        publisher=asset_publisher,
+        clock=clock,
+    )
+    publishable_asset_collector = ManifestPublishableAssetCollector(
+        binary_assets=filesystem_binary_asset_store,
+        video_clips=filesystem_video_clip_store,
+    )
     video_clip_generation_provider = _build_video_clip_generation_provider(settings)
     image_acquisition_manifest_reader = DurableImageAcquisitionManifestReader(
         workspace_root=settings.PROJECTS_DIR,
@@ -592,6 +663,11 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         video_clip_binary_store=filesystem_video_clip_store,
         video_clip_integrity_validator=video_clip_integrity_validator,
         video_clip_reconciler=video_clip_reconciler,
+        asset_publisher=asset_publisher,
+        asset_publishing_service=asset_publishing_service,
+        asset_publishing_cleanup=asset_publishing_cleanup,
+        asset_publishing_reconciler=asset_publishing_reconciler,
+        publishable_asset_collector=publishable_asset_collector,
         planning_artifact_reconciler=planning_artifact_reconciler,
         async_resources=(
             video_clip_generation_provider,
@@ -600,6 +676,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             scene_planning_provider,
             scripting_provider,
             planning_provider,
+            asset_publisher,
         ),
     )
 

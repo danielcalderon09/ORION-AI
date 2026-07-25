@@ -105,6 +105,12 @@ segura, pero permanece no ejecutable sin un publisher HTTPS real (no incluido). 
 [`docs/PRODUCTION_VIDEO_CLIP_GENERATION.md`](docs/PRODUCTION_VIDEO_CLIP_GENERATION.md) y
 [`docs/PRODUCTION_OPENROUTER_VIDEO_PROVIDER.md`](docs/PRODUCTION_OPENROUTER_VIDEO_PROVIDER.md).
 
+La infraestructura de publicacion segura es un bounded context independiente y desactivado por
+defecto. Publica temporalmente solo bytes ya verificados, con manifiesto durable, expiracion,
+recovery, cleanup y reconciliacion de solo lectura. Incluye adaptadores `null` y filesystem de
+desarrollo, pero ningun cloud publisher ni servidor publico. Consulta
+[`docs/PRODUCTION_ASSET_PUBLISHING.md`](docs/PRODUCTION_ASSET_PUBLISHING.md).
+
 ### Frontend
 ```bash
 cd frontend
