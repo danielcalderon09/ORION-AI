@@ -87,7 +87,11 @@ async def test_pipeline_persists_four_linked_json_artifacts_without_network(
             base_url="https://openrouter.ai/api/v1",
         )
         kwargs["max_transport_attempts"] = 1
-        return OpenRouterVisualAssetPlanningProvider(**kwargs, client=client)
+        return OpenRouterVisualAssetPlanningProvider(
+            **kwargs,
+            client=client,
+            owns_client=True,
+        )
 
     monkeypatch.setattr(
         "backend.src.production.composition.container."

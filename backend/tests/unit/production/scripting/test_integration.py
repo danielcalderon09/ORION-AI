@@ -174,16 +174,18 @@ async def test_fake_real_provider_combinations_complete_without_network(
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(
                     200,
-                    json=fake_openrouter_body(
-                        fake_plan_payload(), model="openai/fake-planning"
-                    ),
+                    json=fake_openrouter_body(fake_plan_payload(), model="openai/fake-planning"),
                     request=request,
                 )
             ),
             base_url="https://openrouter.ai/api/v1",
         )
         kwargs["max_transport_attempts"] = 1
-        return OpenRouterPlanningProvider(**kwargs, client=client)
+        return OpenRouterPlanningProvider(
+            **kwargs,
+            client=client,
+            owns_client=True,
+        )
 
     def scripting_factory(**kwargs):
         def respond(request):
@@ -200,7 +202,11 @@ async def test_fake_real_provider_combinations_complete_without_network(
             base_url="https://openrouter.ai/api/v1",
         )
         kwargs["max_transport_attempts"] = 1
-        return OpenRouterScriptingProvider(**kwargs, client=client)
+        return OpenRouterScriptingProvider(
+            **kwargs,
+            client=client,
+            owns_client=True,
+        )
 
     monkeypatch.setattr(
         "backend.src.production.composition.container.load_openrouter_planning_provider",

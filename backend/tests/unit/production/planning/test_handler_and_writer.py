@@ -105,6 +105,25 @@ async def test_local_writer_creates_real_file_beneath_workspace(tmp_path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_local_writer_is_idempotent_and_never_overwrites_drift(tmp_path) -> None:
+    command, context = command_and_context()
+    production_handler = handler(SimulatedPlanningProvider(), LocalPlanningArtifactWriter(tmp_path))
+    first = await production_handler.execute(command, context)
+    assert first.result.outcome is StageOutcome.SUCCEEDED
+    target = tmp_path.joinpath(*first.artifacts[0].relative_path.split("/"))
+    expected = target.read_bytes()
+
+    repeated = await production_handler.execute(command, context)
+    assert repeated.result.outcome is StageOutcome.SUCCEEDED
+    assert target.read_bytes() == expected
+
+    target.write_bytes(b"{}")
+    drifted = await production_handler.execute(command, context)
+    assert drifted.result.outcome is StageOutcome.FAILED_PERMANENT
+    assert target.read_bytes() == b"{}"
+
+
+@pytest.mark.asyncio
 async def test_local_writer_rejects_symlinked_directory_outside_workspace(tmp_path) -> None:
     outside = tmp_path.parent / f"{tmp_path.name}-writer-outside"
     outside.mkdir()
@@ -166,9 +185,9 @@ async def test_handler_maps_provider_errors_without_partial_artifact(error, outc
 @pytest.mark.asyncio
 async def test_handler_rejects_unapproved_job_configuration() -> None:
     command, context = command_and_context({"provider": "override"})
-    output = await handler(
-        SimulatedPlanningProvider(), InMemoryPlanningArtifactWriter()
-    ).execute(command, context)
+    output = await handler(SimulatedPlanningProvider(), InMemoryPlanningArtifactWriter()).execute(
+        command, context
+    )
     assert output.result.outcome is StageOutcome.NEEDS_USER_ACTION
     assert output.result.error_code == "planning_configuration_invalid"
 
@@ -183,8 +202,8 @@ async def test_handler_preserves_command_context_and_cancelled_error() -> None:
     command_snapshot = command.model_dump_json()
     context_snapshot = context.model_dump_json()
     with pytest.raises(asyncio.CancelledError):
-        await handler(
-            CancellingProvider(), InMemoryPlanningArtifactWriter()
-        ).execute(command, context)
+        await handler(CancellingProvider(), InMemoryPlanningArtifactWriter()).execute(
+            command, context
+        )
     assert command.model_dump_json() == command_snapshot
     assert context.model_dump_json() == context_snapshot

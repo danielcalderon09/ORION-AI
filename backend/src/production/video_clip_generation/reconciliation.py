@@ -104,7 +104,7 @@ class FilesystemVideoClipReconciler:
             relative = self._relative(path)
             try:
                 self._confinement.reject_unsafe_file(path)
-                content = path.read_bytes()
+                content = _read_bounded(path, self._maximum)
                 if len(content) > self._maximum:
                     raise ValueError("manifest exceeds safe limit")
                 manifest = deserialize_video_clip_manifest(content)
@@ -136,9 +136,7 @@ class FilesystemVideoClipReconciler:
                 seen: set[str] = set()
                 for entry in manifest.entries:
                     parts = PurePosixPath(relative).parts
-                    manifest_entries[
-                        (parts[1], int(parts[3][8:]), entry.visual_asset_id)
-                    ] = entry
+                    manifest_entries[(parts[1], int(parts[3][8:]), entry.visual_asset_id)] = entry
                     if entry.visual_asset_id in seen:
                         issues.append(
                             self._issue(
@@ -206,7 +204,7 @@ class FilesystemVideoClipReconciler:
             relative = self._relative(path)
             try:
                 self._confinement.reject_unsafe_file(path)
-                content = path.read_bytes()
+                content = _read_bounded(path, self._maximum)
                 if (
                     not content
                     or len(content) > self._maximum
@@ -485,6 +483,11 @@ class _RemoteIssueError(Exception):
         super().__init__(kind.value)
 
 
+def _read_bounded(path: Path, maximum: int) -> bytes:
+    with path.open("rb") as stream:
+        return stream.read(maximum + 1)
+
+
 def _contains_sensitive_remote_metadata(content: bytes) -> bool:
     lowered = content.lower()
     return any(
@@ -506,9 +509,7 @@ def _contains_sensitive_remote_metadata(content: bytes) -> bool:
     )
 
 
-def _remote_matches_entry(
-    remote: RemoteVideoJobRecord, entry: ProductionVideoClipEntry
-) -> bool:
+def _remote_matches_entry(remote: RemoteVideoJobRecord, entry: ProductionVideoClipEntry) -> bool:
     if entry.remote_provider is None:
         return False
     return (
@@ -530,8 +531,7 @@ def _remote_matches_entry(
         and entry.source_publication_id == remote.publication_id
         and entry.source_publication_expires_at == remote.publication_expires_at
         and entry.publication_provider == remote.publication_provider
-        and entry.provider_request_fingerprint
-        == remote.provider_request_fingerprint
+        and entry.provider_request_fingerprint == remote.provider_request_fingerprint
         and entry.capability_snapshot_hash == remote.capability_snapshot_hash
         and (entry.requested_model or entry.reported_model) == remote.model
     )

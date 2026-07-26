@@ -2,10 +2,10 @@
 
 import asyncio
 from collections.abc import Collection
-from typing import Protocol
 
 from backend.src.production.application.commands import StageCommand
 from backend.src.production.application.orchestration import OrchestrationDecision
+from backend.src.production.application.ports.execution import DecisionPersister
 from backend.src.production.application.results import StageResult
 from backend.src.production.domain.artifact import Artifact
 from backend.src.production.domain.production_job import ProductionJob
@@ -14,17 +14,7 @@ from backend.src.production.infrastructure.persistence.transactions import (
     PersistedDecision,
 )
 
-
-class RuntimeDecisionPersister(Protocol):
-    async def persist_decision(
-        self,
-        *,
-        previous_job: ProductionJob,
-        decision: OrchestrationDecision,
-        processed_command: StageCommand | None = None,
-        processed_result: StageResult | None = None,
-        artifacts: Collection[Artifact] = (),
-    ) -> PersistedDecision: ...
+RuntimeDecisionPersister = DecisionPersister
 
 
 class ImmediateRuntimeDecisionPersister:

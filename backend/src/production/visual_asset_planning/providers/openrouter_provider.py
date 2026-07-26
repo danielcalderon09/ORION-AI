@@ -56,6 +56,7 @@ class OpenRouterVisualAssetPlanningProvider:
         http_referer: str | None = None,
         app_title: str | None = None,
         client: httpx.AsyncClient | None = None,
+        owns_client: bool = False,
         sleeper: Sleeper = asyncio.sleep,
         monotonic_clock: Callable[[], float] = monotonic,
     ) -> None:
@@ -85,6 +86,7 @@ class OpenRouterVisualAssetPlanningProvider:
                 http_referer=http_referer,
                 app_title=app_title,
                 client=client,
+                owns_client=owns_client,
                 sleeper=sleeper,
             )
         except ValueError as exc:

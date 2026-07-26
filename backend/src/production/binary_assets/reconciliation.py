@@ -91,16 +91,18 @@ class FilesystemBinaryAssetReconciler:
             assert binary_path is not None and metadata_path is not None
             try:
                 self._confinement.reject_unsafe_file(metadata_path)
-                content = await asyncio.to_thread(metadata_path.read_bytes)
+                content = await asyncio.to_thread(
+                    _read_bounded,
+                    metadata_path,
+                    64_000,
+                )
                 if len(content) > 64_000:
                     raise ValueError("metadata exceeds safe limit")
                 asset = deserialize_binary_asset_metadata(content)
                 expected_binary = self._confinement.resolve(asset.storage_path)
                 if expected_binary != binary_path:
                     raise ValueError("metadata path does not match binary file")
-                await self._store.read(
-                    reference=ProductionBinaryAssetReference.from_asset(asset)
-                )
+                await self._store.read(reference=ProductionBinaryAssetReference.from_asset(asset))
                 valid += 1
             except (
                 BinaryAssetError,
@@ -185,6 +187,11 @@ def _pair_candidates(
     return pairs
 
 
+def _read_bounded(path: Path, maximum: int) -> bytes:
+    with path.open("rb") as stream:
+        return stream.read(maximum + 1)
+
+
 def _classify_issue(exc: Exception) -> BinaryAssetReconciliationIssueKind:
     from backend.src.production.binary_assets.exceptions import (
         BinaryAssetCorruptError,
@@ -214,21 +221,15 @@ def _classify_issue(exc: Exception) -> BinaryAssetReconciliationIssueKind:
 
 def _safe_detail(kind: BinaryAssetReconciliationIssueKind) -> str:
     return {
-        BinaryAssetReconciliationIssueKind.INVALID_METADATA: (
-            "durable binary metadata is invalid"
-        ),
-        BinaryAssetReconciliationIssueKind.HASH_MISMATCH: (
-            "binary checksum differs from metadata"
-        ),
+        BinaryAssetReconciliationIssueKind.INVALID_METADATA: ("durable binary metadata is invalid"),
+        BinaryAssetReconciliationIssueKind.HASH_MISMATCH: ("binary checksum differs from metadata"),
         BinaryAssetReconciliationIssueKind.SIZE_MISMATCH: (
             "binary size differs from metadata or exceeds policy"
         ),
         BinaryAssetReconciliationIssueKind.MIME_INVALID: (
             "binary MIME or extension differs from policy"
         ),
-        BinaryAssetReconciliationIssueKind.CORRUPT_FILE: (
-            "binary image cannot be decoded safely"
-        ),
+        BinaryAssetReconciliationIssueKind.CORRUPT_FILE: ("binary image cannot be decoded safely"),
         BinaryAssetReconciliationIssueKind.UNSAFE_LINK: (
             "binary path contains a link, junction, or hard link"
         ),

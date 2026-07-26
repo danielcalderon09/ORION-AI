@@ -1,5 +1,18 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 5I
+
+La auditoria global de arquitectura confirma una base offline y no facturable:
+todos los providers siguen en `simulated`, el publisher sigue en `null`, OpenRouter
+y las solicitudes facturables siguen deshabilitados por defecto. Se corrigieron
+dependencias inversas, limites de lectura, ownership de clientes HTTP,
+idempotencia de artefactos y contratos de remote jobs. El informe verificable esta
+en `docs/PRODUCTION_ARCHITECTURE_AUDIT.md`.
+
+No se agrego una capacidad creativa ni se hizo una solicitud de red. La siguiente
+fase recomendada puede iniciar contratos de speech/audio con simuladores offline,
+manteniendo DaVinci y frontend como fases separadas.
+
 ## Estado posterior a Fase 5F.2
 
 GENERATING_VIDEO_CLIPS sigue a ACQUIRING_ASSETS. Consume únicamente el manifest durable y crea un

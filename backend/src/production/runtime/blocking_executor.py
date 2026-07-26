@@ -2,19 +2,14 @@
 
 import asyncio
 from collections.abc import Callable
-from typing import ParamSpec, Protocol, TypeVar
+from typing import ParamSpec, TypeVar
+
+from backend.src.production.application.ports.execution import BlockingExecutor
 
 P = ParamSpec("P")
 R = TypeVar("R")
 
-
-class RuntimeBlockingExecutor(Protocol):
-    async def run(
-        self,
-        operation: Callable[P, R],
-        *args: P.args,
-        **kwargs: P.kwargs,
-    ) -> R: ...
+RuntimeBlockingExecutor = BlockingExecutor
 
 
 class ThreadedRuntimeBlockingExecutor:

@@ -36,6 +36,7 @@ def provider(handler, *, attempts=1, sleeper=asyncio.sleep, **overrides):
         "model": "anthropic/scene-model",
         "prompt_builder": ScenePlanningPromptBuilder(max_script_bytes=100_000),
         "client": client,
+        "owns_client": True,
         "max_transport_attempts": attempts,
         "sleeper": sleeper,
         "monotonic_clock": lambda: 1.0,
@@ -58,9 +59,7 @@ async def test_openrouter_request_schema_telemetry_and_model_mismatch(
             json={
                 "id": "request-scene-safe",
                 "model": "google/reported-scene-model",
-                "choices": [
-                    {"message": {"content": json.dumps(plan)}, "finish_reason": "stop"}
-                ],
+                "choices": [{"message": {"content": json.dumps(plan)}, "finish_reason": "stop"}],
                 "usage": {
                     "prompt_tokens": 10,
                     "completion_tokens": 20,
@@ -125,9 +124,7 @@ async def test_real_provider_name_and_missing_optional_telemetry(production_scri
         (400, ScenePlanningProviderResponseException),
     ],
 )
-async def test_openrouter_maps_safe_http_errors(
-    production_script, status, error_type
-) -> None:
+async def test_openrouter_maps_safe_http_errors(production_script, status, error_type) -> None:
     real, _ = provider(lambda request: httpx.Response(status, request=request))
     with pytest.raises(error_type) as captured:
         await real.generate_scene_plan(production_script)

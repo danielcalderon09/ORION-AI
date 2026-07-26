@@ -97,6 +97,13 @@ class ProductionVideoClipAsset(ContractModel):
     storage_path: str
     metadata: VideoClipMetadata
 
+    @field_validator("created_at")
+    @classmethod
+    def aware_created_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("video clip creation time must be timezone-aware")
+        return value
+
     @field_validator("storage_path")
     @classmethod
     def safe_path(cls, value: str) -> str:
@@ -199,6 +206,19 @@ class ProductionVideoClipEntry(ContractModel):
     capability_snapshot_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     remote_url_metadata: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator(
+        "remote_submitted_at",
+        "remote_last_polled_at",
+        "remote_terminal_at",
+        "pricing_snapshot_at",
+        "source_publication_expires_at",
+    )
+    @classmethod
+    def aware_remote_timestamps(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("video clip remote timestamps must be timezone-aware")
+        return value
 
     @field_validator("metadata", "remote_url_metadata")
     @classmethod

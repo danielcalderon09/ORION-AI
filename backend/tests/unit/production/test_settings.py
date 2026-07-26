@@ -63,3 +63,31 @@ def test_openrouter_optional_headers_are_validated(tmp_path, name, value) -> Non
             TEMP_DIR=tmp_path / "temp",
             **{name: value},
         )
+
+
+def test_production_defaults_are_offline_and_non_billable(tmp_path) -> None:
+    from backend.src.infrastructure.config.settings import Settings
+
+    settings = Settings(
+        _env_file=None,
+        ORION_HOME=tmp_path / "home",
+        MODELS_DIR=tmp_path / "models",
+        PROJECTS_DIR=tmp_path / "projects",
+        TEMP_DIR=tmp_path / "temp",
+    )
+
+    assert settings.ORION_PLANNING_PROVIDER == "simulated"
+    assert settings.ORION_SCRIPTING_PROVIDER == "simulated"
+    assert settings.ORION_SCENE_PLANNING_PROVIDER == "simulated"
+    assert settings.ORION_VISUAL_ASSET_PLANNING_PROVIDER == "simulated"
+    assert settings.ORION_IMAGE_ACQUISITION_PROVIDER == "simulated"
+    assert settings.ORION_VIDEO_CLIP_GENERATION_PROVIDER == "simulated"
+    assert settings.ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS is False
+    assert settings.ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER == "disabled"
+    assert settings.ORION_ASSET_PUBLISHING_PUBLISHER == "null"
+    assert settings.ORION_PLANNING_API_KEY is None
+    assert settings.ORION_SCRIPTING_API_KEY is None
+    assert settings.ORION_SCENE_PLANNING_API_KEY is None
+    assert settings.ORION_VISUAL_ASSET_PLANNING_API_KEY is None
+    assert settings.ORION_IMAGE_ACQUISITION_API_KEY is None
+    assert settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_API_KEY is None

@@ -148,7 +148,7 @@ class LocalVisualAssetPlanningArtifactWriter:
                 raise VisualAssetPlanningValidationException(
                     "visual asset plan target cannot be a symbolic link"
                 )
-            if target.read_bytes() == content:
+            if _read_bounded(target, len(content)) == content:
                 return
             raise VisualAssetPlanningValidationException(
                 "visual asset plan path already has incompatible content"
@@ -257,6 +257,11 @@ def _reject_symlink_components(root: Path, target: Path) -> None:
             raise VisualAssetPlanningValidationException(
                 "visual asset plan path contains a symbolic link"
             )
+
+
+def _read_bounded(path: Path, maximum: int) -> bytes:
+    with path.open("rb") as stream:
+        return stream.read(maximum + 1)
 
 
 def _fsync_directory(directory: Path) -> None:

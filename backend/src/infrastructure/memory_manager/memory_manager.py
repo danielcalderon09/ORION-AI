@@ -1,10 +1,9 @@
 """Memory Manager with streaming and automatic resource cleanup."""
 
 import gc
-import weakref
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
-from uuid import UUID
+from typing import Any
 
 import psutil
 
@@ -12,6 +11,7 @@ import psutil
 @dataclass
 class MemoryBudget:
     """Memory limits for a processing session."""
+
     max_ram_mb: int = 4096
     max_vram_mb: int | None = None  # None = no GPU limit
     frame_buffer_max_mb: int = 512
@@ -60,6 +60,7 @@ class StreamingBuffer:
     def _estimate_size(self, obj: Any) -> float:
         try:
             import numpy as np
+
             if isinstance(obj, np.ndarray):
                 return obj.nbytes / (1024 * 1024)
         except ImportError:
@@ -89,13 +90,16 @@ class MemoryManager:
     def get_buffer(self, stage_name: str) -> StreamingBuffer:
         """Get or create a streaming buffer for a stage."""
         if stage_name not in self._stage_buffers:
-            self._stage_buffers[stage_name] = StreamingBuffer(max_size_mb=self.budget.frame_buffer_max_mb)
+            self._stage_buffers[stage_name] = StreamingBuffer(
+                max_size_mb=self.budget.frame_buffer_max_mb
+            )
         return self._stage_buffers[stage_name]
 
     def evict_stage(self, stage_name: str) -> None:
         """Clear buffers for a completed stage."""
-        if stage_name in self._stage_buffers:
-            self._stage_buffers[stage_name].clear()
+        buffer = self._stage_buffers.pop(stage_name, None)
+        if buffer is not None:
+            buffer.clear()
 
     def check_pressure(self) -> dict[str, float]:
         """Check current memory pressure."""
@@ -129,6 +133,7 @@ class MemoryManager:
         """Get GPU VRAM info if available."""
         try:
             import torch
+
             if torch.cuda.is_available():
                 reserved = torch.cuda.memory_reserved() / (1024 * 1024)
                 allocated = torch.cuda.memory_allocated() / (1024 * 1024)
@@ -142,6 +147,7 @@ class MemoryManager:
         gc.collect()
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except ImportError:

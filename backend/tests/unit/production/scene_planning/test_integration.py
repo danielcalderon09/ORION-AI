@@ -47,9 +47,7 @@ async def test_pipeline_persists_three_linked_json_artifacts_without_network(
                     "model": "google/fake-scene-planning",
                     "choices": [
                         {
-                            "message": {
-                                "content": generated.scene_plan.model_dump_json()
-                            },
+                            "message": {"content": generated.scene_plan.model_dump_json()},
                             "finish_reason": "stop",
                         }
                     ],
@@ -67,7 +65,11 @@ async def test_pipeline_persists_three_linked_json_artifacts_without_network(
             base_url="https://openrouter.ai/api/v1",
         )
         kwargs["max_transport_attempts"] = 1
-        return OpenRouterScenePlanningProvider(**kwargs, client=client)
+        return OpenRouterScenePlanningProvider(
+            **kwargs,
+            client=client,
+            owns_client=True,
+        )
 
     monkeypatch.setattr(
         "backend.src.production.composition.container.load_openrouter_scene_planning_provider",
@@ -83,9 +85,7 @@ async def test_pipeline_persists_three_linked_json_artifacts_without_network(
         ORION_PROMPT_VIDEO_ENABLED=True,
         ORION_PRODUCTION_WORKER_ENABLED=False,
         ORION_SCENE_PLANNING_PROVIDER=scene_provider_name,
-        ORION_SCENE_PLANNING_API_KEY=(
-            "fake-only" if scene_provider_name == "openrouter" else None
-        ),
+        ORION_SCENE_PLANNING_API_KEY=("fake-only" if scene_provider_name == "openrouter" else None),
     )
     container = build_production_container(settings)
     ProductionBase.metadata.create_all(container.engine)

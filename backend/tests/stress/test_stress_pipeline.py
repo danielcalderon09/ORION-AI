@@ -24,16 +24,27 @@ class TestStressPipeline:
         for i, (dur, (w, h)) in enumerate([(d, r) for d in durations for r in resolutions]):
             path = batch_dir / f"stress_{i:02d}_{dur}s_{w}x{h}.mp4"
             cmd = [
-                "ffmpeg", "-y",
-                "-f", "lavfi", "-i", f"testsrc2=duration={dur}:size={w}x{h}:rate=2",
-                "-f", "lavfi", "-i", f"sine=frequency=1000:duration={dur}",
-                "-shortest", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
+                "ffmpeg",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                f"testsrc2=duration={dur}:size={w}x{h}:rate=2",
+                "-f",
+                "lavfi",
+                "-i",
+                f"sine=frequency=1000:duration={dur}",
+                "-shortest",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
                 str(path),
             ]
             try:
-                result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=60
-                )
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
             except subprocess.TimeoutExpired as exc:
                 raise RuntimeError(f"stress fixture timed out: {path.name}") from exc
             if result.returncode != 0:
@@ -47,9 +58,18 @@ class TestStressPipeline:
         return videos
 
     @pytest.mark.asyncio
-    async def test_batch_processing_throughput(self, stress_videos):
+    async def test_batch_processing_throughput(
+        self,
+        stress_videos,
+        tmp_path,
+        monkeypatch,
+    ):
         """Process multiple videos and measure throughput."""
         import time
+
+        monkeypatch.setattr(settings, "ORION_HOME", tmp_path / "orion-home")
+        monkeypatch.setattr(settings, "PROJECTS_DIR", tmp_path / "projects")
+        monkeypatch.setattr(settings, "TEMP_DIR", tmp_path / "temp")
 
         from backend.src.agents.attention_agent.application.estimate_attention import (
             AttentionAgent,
@@ -118,6 +138,7 @@ class TestStressPipeline:
         from backend.src.viral_intelligence.viral_score_engine.application.viral_score_agent import (
             ViralScoreEngineAgent,
         )
+
         start_time = time.time()
 
         media = FFmpegMediaAdapter()
@@ -148,7 +169,9 @@ class TestStressPipeline:
             qa_agent=QAAgent(),
             reflection_engine=ReflectionEngineAgent(),
             critic_ai=CriticAIAgent(),
-            candidate_generator=MultiCandidateGeneratorAgent(num_variants=0),  # skip candidates for speed
+            candidate_generator=MultiCandidateGeneratorAgent(
+                num_variants=0
+            ),  # skip candidates for speed
             consensus_engine=ConsensusEngineAgent(),
             creative_memory=FileSystemCreativeMemory(),
             feedback_collector=feedback_collector,
@@ -162,26 +185,32 @@ class TestStressPipeline:
 
         for video_info in stress_videos[:5]:  # Process top 5 for speed
             try:
-                project = VideoProject(name=f"stress_{video_info['path'].stem}", source_path=video_info["path"])
+                project = VideoProject(
+                    name=f"stress_{video_info['path'].stem}", source_path=video_info["path"]
+                )
                 completed = await orchestrator.process_video(project, platform="tiktok")
                 if completed.status.name == "COMPLETED":
                     success_count += 1
                 else:
                     failure_count += 1
-                results.append({
-                    "video": video_info["path"].name,
-                    "status": completed.status.name,
-                    "clips": len(completed.clips),
-                })
+                results.append(
+                    {
+                        "video": video_info["path"].name,
+                        "status": completed.status.name,
+                        "clips": len(completed.clips),
+                    }
+                )
             except Exception as e:
                 failure_count += 1
-                results.append({"video": video_info["path"].name, "status": "FAILED", "error": str(e)})
+                results.append(
+                    {"video": video_info["path"].name, "status": "FAILED", "error": str(e)}
+                )
 
         elapsed = time.time() - start_time
         throughput = len(results) / (elapsed / 3600) if elapsed > 0 else 0
 
         # Assertions
-        assert success_count > 0, "At least some videos must succeed"
+        assert success_count > 0, f"At least some videos must succeed: {results!r}"
         failure_rate = failure_count / max(len(results), 1)
         assert failure_rate < 0.5, f"Failure rate too high: {failure_rate:.0%}"
 
@@ -196,6 +225,7 @@ class TestStressPipeline:
             "results": results,
         }
         import json
+
         report_path = settings.ORION_HOME / "stress_reports" / f"stress_{int(time.time())}.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         with open(report_path, "w") as f:
@@ -216,6 +246,7 @@ class TestStressPipeline:
             buf = mm.get_buffer(f"stage_{i % 5}")
             # Simulate frame buffer
             import numpy as np
+
             dummy_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
             buf._add(i, dummy_frame)
 
@@ -228,12 +259,14 @@ class TestStressPipeline:
         mm.force_gc()
 
         status_after = mm.get_status()
-        assert status_after["ram_percent"] <= status["ram_percent"], "Memory should decrease after eviction"
+        assert status_after["active_buffers"] == 0
+        assert status_after["ram_percent"] < 1.0, "RAM should remain within budget"
 
-    def test_checkpoint_recovery(self):
+    def test_checkpoint_recovery(self, tmp_path, monkeypatch):
         """Verify checkpoints can be saved and recovered."""
         from backend.src.infrastructure.checkpoint.checkpoint_manager import CheckpointManager
 
+        monkeypatch.setattr(settings, "ORION_HOME", tmp_path / "orion-home")
         cp = CheckpointManager()
         pid = uuid4()
 
@@ -254,10 +287,11 @@ class TestStressPipeline:
         checkpoints = cp.list_checkpoints(pid)
         assert len(checkpoints) <= 1
 
-    def test_pipeline_cache_hit(self):
+    def test_pipeline_cache_hit(self, tmp_path, monkeypatch):
         """Verify cache returns hit for identical inputs."""
         from backend.src.infrastructure.pipeline_cache.pipeline_cache import PipelineCache
 
+        monkeypatch.setattr(settings, "ORION_HOME", tmp_path / "orion-home")
         cache = PipelineCache()
         file_hash = "abc123"
         stage = "vision"
@@ -311,9 +345,7 @@ class TestStressPipeline:
 
         vm = VersioningManager()
         vm.auto_detect_versions()
-        manifest = vm.create_reproducibility_manifest(
-            Path("fixture.mp4"), "5.0.0", "tiktok"
-        )
+        manifest = vm.create_reproducibility_manifest(Path("fixture.mp4"), "5.0.0", "tiktok")
         serialized = manifest.to_dict()
         assert serialized["pipeline_version"] == "5.0.0"
         assert serialized["target_platform"] == "tiktok"

@@ -51,6 +51,7 @@ class OpenRouterScenePlanningProvider:
         http_referer: str | None = None,
         app_title: str | None = None,
         client: httpx.AsyncClient | None = None,
+        owns_client: bool = False,
         sleeper: Sleeper = asyncio.sleep,
         monotonic_clock: Callable[[], float] = monotonic,
     ) -> None:
@@ -80,6 +81,7 @@ class OpenRouterScenePlanningProvider:
                 http_referer=http_referer,
                 app_title=app_title,
                 client=client,
+                owns_client=owns_client,
                 sleeper=sleeper,
             )
         except ValueError as exc:
@@ -135,9 +137,7 @@ class OpenRouterScenePlanningProvider:
                 "scene-planning provider rate limit reached"
             ) from exc
         except OpenAICompatibleTimeoutError as exc:
-            raise ScenePlanningProviderTimeoutException(
-                "scene-planning request timed out"
-            ) from exc
+            raise ScenePlanningProviderTimeoutException("scene-planning request timed out") from exc
         except OpenAICompatibleUnavailableError as exc:
             raise ScenePlanningProviderUnavailableException(
                 "scene-planning provider is unavailable"

@@ -61,6 +61,7 @@ def provider(transport, **updates) -> OpenRouterImageAcquisitionProvider:
         "model": "openai/test-image-model",
         "prompt_builder": ImageGenerationPromptBuilder(),
         "client": httpx.AsyncClient(transport=transport),
+        "owns_client": True,
         "sleeper": _no_sleep,
     }
     values.update(updates)
@@ -69,6 +70,23 @@ def provider(transport, **updates) -> OpenRouterImageAcquisitionProvider:
 
 async def _no_sleep(delay: float) -> None:
     return None
+
+
+@pytest.mark.asyncio
+async def test_close_is_idempotent_and_preserves_injected_client() -> None:
+    injected = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200)))
+    image_provider = OpenRouterImageAcquisitionProvider(
+        api_key="test-key-not-real",
+        model="openai/test-image-model",
+        prompt_builder=ImageGenerationPromptBuilder(),
+        client=injected,
+    )
+
+    await image_provider.close()
+    await image_provider.close()
+
+    assert injected.is_closed is False
+    await injected.aclose()
 
 
 @pytest.mark.asyncio
@@ -144,11 +162,7 @@ async def test_optional_response_and_headers_may_be_absent(
         observed["headers"] = http_request.headers
         return httpx.Response(
             200,
-            json={
-                "data": [
-                    {"b64_json": base64.b64encode(png_bytes()).decode()}
-                ]
-            },
+            json={"data": [{"b64_json": base64.b64encode(png_bytes()).decode()}]},
         )
 
     client = provider(httpx.MockTransport(handle))
@@ -243,6 +257,7 @@ async def test_timeout_connection_and_cancel_propagate(
         ),
     )
     for transport_error, expected in errors:
+
         def handle(http_request, error=transport_error):
             raise error
 
@@ -269,11 +284,7 @@ async def test_timeout_connection_and_cancel_propagate(
         b'{"data":[{"url":"https://example.invalid/image.png"}]}',
         b'{"data":[{"b64_json":"%%%"}]}',
         b'{"data":[{"b64_json":""}]}',
-        (
-            b'{"data":[{"b64_json":"'
-            + base64.b64encode(b"<svg></svg>")
-            + b'"}]}'
-        ),
+        (b'{"data":[{"b64_json":"' + base64.b64encode(b"<svg></svg>") + b'"}]}'),
         b'{"data":[],"data":[]}',
     ],
 )
@@ -306,11 +317,7 @@ async def test_client_closes_and_never_calls_real_network(
         calls += 1
         return httpx.Response(
             200,
-            json={
-                "data": [
-                    {"b64_json": base64.b64encode(png_bytes()).decode()}
-                ]
-            },
+            json={"data": [{"b64_json": base64.b64encode(png_bytes()).decode()}]},
         )
 
     transport = httpx.MockTransport(handle)

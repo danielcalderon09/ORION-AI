@@ -27,3 +27,11 @@ class ProductionValidationError(ProductionApplicationError):
 
 class ProductionRuntimeUnavailableError(ProductionApplicationError):
     pass
+
+
+class ProductionConcurrencyError(ProductionApplicationError):
+    """Raised when an application write loses an optimistic concurrency race."""
+
+
+class ProductionRecordIntegrityError(ProductionApplicationError):
+    """Raised when durable state cannot safely satisfy an application contract."""

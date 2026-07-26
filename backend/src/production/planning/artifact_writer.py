@@ -43,6 +43,9 @@ class InMemoryPlanningArtifactWriter:
     ) -> WrittenPlanningArtifact:
         relative_path = _plan_relative_path(context)
         content = serialize_production_plan(plan)
+        existing = self.contents.get(relative_path)
+        if existing is not None and existing != content:
+            raise ValueError("planning artifact path already has incompatible content")
         self.contents[relative_path] = content
         return _written(relative_path, content)
 
@@ -78,6 +81,12 @@ class LocalPlanningArtifactWriter:
         _reject_symlink_components(self._root, target)
         target.parent.mkdir(parents=True, exist_ok=True)
         _reject_symlink_components(self._root, target)
+        if target.exists():
+            if target.is_symlink():
+                raise ValueError("planning artifact target cannot be a symbolic link")
+            if _read_bounded(target, len(content)) == content:
+                return
+            raise ValueError("planning artifact path already has incompatible content")
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{target.name}.",
             suffix=".tmp",
@@ -90,7 +99,10 @@ class LocalPlanningArtifactWriter:
                 stream.flush()
                 os.fsync(stream.fileno())
             _reject_symlink_components(self._root, target)
+            if target.exists() or target.is_symlink():
+                raise ValueError("planning artifact target appeared concurrently")
             os.replace(temporary, target)
+            _fsync_directory(target.parent)
         except Exception:
             temporary.unlink(missing_ok=True)
             raise
@@ -124,3 +136,18 @@ def _reject_symlink_components(root: Path, target: Path) -> None:
         current /= part
         if current.is_symlink():
             raise ValueError("planning artifact path contains a symbolic link")
+
+
+def _read_bounded(path: Path, maximum: int) -> bytes:
+    with path.open("rb") as stream:
+        return stream.read(maximum + 1)
+
+
+def _fsync_directory(directory: Path) -> None:
+    if os.name == "nt":
+        return
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)

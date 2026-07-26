@@ -59,9 +59,7 @@ class FilesystemPublisher:
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if not 1 <= max_asset_bytes <= 250_000_000:
-            raise AssetPublishingConfigurationError(
-                "filesystem publication size limit is invalid"
-            )
+            raise AssetPublishingConfigurationError("filesystem publication size limit is invalid")
         self._root = public_root
         self._confinement = WorkspaceConfinement(public_root)
         self._base_url = validate_public_https_url(public_base_url.rstrip("/"))
@@ -101,18 +99,14 @@ class FilesystemPublisher:
         self, asset: PublishableAsset, expires_at: datetime
     ) -> AssetPublicationReceipt:
         if self._closed:
-            raise AssetPublishingConfigurationError(
-                "filesystem publisher is closed"
-            )
+            raise AssetPublishingConfigurationError("filesystem publisher is closed")
         now = self._aware_now()
         if expires_at.tzinfo is None or expires_at.utcoffset() is None:
             raise ValueError("publication expiry must be timezone-aware")
         if expires_at <= now:
             raise AssetPublicationExpiredError("publication expiry is not in the future")
         if asset.size_bytes > self._maximum:
-            raise AssetPublicationIntegrityError(
-                "asset exceeds filesystem publication limit"
-            )
+            raise AssetPublicationIntegrityError("asset exceeds filesystem publication limit")
         publication_id = _publication_id(asset)
         extension = _extension(asset.content_type)
         target = self._target(publication_id, extension)
@@ -198,9 +192,7 @@ class FilesystemPublisher:
             return False
 
     def _receipt_for_asset(self, asset: PublishedAsset) -> AssetPublicationReceipt:
-        receipt = self._read_receipt(
-            self._sidecar(asset.metadata.publication_id)
-        )
+        receipt = self._read_receipt(self._sidecar(asset.metadata.publication_id))
         if (
             receipt.source_hash != asset.source_hash
             or receipt.content_type != asset.content_type
@@ -223,9 +215,7 @@ class FilesystemPublisher:
                 continue
             extension = _extension(receipt.content_type)
             with self._lock(receipt.publication_id):
-                self._safe_unlink(
-                    self._target(receipt.publication_id, extension)
-                )
+                self._safe_unlink(self._target(receipt.publication_id, extension))
                 self._safe_unlink(sidecar)
             removed.append(receipt.publication_id)
         return tuple(removed)
@@ -253,38 +243,27 @@ class FilesystemPublisher:
             or receipt.content_type != asset.content_type
             or receipt.size_bytes != asset.size_bytes
         ):
-            raise AssetPublicationConflictError(
-                "existing publication belongs to different content"
-            )
+            raise AssetPublicationConflictError("existing publication belongs to different content")
 
-    def _validate_file(
-        self, target: Path, *, source_hash: str, size_bytes: int
-    ) -> None:
+    def _validate_file(self, target: Path, *, source_hash: str, size_bytes: int) -> None:
         if not target.exists():
             raise AssetPublicationNotFoundError("published file is missing")
         try:
             self._confinement.reject_unsafe_file(target)
-            content = target.read_bytes()
+            with target.open("rb") as stream:
+                content = stream.read(size_bytes + 1)
         except BinaryAssetError as exc:
-            raise AssetPublicationIntegrityError(
-                "published file path is unsafe"
-            ) from exc
-        if (
-            len(content) != size_bytes
-            or hashlib.sha256(content).hexdigest() != source_hash
-        ):
-            raise AssetPublicationIntegrityError(
-                "published file integrity differs"
-            )
+            raise AssetPublicationIntegrityError("published file path is unsafe") from exc
+        if len(content) != size_bytes or hashlib.sha256(content).hexdigest() != source_hash:
+            raise AssetPublicationIntegrityError("published file integrity differs")
 
     def _read_receipt(self, sidecar: Path) -> AssetPublicationReceipt:
         if not sidecar.exists():
-            raise AssetPublicationNotFoundError(
-                "publication sidecar is missing"
-            )
+            raise AssetPublicationNotFoundError("publication sidecar is missing")
         try:
             self._confinement.reject_unsafe_file(sidecar)
-            content = sidecar.read_bytes()
+            with sidecar.open("rb") as stream:
+                content = stream.read(64_001)
             if not content or len(content) > 64_000:
                 raise ValueError("publication sidecar size is invalid")
             payload = json.loads(
@@ -299,9 +278,7 @@ class FilesystemPublisher:
         ):
             raise
         except (BinaryAssetError, OSError, UnicodeError, ValueError, TypeError) as exc:
-            raise AssetPublicationIntegrityError(
-                "publication sidecar is invalid"
-            ) from exc
+            raise AssetPublicationIntegrityError("publication sidecar is invalid") from exc
 
     def _target(self, publication_id: str, extension: str) -> Path:
         _validate_publication_id(publication_id)
@@ -309,9 +286,7 @@ class FilesystemPublisher:
 
     def _sidecar(self, publication_id: str) -> Path:
         _validate_publication_id(publication_id)
-        return self._confinement.resolve(
-            f"{publication_id}.publication.json"
-        )
+        return self._confinement.resolve(f"{publication_id}.publication.json")
 
     @contextmanager
     def _lock(self, publication_id: str) -> Iterator[None]:
@@ -319,9 +294,7 @@ class FilesystemPublisher:
         try:
             descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError as exc:
-            raise AssetPublicationConflictError(
-                "asset publication is already in progress"
-            ) from exc
+            raise AssetPublicationConflictError("asset publication is already in progress") from exc
         try:
             os.close(descriptor)
             yield
@@ -341,9 +314,7 @@ class FilesystemPublisher:
                 stream.flush()
                 os.fsync(stream.fileno())
             if target.exists() or target.is_symlink():
-                raise AssetPublicationConflictError(
-                    "publication target appeared concurrently"
-                )
+                raise AssetPublicationConflictError("publication target appeared concurrently")
             os.replace(temporary, target)
             _fsync_directory(target.parent)
             self._confinement.reject_unsafe_file(target)
@@ -367,9 +338,9 @@ class FilesystemPublisher:
 
 
 def _publication_id(asset: PublishableAsset) -> str:
-    digest = hashlib.sha256(
-        f"{asset.binary_asset_id}:{asset.source_hash}".encode()
-    ).hexdigest()[:32]
+    digest = hashlib.sha256(f"{asset.binary_asset_id}:{asset.source_hash}".encode()).hexdigest()[
+        :32
+    ]
     return f"pub-{digest}"
 
 
@@ -382,9 +353,7 @@ def _extension(content_type: str) -> str:
     try:
         return _EXTENSIONS[content_type]
     except KeyError as exc:
-        raise AssetPublicationIntegrityError(
-            "publication content type is unsupported"
-        ) from exc
+        raise AssetPublicationIntegrityError("publication content type is unsupported") from exc
 
 
 def _serialize_receipt(receipt: AssetPublicationReceipt) -> bytes:

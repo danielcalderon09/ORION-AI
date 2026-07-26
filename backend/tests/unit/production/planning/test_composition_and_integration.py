@@ -111,6 +111,26 @@ def test_invalid_real_configuration_fails_safely(tmp_path, provider: str) -> Non
     assert "API" not in str(captured.value)
 
 
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://localhost/api/v1",
+        "https://openrouter.ai/other",
+        "https://openrouter.ai/api/v1?redirect=1",
+    ],
+)
+def test_openrouter_configuration_pins_official_api(tmp_path, base_url: str) -> None:
+    with pytest.raises(PlanningProviderConfigurationError):
+        build_production_container(
+            settings(
+                tmp_path,
+                ORION_PLANNING_PROVIDER="openrouter",
+                ORION_PLANNING_API_KEY="not-a-real-key",
+                ORION_PLANNING_BASE_URL=base_url,
+            )
+        )
+
+
 def test_missing_optional_dependency_has_no_simulated_fallback(
     monkeypatch,
     tmp_path,
@@ -181,9 +201,7 @@ async def test_pipeline_with_fake_real_provider_persists_matching_file(
     clock, uuids = MutableClock(), UUIDSequence(5)
     client = httpx.AsyncClient(
         transport=httpx.MockTransport(
-            lambda request: httpx.Response(
-                200, json=fake_response_payload(), request=request
-            )
+            lambda request: httpx.Response(200, json=fake_response_payload(), request=request)
         ),
         base_url="https://openrouter.ai/api/v1",
     )
@@ -192,6 +210,7 @@ async def test_pipeline_with_fake_real_provider_persists_matching_file(
         model="openai/fake-model",
         prompt_builder=PlanningPromptBuilder(),
         client=client,
+        owns_client=True,
         max_transport_attempts=1,
     )
     planning_handler = PlanningHandler(

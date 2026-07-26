@@ -83,9 +83,7 @@ class FilesystemBinaryAssetStore:
             relative_path,
         )
         if asset.job_id != job_id or asset.asset_id != asset_id:
-            raise BinaryAssetMetadataError(
-                "binary asset identity differs from durable metadata"
-            )
+            raise BinaryAssetMetadataError("binary asset identity differs from durable metadata")
         content = await asyncio.to_thread(self._read_bytes_sync, asset)
         return ReadProductionBinaryAsset(asset=asset, content=content)
 
@@ -99,17 +97,9 @@ class FilesystemBinaryAssetStore:
             mime_type=request.mime_type,
             extension=request.extension,
         )
-        if (
-            request.expected_width is not None
-            and request.expected_width != inspected.width
-        ):
-            raise BinaryAssetConflictError(
-                "binary asset width differs from the requested contract"
-            )
-        if (
-            request.expected_height is not None
-            and request.expected_height != inspected.height
-        ):
+        if request.expected_width is not None and request.expected_width != inspected.width:
+            raise BinaryAssetConflictError("binary asset width differs from the requested contract")
+        if request.expected_height is not None and request.expected_height != inspected.height:
             raise BinaryAssetConflictError(
                 "binary asset height differs from the requested contract"
             )
@@ -170,9 +160,7 @@ class FilesystemBinaryAssetStore:
         height: int,
     ) -> ProductionBinaryAsset:
         if not target.exists() or not metadata_target.exists():
-            raise BinaryAssetConflictError(
-                "binary asset has incomplete durable metadata"
-            )
+            raise BinaryAssetConflictError("binary asset has incomplete durable metadata")
         try:
             existing = self._read_metadata_file(metadata_target)
             expected_reference = ProductionBinaryAssetReference(
@@ -191,18 +179,14 @@ class FilesystemBinaryAssetStore:
                 height=height,
             )
             if ProductionBinaryAssetReference.from_asset(existing) != expected_reference:
-                raise BinaryAssetConflictError(
-                    "existing binary asset integrity metadata differs"
-                )
+                raise BinaryAssetConflictError("existing binary asset integrity metadata differs")
             if (
                 existing.scene_id != request.scene_id
                 or existing.shot_id != request.shot_id
                 or existing.asset_role != request.asset_role
                 or existing.metadata != request.metadata
             ):
-                raise BinaryAssetConflictError(
-                    "existing binary asset descriptive metadata differs"
-                )
+                raise BinaryAssetConflictError("existing binary asset descriptive metadata differs")
             self._read_bytes_sync(existing)
         except BinaryAssetConflictError:
             raise
@@ -221,9 +205,7 @@ class FilesystemBinaryAssetStore:
             raise BinaryAssetNotFoundError("binary asset metadata is missing")
         asset = self._read_metadata_file(metadata_target)
         if ProductionBinaryAssetReference.from_asset(asset) != reference:
-            raise BinaryAssetMetadataError(
-                "binary asset reference differs from durable metadata"
-            )
+            raise BinaryAssetMetadataError("binary asset reference differs from durable metadata")
         return asset
 
     def _read_metadata_path_sync(self, relative_path: str) -> ProductionBinaryAsset:
@@ -235,18 +217,15 @@ class FilesystemBinaryAssetStore:
     def _read_metadata_file(self, target: Path) -> ProductionBinaryAsset:
         self._confinement.reject_unsafe_file(target)
         try:
-            content = target.read_bytes()
+            with target.open("rb") as stream:
+                content = stream.read(64_001)
             if len(content) > 64_000:
-                raise BinaryAssetMetadataError(
-                    "binary asset metadata exceeds the safe limit"
-                )
+                raise BinaryAssetMetadataError("binary asset metadata exceeds the safe limit")
             return deserialize_binary_asset_metadata(content)
         except BinaryAssetMetadataError:
             raise
         except (OSError, UnicodeError, ValueError, TypeError) as exc:
-            raise BinaryAssetMetadataError(
-                "binary asset metadata is invalid"
-            ) from exc
+            raise BinaryAssetMetadataError("binary asset metadata is invalid") from exc
 
     def _read_bytes_sync(self, asset: ProductionBinaryAsset) -> bytes:
         reference = ProductionBinaryAssetReference.from_asset(asset)
@@ -287,9 +266,7 @@ class FilesystemBinaryAssetStore:
         try:
             descriptor = os.open(lock, flags, 0o600)
         except FileExistsError as exc:
-            raise BinaryAssetConflictError(
-                "binary asset is already being written"
-            ) from exc
+            raise BinaryAssetConflictError("binary asset is already being written") from exc
         except OSError as exc:
             raise BinaryAssetIOError("binary asset lock could not be created") from exc
         try:
@@ -299,17 +276,13 @@ class FilesystemBinaryAssetStore:
             try:
                 lock.unlink(missing_ok=True)
             except OSError as exc:
-                raise BinaryAssetIOError(
-                    "binary asset lock could not be released"
-                ) from exc
+                raise BinaryAssetIOError("binary asset lock could not be released") from exc
 
     def _create_parent(self, parent: Path) -> None:
         try:
             parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            raise BinaryAssetIOError(
-                "binary asset directory could not be created"
-            ) from exc
+            raise BinaryAssetIOError("binary asset directory could not be created") from exc
         self._confinement.reject_unsafe_components(parent)
 
     def _atomic_write(self, *, target: Path, content: bytes) -> None:
@@ -329,9 +302,7 @@ class FilesystemBinaryAssetStore:
                 os.fsync(stream.fileno())
             self._confinement.reject_unsafe_components(target)
             if target.exists() or target.is_symlink():
-                raise BinaryAssetConflictError(
-                    "binary asset target appeared concurrently"
-                )
+                raise BinaryAssetConflictError("binary asset target appeared concurrently")
             os.replace(temporary, target)
             temporary = None
             _fsync_directory(target.parent)

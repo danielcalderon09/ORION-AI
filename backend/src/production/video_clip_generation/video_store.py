@@ -156,7 +156,8 @@ class FilesystemVideoClipBinaryStore:
     def _read_sidecar_file(self, path: Path) -> ProductionVideoClipAsset:
         try:
             self._confinement.reject_unsafe_file(path)
-            content = path.read_bytes()
+            with path.open("rb") as stream:
+                content = stream.read(128_001)
             if len(content) > 128_000:
                 raise VideoClipIntegrityError("video clip sidecar exceeds safe limit")
             return deserialize_video_clip_asset(content)

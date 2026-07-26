@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from backend.src.production.image_acquisition.handler import ImageAcquisitionHandler
 from backend.src.production.planning.artifact_writer import (
     InMemoryPlanningArtifactWriter,
 )
@@ -33,14 +32,17 @@ from backend.src.production.runtime.handlers import (
 )
 from backend.src.production.runtime.handlers.base import StageHandler
 from backend.src.production.runtime.job_dispatcher import StageHandlerRegistry
-from backend.src.production.scene_planning.handler import ScenePlanningHandler
-from backend.src.production.visual_asset_planning.handler import (
-    VisualAssetPlanningHandler,
-)
 
 if TYPE_CHECKING:
+    from backend.src.production.image_acquisition.handler import (
+        ImageAcquisitionHandler,
+    )
+    from backend.src.production.scene_planning.handler import ScenePlanningHandler
     from backend.src.production.video_clip_generation.handler import (
         VideoClipGenerationHandler,
+    )
+    from backend.src.production.visual_asset_planning.handler import (
+        VisualAssetPlanningHandler,
     )
 
 
@@ -51,19 +53,19 @@ def create_simulated_handler_registry(
     video_clip_generation_handler: StageHandler | None = None,
 ) -> StageHandlerRegistry:
     handlers: list[StageHandler] = [
-            PlanningHandler(
-                provider=SimulatedPlanningProvider(),
-                artifact_writer=InMemoryPlanningArtifactWriter(),
-                clock=clock,
-                uuid_factory=uuid_factory,
-            ),
-            ScriptHandler(clock=clock, uuid_factory=uuid_factory),
-            SimulatedScenePlanningHandler(clock=clock, uuid_factory=uuid_factory),
-            SimulatedVisualAssetPlanningHandler(
-                clock=clock,
-                uuid_factory=uuid_factory,
-            ),
-            AssetHandler(clock=clock, uuid_factory=uuid_factory),
+        PlanningHandler(
+            provider=SimulatedPlanningProvider(),
+            artifact_writer=InMemoryPlanningArtifactWriter(),
+            clock=clock,
+            uuid_factory=uuid_factory,
+        ),
+        ScriptHandler(clock=clock, uuid_factory=uuid_factory),
+        SimulatedScenePlanningHandler(clock=clock, uuid_factory=uuid_factory),
+        SimulatedVisualAssetPlanningHandler(
+            clock=clock,
+            uuid_factory=uuid_factory,
+        ),
+        AssetHandler(clock=clock, uuid_factory=uuid_factory),
     ]
     if video_clip_generation_handler is not None:
         handlers.append(video_clip_generation_handler)
@@ -95,17 +97,16 @@ def create_handler_registry(
     """Inject durable early-stage handlers; later media stages remain simulated."""
 
     handlers: list[StageHandler] = [
-            planning_handler,
-            scripting_handler or ScriptHandler(clock=clock, uuid_factory=uuid_factory),
-            scene_planning_handler
-            or SimulatedScenePlanningHandler(clock=clock, uuid_factory=uuid_factory),
-            visual_asset_planning_handler
-            or SimulatedVisualAssetPlanningHandler(
-                clock=clock,
-                uuid_factory=uuid_factory,
-            ),
-            image_acquisition_handler
-            or AssetHandler(clock=clock, uuid_factory=uuid_factory),
+        planning_handler,
+        scripting_handler or ScriptHandler(clock=clock, uuid_factory=uuid_factory),
+        scene_planning_handler
+        or SimulatedScenePlanningHandler(clock=clock, uuid_factory=uuid_factory),
+        visual_asset_planning_handler
+        or SimulatedVisualAssetPlanningHandler(
+            clock=clock,
+            uuid_factory=uuid_factory,
+        ),
+        image_acquisition_handler or AssetHandler(clock=clock, uuid_factory=uuid_factory),
     ]
     if video_clip_generation_handler is not None:
         handlers.append(video_clip_generation_handler)

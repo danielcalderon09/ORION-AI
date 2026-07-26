@@ -17,7 +17,7 @@ from backend.src.production.explainability.domain.explanation import (
 class ExplainabilityEngine:
     """Generates human-readable explanations for Director AI decisions."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.explanations: dict[str, DecisionExplanation] = {}
 
     def explain_clip_selection(
@@ -35,80 +35,106 @@ class ExplainabilityEngine:
 
         # Factor 1: Attention
         att_score = clip_data.get("confidence", {}).get("factors", {}).get("attention_score", 0)
-        factors.append(ExplanationFactor(
-            factor_name="Attention Peak",
-            factor_type="attention",
-            weight=0.35,
-            score=att_score,
-            description=f"This moment scored {att_score:.2f} on attention, indicating high viewer engagement",
-            evidence=[{
-                "type": "attention_peak",
-                "timestamp": clip_data.get("timestamp", 0),
-                "score": att_score,
-            }],
-        ))
-        reasoning_chain.append(f"Detected attention peak at {clip_data.get('timestamp', 0):.1f}s with score {att_score:.2f}")
+        factors.append(
+            ExplanationFactor(
+                factor_name="Attention Peak",
+                factor_type="attention",
+                weight=0.35,
+                score=att_score,
+                description=f"This moment scored {att_score:.2f} on attention, indicating high viewer engagement",
+                evidence=[
+                    {
+                        "type": "attention_peak",
+                        "timestamp": clip_data.get("timestamp", 0),
+                        "score": att_score,
+                    }
+                ],
+            )
+        )
+        reasoning_chain.append(
+            f"Detected attention peak at {clip_data.get('timestamp', 0):.1f}s with score {att_score:.2f}"
+        )
 
         # Factor 2: Narrative
         in_climax = clip_data.get("confidence", {}).get("factors", {}).get("in_climax_zone", 0)
-        factors.append(ExplanationFactor(
-            factor_name="Narrative Position",
-            factor_type="narrative",
-            weight=0.30,
-            score=in_climax,
-            description="Located within the narrative climax zone, making it structurally significant",
-            evidence=[{
-                "type": "climax_proximity",
-                "in_climax_zone": in_climax > 0.5,
-                "score": in_climax,
-            }],
-        ))
-        reasoning_chain.append(f"Narrative analysis: {'Inside' if in_climax > 0.5 else 'Outside'} climax zone (score: {in_climax:.2f})")
+        factors.append(
+            ExplanationFactor(
+                factor_name="Narrative Position",
+                factor_type="narrative",
+                weight=0.30,
+                score=in_climax,
+                description="Located within the narrative climax zone, making it structurally significant",
+                evidence=[
+                    {
+                        "type": "climax_proximity",
+                        "in_climax_zone": in_climax > 0.5,
+                        "score": in_climax,
+                    }
+                ],
+            )
+        )
+        reasoning_chain.append(
+            f"Narrative analysis: {'Inside' if in_climax > 0.5 else 'Outside'} climax zone (score: {in_climax:.2f})"
+        )
 
         # Factor 3: Scene density
         scene_density = clip_data.get("confidence", {}).get("factors", {}).get("scene_density", 0)
-        factors.append(ExplanationFactor(
-            factor_name="Visual Dynamism",
-            factor_type="technical",
-            weight=0.20,
-            score=scene_density,
-            description=f"Scene density of {scene_density:.2f} indicates {'high' if scene_density > 0.5 else 'moderate'} visual activity",
-            evidence=[{
-                "type": "scene_density",
-                "value": scene_density,
-            }],
-        ))
+        factors.append(
+            ExplanationFactor(
+                factor_name="Visual Dynamism",
+                factor_type="technical",
+                weight=0.20,
+                score=scene_density,
+                description=f"Scene density of {scene_density:.2f} indicates {'high' if scene_density > 0.5 else 'moderate'} visual activity",
+                evidence=[
+                    {
+                        "type": "scene_density",
+                        "value": scene_density,
+                    }
+                ],
+            )
+        )
         reasoning_chain.append(f"Visual dynamism score: {scene_density:.2f}")
 
         # Factor 4: Semantic understanding (if available)
         genre = video_understanding.get("genre", "unknown")
         if genre != "unknown":
-            factors.append(ExplanationFactor(
-                factor_name="Genre Context",
-                factor_type="semantic",
-                weight=0.10,
-                score=0.7,
-                description=f"Video classified as '{genre}', influencing clip selection priorities",
-                evidence=[{
-                    "type": "genre_classification",
-                    "genre": genre,
-                }],
-            ))
+            factors.append(
+                ExplanationFactor(
+                    factor_name="Genre Context",
+                    factor_type="semantic",
+                    weight=0.10,
+                    score=0.7,
+                    description=f"Video classified as '{genre}', influencing clip selection priorities",
+                    evidence=[
+                        {
+                            "type": "genre_classification",
+                            "genre": genre,
+                        }
+                    ],
+                )
+            )
             reasoning_chain.append(f"Genre classification: {genre}")
 
         # Factor 5: Temporal position
-        temporal_spread = clip_data.get("confidence", {}).get("factors", {}).get("temporal_spread", 0)
-        factors.append(ExplanationFactor(
-            factor_name="Temporal Position",
-            factor_type="technical",
-            weight=0.15,
-            score=temporal_spread,
-            description=f"Temporal position score of {temporal_spread:.2f} (higher = better placement)",
-            evidence=[{
-                "type": "temporal_spread",
-                "value": temporal_spread,
-            }],
-        ))
+        temporal_spread = (
+            clip_data.get("confidence", {}).get("factors", {}).get("temporal_spread", 0)
+        )
+        factors.append(
+            ExplanationFactor(
+                factor_name="Temporal Position",
+                factor_type="technical",
+                weight=0.15,
+                score=temporal_spread,
+                description=f"Temporal position score of {temporal_spread:.2f} (higher = better placement)",
+                evidence=[
+                    {
+                        "type": "temporal_spread",
+                        "value": temporal_spread,
+                    }
+                ],
+            )
+        )
         reasoning_chain.append(f"Temporal positioning: {temporal_spread:.2f}")
 
         # Overall confidence
@@ -159,8 +185,9 @@ class ExplainabilityEngine:
         path = output_dir / f"explanation_{explanation.clip_id}.html"
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        factors_html = "\n".join([
-            f"""
+        factors_html = "\n".join(
+            [
+                f"""
             <div class="factor">
                 <div class="factor-header">
                     <span class="factor-name">{f.factor_name}</span>
@@ -173,12 +200,11 @@ class ExplainabilityEngine:
                 <div class="factor-meta">Weight: {f.weight:.0%} | Type: {f.factor_type}</div>
             </div>
             """
-            for f in explanation.factors
-        ])
+                for f in explanation.factors
+            ]
+        )
 
-        reasoning_html = "\n".join([
-            f"<li>{step}</li>" for step in explanation.reasoning_chain
-        ])
+        reasoning_html = "\n".join([f"<li>{step}</li>" for step in explanation.reasoning_chain])
 
         html = f"""<!DOCTYPE html>
 <html>

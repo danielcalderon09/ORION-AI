@@ -955,5 +955,13 @@ def _validate_https_provider_url(
     message: str,
 ) -> None:
     parsed = urlsplit(value)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc.lower() != "openrouter.ai"
+        or parsed.path.rstrip("/") != "/api/v1"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
         raise error_type(message)

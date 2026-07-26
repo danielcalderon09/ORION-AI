@@ -85,7 +85,7 @@ class LocalScriptingArtifactWriter:
         if target.exists():
             if target.is_symlink():
                 raise ValueError("scripting artifact target cannot be a symbolic link")
-            if target.read_bytes() == content:
+            if _read_bounded(target, len(content)) == content:
                 return
             raise ValueError("scripting artifact path already has incompatible content")
         descriptor, temporary_name = tempfile.mkstemp(
@@ -103,6 +103,7 @@ class LocalScriptingArtifactWriter:
             if target.exists() or target.is_symlink():
                 raise ValueError("scripting artifact target appeared concurrently")
             os.replace(temporary, target)
+            _fsync_directory(target.parent)
         except Exception:
             temporary.unlink(missing_ok=True)
             raise
@@ -134,3 +135,18 @@ def _reject_symlink_components(root: Path, target: Path) -> None:
         current /= part
         if current.is_symlink():
             raise ValueError("scripting artifact path contains a symbolic link")
+
+
+def _read_bounded(path: Path, maximum: int) -> bytes:
+    with path.open("rb") as stream:
+        return stream.read(maximum + 1)
+
+
+def _fsync_directory(directory: Path) -> None:
+    if os.name == "nt":
+        return
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)

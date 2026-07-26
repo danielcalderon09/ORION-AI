@@ -13,9 +13,8 @@ from backend.src.infrastructure.config.settings import settings
 class RegressionBaseline:
     """Manages expected baseline results for regression testing."""
 
-    BASELINE_DIR = settings.ORION_HOME / "regression_baselines"
-
     def __init__(self):
+        self.BASELINE_DIR = settings.ORION_HOME / "regression_baselines"
         self.BASELINE_DIR.mkdir(parents=True, exist_ok=True)
 
     def save_baseline(self, test_name: str, metrics: dict[str, Any]) -> Path:
@@ -54,18 +53,22 @@ class RegressionBaseline:
                 if isinstance(base_val, (int, float)) and isinstance(actual_val, (int, float)):
                     tolerance = base_val * 0.15 if base_val != 0 else 0.1  # 15% tolerance
                     if abs(actual_val - base_val) > tolerance:
-                        differences.append({
+                        differences.append(
+                            {
+                                "key": key,
+                                "baseline": base_val,
+                                "actual": actual_val,
+                                "tolerance": tolerance,
+                            }
+                        )
+                else:
+                    differences.append(
+                        {
                             "key": key,
                             "baseline": base_val,
                             "actual": actual_val,
-                            "tolerance": tolerance,
-                        })
-                else:
-                    differences.append({
-                        "key": key,
-                        "baseline": base_val,
-                        "actual": actual_val,
-                    })
+                        }
+                    )
 
         passed = len(differences) == 0
         return {
@@ -89,11 +92,16 @@ def sample_video(tmp_path):
     cmd = [
         "ffmpeg",
         "-y",
-        "-f", "lavfi",
-        "-i", "testsrc=duration=30:size=1920x1080:rate=30",
-        "-f", "lavfi",
-        "-i", "sine=frequency=1000:duration=30",
-        "-pix_fmt", "yuv420p",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=duration=30:size=1920x1080:rate=30",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=1000:duration=30",
+        "-pix_fmt",
+        "yuv420p",
         str(video_path),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -170,7 +178,9 @@ class TestSprint15Regression:
         metrics = {
             "clip_count": len(completed.clips),
             "has_exports": any(c.export_path and c.export_path.exists() for c in completed.clips),
-            "total_clips_exported": sum(1 for c in completed.clips if c.export_path and c.export_path.exists()),
+            "total_clips_exported": sum(
+                1 for c in completed.clips if c.export_path and c.export_path.exists()
+            ),
         }
 
         # Regression comparison
@@ -189,10 +199,18 @@ class TestSprint15Regression:
         # Create a fake wrong-resolution video
         wrong_video = tmp_path / "wrong_res.mp4"
         cmd = [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", "testsrc=duration=5:size=640x480:rate=30",
-            "-f", "lavfi", "-i", "sine=frequency=1000:duration=5",
-            "-pix_fmt", "yuv420p",
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=5:size=640x480:rate=30",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=1000:duration=5",
+            "-pix_fmt",
+            "yuv420p",
             str(wrong_video),
         ]
         subprocess.run(cmd, capture_output=True)
@@ -200,20 +218,27 @@ class TestSprint15Regression:
         qa = QAAgent(qa_provider=BasicQAProvider())
 
         import asyncio
-        result = asyncio.run(qa.execute(AgentInput(
-            media_reference=str(wrong_video),
-            context={
-                "expected_params": {
-                    "width": 1080,
-                    "height": 1920,
-                    "video_codec": "libx264",
-                    "format": "mp4",
-                },
-            },
-        )))
+
+        result = asyncio.run(
+            qa.execute(
+                AgentInput(
+                    media_reference=str(wrong_video),
+                    context={
+                        "expected_params": {
+                            "width": 1080,
+                            "height": 1920,
+                            "video_codec": "libx264",
+                            "format": "mp4",
+                        },
+                    },
+                )
+            )
+        )
 
         assert result.features["validation"]["passed"] is False
-        res_check = next((c for c in result.features["validation"]["checks"] if c["name"] == "resolution"), None)
+        res_check = next(
+            (c for c in result.features["validation"]["checks"] if c["name"] == "resolution"), None
+        )
         assert res_check is not None
         assert res_check["passed"] is False
 
@@ -246,14 +271,22 @@ class TestSprint15Regression:
                 "climax_candidates": [{"timestamp": 5.0, "score": 0.85}],
             },
             "speech_features": {"segments": []},
-            "vision_features": {"duration_seconds": 30, "video_info": {"width": 1920, "height": 1080}},
+            "vision_features": {
+                "duration_seconds": 30,
+                "video_info": {"width": 1920, "height": 1080},
+            },
         }
 
         import asyncio
-        result = asyncio.run(director.execute(AgentInput(
-            media_reference="dummy.mp4",
-            context=context,
-        )))
+
+        result = asyncio.run(
+            director.execute(
+                AgentInput(
+                    media_reference="dummy.mp4",
+                    context=context,
+                )
+            )
+        )
 
         clips = result.features["selected_clips"]
         assert len(clips) > 0
@@ -275,9 +308,27 @@ class TestSprint15Regression:
                 "peaks": [{"time": 5.0, "attention_score": 0.9}],
                 "valleys": [],
                 "timeline": [
-                    {"time": 4.0, "attention_score": 0.3, "audio_energy": 0.2, "scene_change": 0, "speech_active": 0},
-                    {"time": 5.0, "attention_score": 0.9, "audio_energy": 0.8, "scene_change": 1, "speech_active": 0},
-                    {"time": 6.0, "attention_score": 0.4, "audio_energy": 0.3, "scene_change": 0, "speech_active": 0},
+                    {
+                        "time": 4.0,
+                        "attention_score": 0.3,
+                        "audio_energy": 0.2,
+                        "scene_change": 0,
+                        "speech_active": 0,
+                    },
+                    {
+                        "time": 5.0,
+                        "attention_score": 0.9,
+                        "audio_energy": 0.8,
+                        "scene_change": 1,
+                        "speech_active": 0,
+                    },
+                    {
+                        "time": 6.0,
+                        "attention_score": 0.4,
+                        "audio_energy": 0.3,
+                        "scene_change": 0,
+                        "speech_active": 0,
+                    },
                 ],
             },
             "narrative_features": {
@@ -291,14 +342,22 @@ class TestSprint15Regression:
             "speech_features": {
                 "segments": [{"start": 4.5, "end": 5.5, "text": "hello world"}],
             },
-            "vision_features": {"duration_seconds": 30, "video_info": {"width": 1920, "height": 1080}},
+            "vision_features": {
+                "duration_seconds": 30,
+                "video_info": {"width": 1920, "height": 1080},
+            },
         }
 
         import asyncio
-        result = asyncio.run(director.execute(AgentInput(
-            media_reference="dummy.mp4",
-            context=context,
-        )))
+
+        result = asyncio.run(
+            director.execute(
+                AgentInput(
+                    media_reference="dummy.mp4",
+                    context=context,
+                )
+            )
+        )
 
         debug_timeline = result.features.get("debug_timeline")
         assert debug_timeline is not None, "Debug mode must produce timeline data"
@@ -331,15 +390,17 @@ class TestSprint15Regression:
         )
 
         registry = CapabilityRegistry()
-        registry.register(ModelMetadata(
-            model_id="test_model",
-            capability="test_capability",
-            provider_class=dict,
-            version="1.0",
-            description="Test",
-            requirements=[],
-            default=True,
-        ))
+        registry.register(
+            ModelMetadata(
+                model_id="test_model",
+                capability="test_capability",
+                provider_class=dict,
+                version="1.0",
+                description="Test",
+                requirements=[],
+                default=True,
+            )
+        )
 
         provider = registry.resolve("test_capability")
         assert provider is dict

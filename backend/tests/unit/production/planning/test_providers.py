@@ -69,6 +69,7 @@ def real_provider(handler, *, attempts: int = 1, sleeper=None, **provider_option
         model="openai/test-model",
         prompt_builder=PlanningPromptBuilder(),
         client=client,
+        owns_client=True,
         max_transport_attempts=attempts,
         sleeper=sleeper or asyncio.sleep,
         monotonic_clock=lambda: 1.0,
@@ -127,9 +128,7 @@ async def test_real_provider_preserves_requested_and_different_reported_model(
 ) -> None:
     body = response_body()
     body["model"] = "anthropic/reported-model"
-    provider, _ = real_provider(
-        lambda request: httpx.Response(200, json=body, request=request)
-    )
+    provider, _ = real_provider(lambda request: httpx.Response(200, json=body, request=request))
     response = await provider.generate_plan(planning_request)
     assert response.model == "anthropic/reported-model"
     assert response.requested_model == "openai/test-model"
@@ -174,9 +173,7 @@ async def test_openrouter_optional_headers_and_missing_telemetry(planning_reques
         (503, PlanningProviderUnavailableError),
     ],
 )
-async def test_real_provider_translates_http_failures(
-    planning_request, status, error_type
-) -> None:
+async def test_real_provider_translates_http_failures(planning_request, status, error_type) -> None:
     provider, _ = real_provider(lambda request: httpx.Response(status, request=request))
     with pytest.raises(error_type, match="planning provider") as captured:
         await provider.generate_plan(planning_request)

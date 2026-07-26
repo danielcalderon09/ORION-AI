@@ -23,6 +23,7 @@ def client(handler, **overrides):
         "max_transport_attempts": 1,
         "retry_base_delay_seconds": 0.01,
         "client": http_client,
+        "owns_client": True,
     }
     options.update(overrides)
     return OpenAICompatibleResponsesClient(**options), http_client
@@ -71,6 +72,18 @@ async def test_endpoint_authorization_and_optional_headers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_injected_client_is_not_closed_without_explicit_ownership() -> None:
+    transport, http_client = client(
+        lambda request: httpx.Response(200, json={"choices": []}),
+        owns_client=False,
+    )
+    await transport.close()
+    await transport.close()
+    assert not http_client.is_closed
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_optional_headers_are_absent_by_default() -> None:
     captured = {}
 
@@ -87,15 +100,32 @@ async def test_optional_headers_are_absent_by_default() -> None:
 
 @pytest.mark.asyncio
 async def test_invalid_or_duplicate_response_json_is_rejected() -> None:
-    for content in (b"not-json", b'{"choices":[],"choices":[]}'):
-        transport, _ = client(
-            lambda request, response_content=content: httpx.Response(
-                200, content=response_content
-            )
+    for content in (
+        b"not-json",
+        b'{"choices":[],"choices":[]}',
+        b'{"choices":NaN}',
+        b'{"choices":Infinity}',
+    ):
+        transport, http_client = client(
+            lambda request, response_content=content: httpx.Response(200, content=response_content)
         )
         with pytest.raises(OpenAICompatibleProtocolError):
             await transport.post({})
         await transport.close()
+        await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_response_size_is_bounded_and_close_is_idempotent() -> None:
+    transport, http_client = client(
+        lambda request: httpx.Response(200, content=b"x" * 33),
+        max_response_bytes=32,
+    )
+    with pytest.raises(OpenAICompatibleProtocolError, match="safe size limit"):
+        await transport.post({})
+    await transport.close()
+    await transport.close()
+    assert http_client.is_closed
 
 
 @pytest.mark.asyncio
@@ -109,7 +139,11 @@ async def test_nonretryable_statuses_are_attempted_once(status) -> None:
         return httpx.Response(status)
 
     transport, _ = client(handler, max_transport_attempts=3)
-    error = OpenAICompatibleAuthenticationError if status in {401, 403} else OpenAICompatibleProtocolError
+    error = (
+        OpenAICompatibleAuthenticationError
+        if status in {401, 403}
+        else OpenAICompatibleProtocolError
+    )
     with pytest.raises(error):
         await transport.post({})
     assert calls == 1
@@ -134,11 +168,7 @@ async def test_retryable_statuses_honor_attempt_limit(status) -> None:
         max_transport_attempts=3,
         sleeper=no_delay,
     )
-    error = (
-        OpenAICompatibleRateLimitError
-        if status == 429
-        else OpenAICompatibleUnavailableError
-    )
+    error = OpenAICompatibleRateLimitError if status == 429 else OpenAICompatibleUnavailableError
     with pytest.raises(error):
         await transport.post({})
     assert calls == 3

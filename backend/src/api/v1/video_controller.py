@@ -22,12 +22,8 @@ from backend.src.infrastructure.di.container import Container
 
 logger = logging.getLogger(__name__)
 
-# Ensure we log to a file for debugging (appended on restart)
-if not any(isinstance(h, logging.FileHandler) for h in logger.handlers):
-    _fh = logging.FileHandler(settings.ORION_HOME / "video_controller.log", mode="a")
-    _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
-    logger.addHandler(_fh)
-    logger.setLevel(logging.DEBUG)
+# Handler ownership belongs to application logging configuration. Importing this
+# controller must not open a process-lifetime file or mutate the user workspace.
 
 # In-memory progress tracker (replace with Redis/DB in production)
 _progress_store: dict[str, dict] = {}

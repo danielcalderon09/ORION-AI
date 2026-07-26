@@ -17,6 +17,10 @@ from backend.src.production.application.orchestration import (
     ProductionOrchestrator,
     TransitionPolicy,
 )
+from backend.src.production.application.ports.execution import (
+    BlockingExecutor,
+    DecisionPersister,
+)
 from backend.src.production.application.ports.query_repositories import (
     ProductionArtifactQueryRepository,
     ProductionEventQueryRepository,
@@ -27,9 +31,11 @@ from backend.src.production.application.sanitization import (
     validate_safe_json,
 )
 from backend.src.production.application.services.exceptions import (
+    ProductionConcurrencyError,
     ProductionJobConflictError,
     ProductionJobNotFoundError,
     ProductionJobStateError,
+    ProductionRecordIntegrityError,
     ProductionRequestIdConflictError,
     ProductionValidationError,
 )
@@ -43,12 +49,6 @@ from backend.src.production.application.services.models import (
 )
 from backend.src.production.domain.enums import ProductionJobStatus, ProductionStage
 from backend.src.production.domain.production_job import ProductionJob
-from backend.src.production.infrastructure.persistence.exceptions import (
-    ProductionConcurrencyError,
-    ProductionRecordIntegrityError,
-)
-from backend.src.production.runtime.blocking_executor import RuntimeBlockingExecutor
-from backend.src.production.runtime.decision_persister import RuntimeDecisionPersister
 
 
 def production_request_fingerprint(command: CreateProductionJobCommand) -> str:
@@ -73,8 +73,8 @@ class CreateProductionJobService:
         self,
         *,
         query: ProductionJobQueryRepository,
-        blocking_executor: RuntimeBlockingExecutor,
-        persister: RuntimeDecisionPersister,
+        blocking_executor: BlockingExecutor,
+        persister: DecisionPersister,
         orchestrator: ProductionOrchestrator,
         clock: Callable[[], datetime],
         uuid_factory: Callable[[], UUID],
@@ -96,7 +96,9 @@ class CreateProductionJobService:
         if not prompt:
             raise ProductionValidationError("prompt must not be empty")
         fingerprint = production_request_fingerprint(
-            command.model_copy(update={"prompt": prompt, "configuration": configuration, "metadata": metadata})
+            command.model_copy(
+                update={"prompt": prompt, "configuration": configuration, "metadata": metadata}
+            )
         )
         if command.client_request_id:
             existing = await self._blocking.run(
@@ -121,9 +123,7 @@ class CreateProductionJobService:
         )
         decision = self._orchestrator.decide(
             job,
-            PipelineConfiguration(
-                generate_clips_after_render=command.generate_clips_after_render
-            ),
+            PipelineConfiguration(generate_clips_after_render=command.generate_clips_after_render),
             next_sequence_number=0,
         )
         try:
@@ -152,7 +152,7 @@ class CreateProductionJobService:
 
 
 class GetProductionJobService:
-    def __init__(self, query: ProductionJobQueryRepository, blocking: RuntimeBlockingExecutor) -> None:
+    def __init__(self, query: ProductionJobQueryRepository, blocking: BlockingExecutor) -> None:
         self._query, self._blocking = query, blocking
 
     async def execute(self, job_id: UUID) -> ProductionJobView:
@@ -163,7 +163,7 @@ class GetProductionJobService:
 
 
 class ListProductionJobsService:
-    def __init__(self, query: ProductionJobQueryRepository, blocking: RuntimeBlockingExecutor) -> None:
+    def __init__(self, query: ProductionJobQueryRepository, blocking: BlockingExecutor) -> None:
         self._query, self._blocking = query, blocking
 
     async def execute(
@@ -185,8 +185,8 @@ class CancelProductionJobService:
         *,
         query: ProductionJobQueryRepository,
         events: ProductionEventQueryRepository,
-        blocking: RuntimeBlockingExecutor,
-        persister: RuntimeDecisionPersister,
+        blocking: BlockingExecutor,
+        persister: DecisionPersister,
         clock: Callable[[], datetime],
         uuid_factory: Callable[[], UUID],
     ) -> None:
@@ -202,23 +202,34 @@ class CancelProductionJobService:
             raise ProductionJobStateError(f"cannot cancel job in {job.status.value}")
         TransitionPolicy.validate_transition(job.status, ProductionJobStatus.CANCEL_REQUESTED)
         now = self._clock()
-        updated = job.model_copy(update={"status": ProductionJobStatus.CANCEL_REQUESTED, "updated_at": now})
+        updated = job.model_copy(
+            update={"status": ProductionJobStatus.CANCEL_REQUESTED, "updated_at": now}
+        )
         sequence = await self._blocking.run(self._events.next_sequence, job_id)
         event = ProductionCancellationRequested(
-            event_id=self._uuid_factory(), job_id=job_id, occurred_at=now,
-            sequence_number=sequence, correlation_id=job_id, reason="api_request",
+            event_id=self._uuid_factory(),
+            job_id=job_id,
+            occurred_at=now,
+            sequence_number=sequence,
+            correlation_id=job_id,
+            reason="api_request",
         )
         try:
             await self._persister.persist_decision(
                 previous_job=job,
                 decision=OrchestrationDecision(
-                    updated_job=updated, events=(event,), should_continue=False,
+                    updated_job=updated,
+                    events=(event,),
+                    should_continue=False,
                     reason="cancellation_requested",
                 ),
             )
         except ProductionConcurrencyError as exc:
             current = await GetProductionJobService(self._query, self._blocking).execute(job_id)
-            if current.job.status in {ProductionJobStatus.CANCEL_REQUESTED, ProductionJobStatus.CANCELLED}:
+            if current.job.status in {
+                ProductionJobStatus.CANCEL_REQUESTED,
+                ProductionJobStatus.CANCELLED,
+            }:
                 return ProductionOperationResult(job=current, operation="cancel", idempotent=True)
             raise ProductionJobConflictError("job changed during cancellation") from exc
         current = await GetProductionJobService(self._query, self._blocking).execute(job_id)
@@ -231,8 +242,8 @@ class RetryProductionJobService:
         *,
         query: ProductionJobQueryRepository,
         events: ProductionEventQueryRepository,
-        blocking: RuntimeBlockingExecutor,
-        persister: RuntimeDecisionPersister,
+        blocking: BlockingExecutor,
+        persister: DecisionPersister,
         clock: Callable[[], datetime],
         uuid_factory: Callable[[], UUID],
     ) -> None:
@@ -244,30 +255,44 @@ class RetryProductionJobService:
         job = view.job
         if job.status is ProductionJobStatus.QUEUED:
             latest = await self._blocking.run(self._events.latest_for_job, job_id)
-            if latest and latest.event_type is ProductionEventType.JOB_QUEUED and latest.metadata.get("operation") == "manual_retry":
+            if (
+                latest
+                and latest.event_type is ProductionEventType.JOB_QUEUED
+                and latest.metadata.get("operation") == "manual_retry"
+            ):
                 return ProductionOperationResult(job=view, operation="retry", idempotent=True)
         if job.status not in {ProductionJobStatus.FAILED, ProductionJobStatus.NEEDS_USER_ACTION}:
             raise ProductionJobStateError(f"cannot retry job in {job.status.value}")
         TransitionPolicy.validate_transition(
-            job.status, ProductionJobStatus.QUEUED,
+            job.status,
+            ProductionJobStatus.QUEUED,
             allow_failed_recovery=job.status is ProductionJobStatus.FAILED,
         )
         now = self._clock()
-        updated = job.model_copy(update={
-            "status": ProductionJobStatus.QUEUED, "updated_at": now,
-            "error_code": None, "error_message": None,
-        })
+        updated = job.model_copy(
+            update={
+                "status": ProductionJobStatus.QUEUED,
+                "updated_at": now,
+                "error_code": None,
+                "error_message": None,
+            }
+        )
         sequence = await self._blocking.run(self._events.next_sequence, job_id)
         event = ProductionJobQueued(
-            event_id=self._uuid_factory(), job_id=job_id, occurred_at=now,
-            sequence_number=sequence, correlation_id=job_id,
+            event_id=self._uuid_factory(),
+            job_id=job_id,
+            occurred_at=now,
+            sequence_number=sequence,
+            correlation_id=job_id,
             metadata={"operation": "manual_retry"},
         )
         try:
             await self._persister.persist_decision(
                 previous_job=job,
                 decision=OrchestrationDecision(
-                    updated_job=updated, events=(event,), should_continue=True,
+                    updated_job=updated,
+                    events=(event,),
+                    should_continue=True,
                     reason="manual_retry",
                 ),
             )
@@ -285,13 +310,15 @@ class ListProductionEventsService:
         self,
         jobs: ProductionJobQueryRepository,
         events: ProductionEventQueryRepository,
-        blocking: RuntimeBlockingExecutor,
+        blocking: BlockingExecutor,
     ) -> None:
         self._jobs, self._events, self._blocking = jobs, events, blocking
 
     async def execute(self, job_id: UUID) -> ProductionEventPage:
         await GetProductionJobService(self._jobs, self._blocking).execute(job_id)
-        return ProductionEventPage(items=await self._blocking.run(self._events.list_for_job, job_id))
+        return ProductionEventPage(
+            items=await self._blocking.run(self._events.list_for_job, job_id)
+        )
 
 
 class ListProductionArtifactsService:
@@ -299,7 +326,7 @@ class ListProductionArtifactsService:
         self,
         jobs: ProductionJobQueryRepository,
         artifacts: ProductionArtifactQueryRepository,
-        blocking: RuntimeBlockingExecutor,
+        blocking: BlockingExecutor,
     ) -> None:
         self._jobs, self._artifacts, self._blocking = jobs, artifacts, blocking
 

@@ -99,9 +99,7 @@ class LocalScenePlanningArtifactWriter:
         relative_path = _scene_plan_relative_path(context)
         content = serialize_scene_plan(scene_plan)
         if len(content) > self._max_bytes:
-            raise ScenePlanningValidationException(
-                "scene plan exceeds the configured limit"
-            )
+            raise ScenePlanningValidationException("scene plan exceeds the configured limit")
         await asyncio.to_thread(self._write_atomic, relative_path, content)
         return _written(relative_path, content, scene_plan)
 
@@ -121,11 +119,14 @@ class LocalScenePlanningArtifactWriter:
                 raise ScenePlanningValidationException(
                     "existing scene plan exceeds the configured limit"
                 )
-            content = target.read_bytes()
+            with target.open("rb") as stream:
+                content = stream.read(self._max_bytes + 1)
+            if len(content) > self._max_bytes:
+                raise ScenePlanningValidationException(
+                    "existing scene plan exceeds the configured limit"
+                )
         except OSError as exc:
-            raise ScenePlanningValidationException(
-                "existing scene plan could not be read"
-            ) from exc
+            raise ScenePlanningValidationException("existing scene plan could not be read") from exc
         return _decode_written(relative_path, content)
 
     def _write_atomic(self, relative_path: str, content: bytes) -> None:
@@ -137,7 +138,7 @@ class LocalScenePlanningArtifactWriter:
                 raise ScenePlanningValidationException(
                     "scene-plan target cannot be a symbolic link"
                 )
-            if target.read_bytes() == content:
+            if _read_bounded(target, len(content)) == content:
                 return
             raise ScenePlanningValidationException(
                 "scene-plan path already has incompatible content"
@@ -155,10 +156,9 @@ class LocalScenePlanningArtifactWriter:
                 os.fsync(stream.fileno())
             _reject_symlink_components(self._root, target)
             if target.exists() or target.is_symlink():
-                raise ScenePlanningValidationException(
-                    "scene-plan target appeared concurrently"
-                )
+                raise ScenePlanningValidationException("scene-plan target appeared concurrently")
             os.replace(temporary, target)
+            _fsync_directory(target.parent)
         except Exception:
             temporary.unlink(missing_ok=True)
             raise
@@ -179,9 +179,7 @@ def _scene_plan_relative_path(context: StageContext) -> str:
     relative_path = f"{context.workspace_relative_path}/scene-plan.json"
     normalized = validate_relative_path(relative_path)
     if "\\" in normalized:
-        raise ScenePlanningValidationException(
-            "scene-plan path must use POSIX separators"
-        )
+        raise ScenePlanningValidationException("scene-plan path must use POSIX separators")
     return normalized
 
 
@@ -197,10 +195,14 @@ def _decode_written(
             object_pairs_hook=_reject_duplicate_json_keys,
         )
         scene_plan = ProductionScenePlan.model_validate(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
-        raise ScenePlanningValidationException(
-            "existing scene-plan artifact is invalid"
-        ) from exc
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValidationError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise ScenePlanningValidationException("existing scene-plan artifact is invalid") from exc
     return _written(relative_path, content, scene_plan)
 
 
@@ -228,9 +230,22 @@ def _reject_symlink_components(root: Path, target: Path) -> None:
     for part in relative.parts:
         current /= part
         if current.is_symlink():
-            raise ScenePlanningValidationException(
-                "scene-plan path contains a symbolic link"
-            )
+            raise ScenePlanningValidationException("scene-plan path contains a symbolic link")
+
+
+def _read_bounded(path: Path, maximum: int) -> bytes:
+    with path.open("rb") as stream:
+        return stream.read(maximum + 1)
+
+
+def _fsync_directory(directory: Path) -> None:
+    if os.name == "nt":
+        return
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _reject_json_constant(value: str) -> None:

@@ -42,9 +42,7 @@ async def test_full_pipeline_acquires_durable_images_without_real_network(
             nonlocal calls
             calls += 1
             payload = json.loads(http_request.content)
-            width, height = (
-                int(value) for value in payload["size"].split("x")
-            )
+            width, height = (int(value) for value in payload["size"].split("x"))
             stream = BytesIO()
             Image.new("RGB", (width, height), "navy").save(stream, "PNG")
             return httpx.Response(
@@ -54,9 +52,7 @@ async def test_full_pipeline_acquires_durable_images_without_real_network(
                     "model": "openai/fake-image-model",
                     "data": [
                         {
-                            "b64_json": base64.b64encode(
-                                stream.getvalue()
-                            ).decode(),
+                            "b64_json": base64.b64encode(stream.getvalue()).decode(),
                             "media_type": "image/png",
                         }
                     ],
@@ -66,11 +62,14 @@ async def test_full_pipeline_acquires_durable_images_without_real_network(
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
         kwargs["max_transport_attempts"] = 1
-        return OpenRouterImageAcquisitionProvider(**kwargs, client=client)
+        return OpenRouterImageAcquisitionProvider(
+            **kwargs,
+            client=client,
+            owns_client=True,
+        )
 
     monkeypatch.setattr(
-        "backend.src.production.composition.container."
-        "load_openrouter_image_acquisition_provider",
+        "backend.src.production.composition.container.load_openrouter_image_acquisition_provider",
         lambda: image_factory,
     )
     settings = Settings(
@@ -84,9 +83,7 @@ async def test_full_pipeline_acquires_durable_images_without_real_network(
         ORION_PRODUCTION_WORKER_ENABLED=False,
         ORION_IMAGE_ACQUISITION_PROVIDER=image_provider_name,
         ORION_IMAGE_ACQUISITION_MODEL=(
-            "openai/fake-image-model"
-            if image_provider_name == "openrouter"
-            else ""
+            "openai/fake-image-model" if image_provider_name == "openrouter" else ""
         ),
         ORION_IMAGE_ACQUISITION_API_KEY=(
             "fake-test-only" if image_provider_name == "openrouter" else None
@@ -128,45 +125,31 @@ async def test_full_pipeline_acquires_durable_images_without_real_network(
                     ArtifactRecord.job_id == str(created.job.job_id)
                 )
             )
-        images = [
-            record
-            for record in rows
-            if record[0] == ArtifactType.SOURCE_IMAGE.value
-        ]
+        images = [record for record in rows if record[0] == ArtifactType.SOURCE_IMAGE.value]
         manifests = [
             record
             for record in rows
-            if record[0]
-            == ArtifactType.PRODUCTION_IMAGE_ACQUISITION_MANIFEST.value
+            if record[0] == ArtifactType.PRODUCTION_IMAGE_ACQUISITION_MANIFEST.value
         ]
         video_clips = [
-            record
-            for record in rows
-            if record[0] == ArtifactType.SOURCE_VIDEO_CLIP.value
+            record for record in rows if record[0] == ArtifactType.SOURCE_VIDEO_CLIP.value
         ]
         video_manifests = [
             record
             for record in rows
-            if record[0]
-            == ArtifactType.PRODUCTION_VIDEO_CLIP_MANIFEST.value
+            if record[0] == ArtifactType.PRODUCTION_VIDEO_CLIP_MANIFEST.value
         ]
         assert len(images) == 1
         assert len(manifests) == 1
         assert len(video_clips) == 1
         assert len(video_manifests) == 1
         for record in (*images, *manifests, *video_clips, *video_manifests):
-            target = settings.PROJECTS_DIR.joinpath(
-                *record[1].split("/")
-            )
+            target = settings.PROJECTS_DIR.joinpath(*record[1].split("/"))
             assert target.is_file()
             assert hashlib.sha256(target.read_bytes()).hexdigest() == record[2]
-        image_target = settings.PROJECTS_DIR.joinpath(
-            *images[0][1].split("/")
-        )
+        image_target = settings.PROJECTS_DIR.joinpath(*images[0][1].split("/"))
         assert image_target.with_name(f"{image_target.name}.asset.json").is_file()
-        video_target = settings.PROJECTS_DIR.joinpath(
-            *video_clips[0][1].split("/")
-        )
+        video_target = settings.PROJECTS_DIR.joinpath(*video_clips[0][1].split("/"))
         assert video_target.with_name(f"{video_target.name}.asset.json").is_file()
         assert video_clips[0][3]["has_audio"] is False
         assert video_clips[0][3]["simulated"] is True

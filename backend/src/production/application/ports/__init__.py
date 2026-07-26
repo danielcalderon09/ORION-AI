@@ -10,6 +10,10 @@ from backend.src.production.application.ports.editor import (
     EditorTimelineRef,
     RenderInspection,
 )
+from backend.src.production.application.ports.execution import (
+    BlockingExecutor,
+    DecisionPersister,
+)
 from backend.src.production.application.ports.music_provider import MusicProviderPort
 from backend.src.production.application.ports.narration_provider import NarrationProviderPort
 from backend.src.production.application.ports.planner import PlannerPort
@@ -23,7 +27,9 @@ from backend.src.production.application.ports.subtitle_provider import SubtitleP
 __all__ = [
     "ArtifactStorePort",
     "AssetProviderPort",
+    "BlockingExecutor",
     "ClipHandoffPort",
+    "DecisionPersister",
     "EditorEnvironmentReport",
     "EditorPort",
     "EditorProjectRef",

@@ -233,7 +233,7 @@ async def test_remote_store_duplicate_create_and_stale_cas_conflict() -> None:
     await store.create(first)
     with pytest.raises(RemoteVideoJobConflictError):
         await store.create(first)
-    current = first.model_copy(update={"poll_attempts": 1})
+    current = first.model_copy(update={"poll_attempts": 1, "last_polled_at": NOW})
     await store.checkpoint(previous=first, current=current)
     with pytest.raises(RemoteVideoJobConflictError):
         await store.checkpoint(previous=first, current=current)
@@ -287,12 +287,12 @@ async def test_remote_store_rejects_immutable_field_change(field: str) -> None:
 @pytest.mark.asyncio
 async def test_remote_store_rejects_poll_attempt_decrease() -> None:
     store = InMemoryRemoteVideoJobStore()
-    first = record(poll_attempts=2)
+    first = record(poll_attempts=2, last_polled_at=NOW)
     await store.create(first)
     with pytest.raises(RemoteVideoJobConflictError):
         await store.checkpoint(
             previous=first,
-            current=first.model_copy(update={"poll_attempts": 1}),
+            current=first.model_copy(update={"poll_attempts": 1, "last_polled_at": NOW}),
         )
 
 
@@ -322,7 +322,7 @@ async def test_local_remote_store_is_durable_atomic_and_contractual(
         )
         == first
     )
-    updated = first.model_copy(update={"poll_attempts": 1})
+    updated = first.model_copy(update={"poll_attempts": 1, "last_polled_at": NOW})
     await store.checkpoint(previous=first, current=updated)
     assert deserialize_remote_video_job(target.read_bytes()) == updated
     assert (
@@ -333,6 +333,41 @@ async def test_local_remote_store_is_durable_atomic_and_contractual(
         )
         == updated
     )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "publication_expires_at",
+        "submitted_at",
+        "last_polled_at",
+        "terminal_at",
+        "pricing_snapshot_at",
+    ],
+)
+def test_remote_record_rejects_naive_timestamps(field: str) -> None:
+    naive = NOW.replace(tzinfo=None)
+    updates: dict[str, object] = {field: naive}
+    if field == "last_polled_at":
+        updates["poll_attempts"] = 1
+    if field == "terminal_at":
+        updates["remote_status"] = OpenRouterRemoteStatus.FAILED
+    with pytest.raises(ValidationError, match="timezone-aware"):
+        record(**updates)
+
+
+@pytest.mark.asyncio
+async def test_remote_store_terminal_state_is_immutable() -> None:
+    store = InMemoryRemoteVideoJobStore()
+    terminal = record(
+        remote_status=OpenRouterRemoteStatus.FAILED,
+        terminal_at=NOW,
+    )
+    await store.create(terminal)
+
+    changed = terminal.model_copy(update={"reported_cost_usd": Decimal("0.05")})
+    with pytest.raises(RemoteVideoJobConflictError, match="terminal"):
+        await store.checkpoint(previous=terminal, current=changed)
 
 
 @pytest.mark.parametrize(

@@ -45,6 +45,10 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _reject_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant is not allowed: {value}")
+
+
 def _validate_header_value(name: str, value: str, *, maximum: int) -> str:
     stripped = value.strip()
     if not stripped or len(stripped) > maximum or any(ord(char) < 32 for char in stripped):
@@ -53,9 +57,13 @@ def _validate_header_value(name: str, value: str, *, maximum: int) -> str:
 
 
 def load_strict_json_object(value: str) -> dict[str, Any]:
-    """Decode one JSON object while rejecting duplicate keys."""
+    """Decode one JSON object while rejecting duplicates and non-standard numbers."""
 
-    result = json.loads(value, object_pairs_hook=_reject_duplicate_keys)
+    result = json.loads(
+        value,
+        parse_constant=_reject_constant,
+        object_pairs_hook=_reject_duplicate_keys,
+    )
     if not isinstance(result, dict):
         raise ValueError("JSON value must be an object")
     return result
@@ -75,6 +83,8 @@ class OpenAICompatibleResponsesClient:
         http_referer: str | None = None,
         app_title: str | None = None,
         client: httpx.AsyncClient | None = None,
+        owns_client: bool = False,
+        max_response_bytes: int = 2_000_000,
         sleeper: Sleeper = asyncio.sleep,
     ) -> None:
         parsed_url = httpx.URL(base_url)
@@ -82,10 +92,15 @@ class OpenAICompatibleResponsesClient:
             raise ValueError("provider base URL must be HTTPS and contain no credentials")
         if not api_key.strip():
             raise ValueError("provider credential is missing")
+        if not 1 <= max_response_bytes <= 20_000_000:
+            raise ValueError("provider response size limit is outside safe bounds")
         self._attempts = max_transport_attempts
         self._retry_delay = retry_base_delay_seconds
         self._sleeper = sleeper
         self._client = client
+        self._owns_client = client is None or owns_client
+        self._closed = False
+        self._max_response_bytes = max_response_bytes
         self._base_url = str(parsed_url).rstrip("/")
         self._timeout = httpx.Timeout(timeout_seconds)
         self._headers = {
@@ -103,38 +118,43 @@ class OpenAICompatibleResponsesClient:
                 raise ValueError("HTTP-Referer is invalid")
             self._headers["HTTP-Referer"] = referer
         if app_title is not None:
-            self._headers["X-Title"] = _validate_header_value(
-                "X-Title", app_title, maximum=200
-            )
+            self._headers["X-Title"] = _validate_header_value("X-Title", app_title, maximum=200)
 
     async def post(self, payload: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+        if self._closed:
+            raise OpenAICompatibleError("provider transport is closed")
         last_error: OpenAICompatibleError | None = None
         for attempt in range(1, self._attempts + 1):
             try:
-                response = await self._get_client().post(
+                async with self._get_client().stream(
+                    "POST",
                     f"{self._base_url}/chat/completions",
                     json=payload,
                     headers=self._headers,
                     timeout=self._timeout,
-                )
-                self._raise_for_status(response.status_code)
-                try:
-                    body = json.loads(
-                        response.content.decode("utf-8", errors="strict"),
-                        object_pairs_hook=_reject_duplicate_keys,
+                    follow_redirects=False,
+                ) as response:
+                    self._raise_for_status(response.status_code)
+                    try:
+                        content = await _read_bounded_response(
+                            response,
+                            maximum=self._max_response_bytes,
+                        )
+                        body = json.loads(
+                            content.decode("utf-8", errors="strict"),
+                            parse_constant=_reject_constant,
+                            object_pairs_hook=_reject_duplicate_keys,
+                        )
+                    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                        raise OpenAICompatibleProtocolError(
+                            "provider returned invalid JSON"
+                        ) from exc
+                    if not isinstance(body, dict):
+                        raise OpenAICompatibleProtocolError("provider response must be an object")
+                    request_id = response.headers.get("x-request-id") or self.safe_string(
+                        body.get("id")
                     )
-                except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-                    raise OpenAICompatibleProtocolError(
-                        "provider returned invalid JSON"
-                    ) from exc
-                if not isinstance(body, dict):
-                    raise OpenAICompatibleProtocolError(
-                        "provider response must be an object"
-                    )
-                request_id = response.headers.get("x-request-id") or self.safe_string(
-                    body.get("id")
-                )
-                return body, request_id
+                    return body, request_id
             except asyncio.CancelledError:
                 raise
             except (
@@ -147,9 +167,7 @@ class OpenAICompatibleResponsesClient:
                 last_error = OpenAICompatibleTimeoutError("provider request timed out")
                 last_error.__cause__ = exc
             except httpx.RequestError as exc:
-                last_error = OpenAICompatibleUnavailableError(
-                    "provider connection failed"
-                )
+                last_error = OpenAICompatibleUnavailableError("provider connection failed")
                 last_error.__cause__ = exc
             if attempt < self._attempts:
                 await self._sleeper(self._retry_delay * (2 ** (attempt - 1)))
@@ -161,9 +179,7 @@ class OpenAICompatibleResponsesClient:
         if 200 <= status < 300:
             return
         if status in {401, 403}:
-            raise OpenAICompatibleAuthenticationError(
-                "provider rejected authentication"
-            )
+            raise OpenAICompatibleAuthenticationError("provider rejected authentication")
         if status == 429:
             raise OpenAICompatibleRateLimitError("provider rate limit reached")
         if status in {408, 425} or status >= 500:
@@ -177,9 +193,7 @@ class OpenAICompatibleResponsesClient:
     def extract_single_output_text(body: dict[str, Any]) -> str:
         choices = body.get("choices")
         if not isinstance(choices, list) or len(choices) != 1:
-            raise OpenAICompatibleProtocolError(
-                "response must contain exactly one choice"
-            )
+            raise OpenAICompatibleProtocolError("response must contain exactly one choice")
         choice = choices[0]
         if not isinstance(choice, dict):
             raise OpenAICompatibleProtocolError("provider choice is invalid")
@@ -205,17 +219,40 @@ class OpenAICompatibleResponsesClient:
 
     @staticmethod
     def safe_int(value: Any) -> int | None:
-        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+        return (
+            value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+        )
 
     @staticmethod
     def safe_string(value: Any) -> str | None:
         return value if isinstance(value, str) and value else None
 
     async def close(self) -> None:
-        if self._client is not None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._owns_client and self._client is not None:
             await self._client.aclose()
 
     def _get_client(self) -> httpx.AsyncClient:
+        if self._closed:
+            raise OpenAICompatibleError("provider transport is closed")
         if self._client is None:
-            self._client = httpx.AsyncClient()
+            self._client = httpx.AsyncClient(
+                follow_redirects=False,
+                trust_env=False,
+            )
         return self._client
+
+
+async def _read_bounded_response(
+    response: httpx.Response,
+    *,
+    maximum: int,
+) -> bytes:
+    result = bytearray()
+    async for chunk in response.aiter_bytes():
+        result.extend(chunk)
+        if len(result) > maximum:
+            raise OpenAICompatibleProtocolError("provider response exceeded the safe size limit")
+    return bytes(result)

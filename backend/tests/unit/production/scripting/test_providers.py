@@ -45,6 +45,7 @@ def provider(handler, *, attempts=1, sleeper=asyncio.sleep, **provider_options):
             model="google/script-requested",
             prompt_builder=ScriptingPromptBuilder(max_plan_bytes=100_000),
             client=client,
+            owns_client=True,
             max_transport_attempts=attempts,
             sleeper=sleeper,
             monotonic_clock=lambda: 1.0,
@@ -204,9 +205,7 @@ async def test_openrouter_provider_translates_timeout_connection_and_bad_contrac
         await real.generate_script(scripting_request)
     await real.close()
 
-    real, _ = provider(
-        lambda request: httpx.Response(200, json=body("not-json"), request=request)
-    )
+    real, _ = provider(lambda request: httpx.Response(200, json=body("not-json"), request=request))
     with pytest.raises(ScriptingProviderContractError):
         await real.generate_script(scripting_request)
     await real.close()
@@ -214,9 +213,7 @@ async def test_openrouter_provider_translates_timeout_connection_and_bad_contrac
     wrong = await valid_script_payload(scripting_request)
     wrong["scenes"][0]["source_scene_number"] = 2
     wrong["scenes"][1]["source_scene_number"] = 1
-    real, _ = provider(
-        lambda request: httpx.Response(200, json=body(wrong), request=request)
-    )
+    real, _ = provider(lambda request: httpx.Response(200, json=body(wrong), request=request))
     with pytest.raises(ScriptingProviderContractError):
         await real.generate_script(scripting_request)
     await real.close()

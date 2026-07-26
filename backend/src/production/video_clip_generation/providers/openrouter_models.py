@@ -98,6 +98,13 @@ class PublishedVideoFrameImage(ContractModel):
     publication_id: str = Field(min_length=1, max_length=200)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("expires_at")
+    @classmethod
+    def aware_expiry(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("published frame expiry must be timezone-aware")
+        return value
+
     @field_validator("metadata")
     @classmethod
     def safe_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
@@ -151,9 +158,7 @@ class RemoteVideoJobRecord(ContractModel):
     schema_version: str = "1.0.0"
     job_id: str
     attempt_number: int = Field(ge=1)
-    visual_asset_id: str = Field(
-        pattern=r"^asset-s[0-9]{3}-q[0-9]{3}-v[0-9]{3}$"
-    )
+    visual_asset_id: str = Field(pattern=r"^asset-s[0-9]{3}-q[0-9]{3}-v[0-9]{3}$")
     provider: str = "openrouter"
     model: str
     source_image_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -177,6 +182,19 @@ class RemoteVideoJobRecord(ContractModel):
     pricing_sku: str
     safe_remote_path: str
 
+    @field_validator(
+        "publication_expires_at",
+        "submitted_at",
+        "last_polled_at",
+        "terminal_at",
+        "pricing_snapshot_at",
+    )
+    @classmethod
+    def aware_timestamps(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("remote video timestamps must be timezone-aware")
+        return value
+
     @model_validator(mode="after")
     def validate_remote_job(self) -> RemoteVideoJobRecord:
         try:
@@ -191,8 +209,7 @@ class RemoteVideoJobRecord(ContractModel):
                 character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
                 for character in self.remote_job_id
             )
-            or self.safe_remote_path
-            != f"/api/v1/videos/{self.remote_job_id}"
+            or self.safe_remote_path != f"/api/v1/videos/{self.remote_job_id}"
         ):
             raise ValueError("remote video path is not contractual")
         terminal = self.remote_status in {
@@ -203,9 +220,19 @@ class RemoteVideoJobRecord(ContractModel):
         }
         if terminal != (self.terminal_at is not None):
             raise ValueError("remote video terminal timestamp is inconsistent")
-        if (
-            self.remote_content_available
-            != (self.remote_status is OpenRouterRemoteStatus.COMPLETED)
+        if self.remote_content_available != (
+            self.remote_status is OpenRouterRemoteStatus.COMPLETED
         ):
             raise ValueError("remote video content availability is inconsistent")
+        if (
+            self.publication_expires_at is not None
+            and self.publication_expires_at <= self.submitted_at
+        ):
+            raise ValueError("remote video publication expired before submission")
+        if self.last_polled_at is not None and self.last_polled_at < self.submitted_at:
+            raise ValueError("remote video poll timestamp precedes submission")
+        if self.terminal_at is not None and self.terminal_at < self.submitted_at:
+            raise ValueError("remote video terminal timestamp precedes submission")
+        if (self.poll_attempts == 0) != (self.last_polled_at is None):
+            raise ValueError("remote video poll timestamp and attempt count differ")
         return self

@@ -133,9 +133,7 @@ class LocalRemoteVideoJobStore:
         self._confinement.reject_unsafe_components(path)
         with self._exclusive_lock(path):
             if path.exists() or path.is_symlink():
-                raise RemoteVideoJobConflictError(
-                    "remote video job already exists"
-                )
+                raise RemoteVideoJobConflictError("remote video job already exists")
             self._replace(path, serialize_remote_video_job(record))
 
     def _checkpoint_sync(
@@ -145,9 +143,7 @@ class LocalRemoteVideoJobStore:
         path = self._path(UUID(previous.job_id), previous.attempt_number, previous.visual_asset_id)
         with self._exclusive_lock(path):
             if self._read_file(path) != previous:
-                raise RemoteVideoJobConflictError(
-                    "remote video job changed concurrently"
-                )
+                raise RemoteVideoJobConflictError("remote video job changed concurrently")
             self._replace(path, serialize_remote_video_job(current))
 
     def _read_file(self, path: Path) -> RemoteVideoJobRecord:
@@ -155,7 +151,8 @@ class LocalRemoteVideoJobStore:
             self._confinement.reject_unsafe_file(path)
             if path.stat().st_nlink != 1:
                 raise RemoteVideoJobStoreError("remote job hard links are not allowed")
-            content = path.read_bytes()
+            with path.open("rb") as stream:
+                content = stream.read(self._maximum + 1)
             if not content or len(content) > self._maximum:
                 raise RemoteVideoJobStoreError("remote job file size is invalid")
             return deserialize_remote_video_job(content)
@@ -221,9 +218,7 @@ class LocalRemoteVideoJobStore:
                 "remote video job is locked by another worker"
             ) from exc
         except OSError as exc:
-            raise RemoteVideoJobStoreError(
-                "remote video job lock could not be created"
-            ) from exc
+            raise RemoteVideoJobStoreError("remote video job lock could not be created") from exc
         finally:
             if descriptor >= 0:
                 os.close(descriptor)
@@ -237,6 +232,10 @@ class LocalRemoteVideoJobStore:
 
 
 def _validate_transition(previous: RemoteVideoJobRecord, current: RemoteVideoJobRecord) -> None:
+    try:
+        current = RemoteVideoJobRecord.model_validate(current.model_dump(mode="python"))
+    except ValueError as exc:
+        raise RemoteVideoJobConflictError("remote video job state is invalid") from exc
     immutable = (
         "job_id",
         "attempt_number",
@@ -249,7 +248,9 @@ def _validate_transition(previous: RemoteVideoJobRecord, current: RemoteVideoJob
         "provider_request_fingerprint",
         "publication_provider",
         "publication_id",
+        "publication_expires_at",
         "remote_job_id",
+        "submitted_at",
         "estimated_cost_usd",
         "pricing_snapshot_at",
         "pricing_sku",
@@ -257,8 +258,25 @@ def _validate_transition(previous: RemoteVideoJobRecord, current: RemoteVideoJob
     )
     if any(getattr(previous, item) != getattr(current, item) for item in immutable):
         raise RemoteVideoJobConflictError("remote video job immutable fields changed")
+    if (
+        previous.remote_generation_id is not None
+        and current.remote_generation_id != previous.remote_generation_id
+    ):
+        raise RemoteVideoJobConflictError("remote generation identity changed")
     if current.poll_attempts < previous.poll_attempts:
         raise RemoteVideoJobConflictError("remote poll attempts cannot decrease")
+    if previous.last_polled_at is not None and (
+        current.last_polled_at is None or current.last_polled_at < previous.last_polled_at
+    ):
+        raise RemoteVideoJobConflictError("remote poll timestamp cannot decrease")
+    terminal = {
+        OpenRouterRemoteStatus.COMPLETED,
+        OpenRouterRemoteStatus.FAILED,
+        OpenRouterRemoteStatus.CANCELLED,
+        OpenRouterRemoteStatus.EXPIRED,
+    }
+    if previous.remote_status in terminal and current != previous:
+        raise RemoteVideoJobConflictError("remote terminal state cannot change")
 
 
 def _is_reusable(record: RemoteVideoJobRecord) -> bool:

@@ -55,6 +55,7 @@ class OpenRouterScriptingProvider:
         http_referer: str | None = None,
         app_title: str | None = None,
         client: httpx.AsyncClient | None = None,
+        owns_client: bool = False,
         sleeper: Sleeper = asyncio.sleep,
         monotonic_clock: Callable[[], float] = monotonic,
     ) -> None:
@@ -84,6 +85,7 @@ class OpenRouterScriptingProvider:
                 http_referer=http_referer,
                 app_title=app_title,
                 client=client,
+                owns_client=owns_client,
                 sleeper=sleeper,
             )
         except ValueError as exc:
@@ -96,9 +98,7 @@ class OpenRouterScriptingProvider:
         self._temperature = temperature
         self._monotonic = monotonic_clock
 
-    async def generate_script(
-        self, request: ScriptingProviderRequest
-    ) -> ScriptingProviderResponse:
+    async def generate_script(self, request: ScriptingProviderRequest) -> ScriptingProviderResponse:
         try:
             prompt = self._prompt_builder.build(request)
         except (TypeError, ValueError) as exc:
@@ -137,15 +137,11 @@ class OpenRouterScriptingProvider:
                 "scripting provider rejected authentication"
             ) from exc
         except OpenAICompatibleRateLimitError as exc:
-            raise ScriptingProviderRateLimitError(
-                "scripting provider rate limit reached"
-            ) from exc
+            raise ScriptingProviderRateLimitError("scripting provider rate limit reached") from exc
         except OpenAICompatibleTimeoutError as exc:
             raise ScriptingProviderTimeoutError("scripting request timed out") from exc
         except OpenAICompatibleUnavailableError as exc:
-            raise ScriptingProviderUnavailableError(
-                "scripting provider is unavailable"
-            ) from exc
+            raise ScriptingProviderUnavailableError("scripting provider is unavailable") from exc
         except OpenAICompatibleProtocolError as exc:
             raise ScriptingProviderResponseError(
                 "scripting provider returned an invalid response"

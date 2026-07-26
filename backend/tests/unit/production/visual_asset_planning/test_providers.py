@@ -62,6 +62,7 @@ def provider(handler, *, attempts=1, sleeper=asyncio.sleep, **overrides):
         "model": "anthropic/visual-planner",
         "prompt_builder": VisualAssetPlanningPromptBuilder(max_scene_plan_bytes=100_000),
         "client": client,
+        "owns_client": True,
         "max_transport_attempts": attempts,
         "sleeper": sleeper,
         "monotonic_clock": lambda: 1.0,
