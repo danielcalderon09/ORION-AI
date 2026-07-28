@@ -1,0 +1,23 @@
+{
+  "blind_sample_scores": [],
+  "completion_timestamp": null,
+  "consent": {
+    "evaluation_data_minimization_accepted": false,
+    "independent_scoring_confirmed": false,
+    "provider_identity_not_investigated": false
+  },
+  "evaluator_metadata": {
+    "audio_playback_device_category": null,
+    "colombian_spanish_familiarity": null,
+    "evaluator_id": null,
+    "optional_safe_notes": null,
+    "spanish_fluency_category": null
+  },
+  "evaluator_package_id": null,
+  "forced_choices": [],
+  "normalization_specification_hash": "9296d46cdf8ebdf0f3f6a2e62f62419621aa9bc3c03d06417f7bb0ada2a2650d",
+  "schema_version": "1.0.0",
+  "scorecard_id": null,
+  "status": "template",
+  "test_plan_hash": "ba6f539046dfddb07475f9fe65b5bf74c53c22ed2e89366ead1d1523c8dbde5c"
+}

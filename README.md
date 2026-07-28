@@ -125,6 +125,13 @@ se implemento integracion ni se activo gasto. Consulta
 [`docs/PRODUCTION_TTS_PROVIDER_EVALUATION.md`](docs/PRODUCTION_TTS_PROVIDER_EVALUATION.md)
 y [`docs/adrs/019-real-tts-provider-selection.md`](docs/adrs/019-real-tts-provider-selection.md).
 
+La preparacion del listening test define ocho muestras publicas, tres slots
+bloqueados, 24 unidades no autorizadas, normalizacion comun, blinding HMAC,
+scorecards, umbrales criticos y un techo futuro de USD 10 que no autoriza
+gasto. No genera audio ni ejecuta el test. Consulta
+[`docs/PRODUCTION_TTS_LISTENING_TEST_PREPARATION.md`](docs/PRODUCTION_TTS_LISTENING_TEST_PREPARATION.md)
+y [`docs/PRODUCTION_TTS_LISTENING_TEST_RUNBOOK.md`](docs/PRODUCTION_TTS_LISTENING_TEST_RUNBOOK.md).
+
 La infraestructura de publicacion segura es un bounded context independiente y desactivado por
 defecto. Publica temporalmente solo bytes ya verificados, con manifiesto durable, expiracion,
 recovery, cleanup y reconciliacion de solo lectura. Incluye adaptadores `null` y filesystem de

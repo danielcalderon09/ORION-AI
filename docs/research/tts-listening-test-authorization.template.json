@@ -1,0 +1,23 @@
+{
+  "approval_reference": null,
+  "authorized_at": null,
+  "authorized_by_role": null,
+  "authorized_candidate_ids": [],
+  "candidate_snapshot_hash": "ccd1a1c7691770a1d2e064f6d39c957970730cf7f66ad5b4142807a0a00c6743",
+  "commercial_review_approved": false,
+  "currency": "USD",
+  "execution_environment": null,
+  "expires_at": null,
+  "generation_plan_hash": "142eeb2fc5a61d065b523b9523ae0261bd74bef93be7b149e2f31ad1cfb61aa7",
+  "per_candidate_budget_ceiling": null,
+  "per_generation_unit_ceiling": null,
+  "pricing_verified_at": null,
+  "regional_availability_verified": false,
+  "research_snapshot_hash": "7fcfb48e479a50e01b78b90175bddadb714a9b6ee161f28211b97898e61de005",
+  "retention_review_approved": false,
+  "schema_version": "1.0.0",
+  "script_snapshot_hash": "6d689220c423425ede6f9309a973d422225ba5f3cdbc5264032fc5297644f515",
+  "status": "draft",
+  "test_plan_hash": "ba6f539046dfddb07475f9fe65b5bf74c53c22ed2e89366ead1d1523c8dbde5c",
+  "total_budget_ceiling": null
+}

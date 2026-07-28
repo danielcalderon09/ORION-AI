@@ -1,5 +1,20 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 5G.3B
+
+El listening test futuro ya tiene un paquete reproducible pero no ejecutable:
+tres candidatos bloqueados, ocho muestras espanolas publicas y versionadas, 24
+unidades `not_authorized`/`blocked`/`absent`, hashes encadenados, contrato de
+normalizacion, blinding HMAC sin secret comprometido, scorecards, agregacion
+descriptiva y reglas criticas fijadas antes de conocer resultados.
+
+USD 10 es solo el techo de politica para una autorizacion futura no comprometida
+en Git. No se genero audio, no se uso cuenta, no se hizo request, no se
+selecciono provider y ADR-019 sigue Deferred. `simulated` continua activo,
+billable speech sigue false y remote provider sigue disabled. La siguiente
+fase posible es revisar precios, terminos y disponibilidad y solicitar una
+autorizacion separada para ejecutar el test controlado; esta fase no la concede.
+
 ## Estado posterior a Fase 5G.3
 
 La evaluacion fechada de OpenAI, ElevenLabs, Azure AI Speech, Google Cloud TTS

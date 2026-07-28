@@ -133,6 +133,22 @@ human-quality narration.
 - Account-specific quotas and negotiated billing.
 - Synchronous timeout ambiguity where the provider has no durable identity.
 
+## Phase 5G.3B preparation follow-up
+
+The controlled-test preparation package is documented in
+[`../PRODUCTION_TTS_LISTENING_TEST_PREPARATION.md`](../PRODUCTION_TTS_LISTENING_TEST_PREPARATION.md)
+and
+[`../PRODUCTION_TTS_LISTENING_TEST_RUNBOOK.md`](../PRODUCTION_TTS_LISTENING_TEST_RUNBOOK.md).
+
+Preparation does not authorize execution. The candidate slots, generation
+units, authorization template, scorecards, and results template are committed
+in blocked or empty states. A future test needs separate current-price,
+privacy, commercial, regional, budget, and execution approval.
+
+Listening results do not automatically select a provider. Accepting an exact
+provider/model/voice strategy still requires another ADR. This ADR remains
+Deferred.
+
 ## Conditions that invalidate this decision
 
 Review immediately if:

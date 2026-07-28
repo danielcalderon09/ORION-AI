@@ -1,0 +1,271 @@
+{
+  "created_at": "2026-07-28T13:00:00Z",
+  "normalization_policy": {
+    "abbreviation_policy": "preserve_exactly",
+    "decimal_separator_policy": "preserve_spanish_decimal_comma",
+    "ellipsis_policy": "preserve_unicode_ellipsis",
+    "newline_policy": "normalize_crlf_and_cr_to_lf_then_reject_multiline_samples",
+    "punctuation_policy": "preserve_all_meaningful_punctuation",
+    "quote_policy": "preserve_code_points_without_smart_quote_substitution",
+    "translation_policy": "forbidden",
+    "unicode_normalization": "NFC",
+    "whitespace_policy": "trim_outer_ascii_spaces_collapse_repeated_ascii_spaces_reject_other_whitespace"
+  },
+  "samples": [
+    {
+      "allowed_for_external_submission": true,
+      "category": "neutral_narration",
+      "critical_tokens": [
+        "historia",
+        "video"
+      ],
+      "error_categories": [
+        "content_substitution",
+        "pronunciation",
+        "truncation",
+        "unnatural_pause"
+      ],
+      "expected_duration_range_ms": {
+        "maximum": 11000,
+        "minimum": 7000
+      },
+      "locale": "es-419",
+      "normalized_character_count": 110,
+      "normalized_text_hash": "7877489c92575d49104551bdf327dd1ea0653211201b121350bf4032a8218ad1",
+      "normalized_utf8_byte_count": 111,
+      "privacy_classification": "public_test_text",
+      "pronunciation_notes": [
+        "Neutral Latin American delivery; do not overemphasize video."
+      ],
+      "sample_id": "es-neutral-001",
+      "schema_version": "1.0.0",
+      "text": "Hoy exploramos una idea sencilla: convertir una historia breve en un video claro, cercano y fácil de recordar."
+    },
+    {
+      "allowed_for_external_submission": true,
+      "category": "numbers_dates_currency",
+      "critical_tokens": [
+        "17 de noviembre de 2026",
+        "37,5 por ciento",
+        "1.249 pesos con 50 centavos"
+      ],
+      "error_categories": [
+        "critical_currency_error",
+        "critical_date_error",
+        "critical_number_error",
+        "pronunciation"
+      ],
+      "expected_duration_range_ms": {
+        "maximum": 14000,
+        "minimum": 9000
+      },
+      "locale": "es-419",
+      "normalized_character_count": 120,
+      "normalized_text_hash": "9364aa79f4b512b4acdb2cc2e4f5a17d101c1b1e25c534090ea8d98bac450abb",
+      "normalized_utf8_byte_count": 122,
+      "privacy_classification": "public_test_text",
+      "pronunciation_notes": [
+        "Read the date in Spanish order.",
+        "Preserve the decimal comma and thousands separator.",
+        "Do not change the currency."
+      ],
+      "sample_id": "es-numbers-002",
+      "schema_version": "1.0.0",
+      "text": "El martes 17 de noviembre de 2026, el proyecto alcanzó un 37,5 por ciento de avance y costó 1.249 pesos con 50 centavos."
+    },
+    {
+      "allowed_for_external_submission": true,
+      "category": "abbreviations_technical_terms",
+      "critical_tokens": [
+        "ORION",
+        "IA",
+        "API",
+        "WAV",
+        "veinticuatro kilohercios",
+        "DaVinci Resolve"
+      ],
+      "error_categories": [
+        "abbreviation_error",
+        "content_substitution",
+        "pronunciation",
+        "technical_term_error"
+      ],
+      "expected_duration_range_ms": {
+        "maximum": 14000,
+        "minimum": 9000
+      },
+      "locale": "es-419",
+      "normalized_character_count": 109,
+      "normalized_text_hash": "2b6a2a0125ee49e749814b731008747ff5e30912a056b6721064be5acc661756",
+      "normalized_utf8_byte_count": 110,
+      "privacy_classification": "public_test_text",
+      "pronunciation_notes": [
+        "Preserve every abbreviation without expansion or translation.",
+        "DaVinci Resolve may retain its conventional product pronunciation."
+      ],
+      "sample_id": "es-technical-003",
+      "schema_version": "1.0.0",
+      "text": "ORION usa IA, una API y audio WAV a veinticuatro kilohercios antes de preparar la edición en DaVinci Resolve."
+    },
+    {
+      "allowed_for_external_submission": true,
+      "category": "colombian_place_names",
+      "critical_tokens": [
+        "Bogotá",
+        "Medellín",
+        "Chocó",
+        "río Magdalena"
+      ],
+      "error_categories": [
+        "critical_place_name_error",
+        "pronunciation",
+        "stress_error",
+        "truncation"
+      ],
+      "expected_duration_range_ms": {
+        "maximum": 12000,
+        "minimum": 8000
+      },
+      "locale": "es-419",
+      "normalized_character_count": 100,
+      "normalized_text_hash": "90c68d065f7b086c541452fa584584366a6e82147ff05613d5dab7fff9567510",
+      "normalized_utf8_byte_count": 107,
+      "privacy_classification": "public_test_text",
+      "pronunciation_notes": [
+        "Preserve written accents in Bogotá, Medellín, and Chocó.",
+        "Use a natural Colombian-Spanish place-name reading."
+      ],
+      "sample_id": "es-colombia-004",
+      "schema_version": "1.0.0",
+      "text": "Camila viajó de Bogotá a Medellín, pasó por el Chocó y terminó su recorrido cerca del río Magdalena."
+    },
+    {
+      "allowed_for_external_submission": true,
+      "category": "punctuation_pauses",
+      "critical_tokens": [
+        "¿Qué cambió?",
+        "Primero",
+        "después",
+        "al final…"
+      ],
+      "error_categories": [
+        "content_substitution",
+        "ellipsis_error",
+        "question_intonation_error",
+        "unnatural_pause"
+      ],
+      "expected_duration_range_ms": {
+        "maximum": 13000,
+        "minimum": 8000
+      },
+      "locale": "es-419",
+      "normalized_character_count": 95,
+      "normalized_text_hash": "cb51fe98257557e74c7104d8b906e0dc06b167a3f8b0341f88b8f79c4bd240c5",
+      "normalized_utf8_byte_count": 101,
+      "privacy_classification": "public_test_text",
+      "pronunciation_notes": [
+        "Preserve the opening question mark.",
+        "The Unicode ellipsis indicates an intentional pause and must not be replaced."
+      ],
+      "sample_id": "es-punctuation-005",
+      "schema_version": "1.0.0",
+      "text": "¿Qué cambió? Primero, la voz; después, el ritmo. Y al final… una pausa breve, pero intencional."
+    },
+    {
+      "allowed_for_external_submission": true,
+      "category": "foreign_company_names",
+      "critical_tokens": [
+        "OpenAI",
+        "ElevenLabs",
+        "Microsoft Azure",
+        "Google Cloud",
+        "Amazon Polly"
+      ],
+      "error_categories": [
+        "content_substitution",
+        "foreign_name_error",
+        "pronunciation",
+        "truncation"
+      ],
+      "expected_duration_range_ms": {
+        "maximum": 11000,
+        "minimum": 7000
+      },
+      "locale": "es-419",
+      "normalized_character_count": 109,
+      "normalized_text_hash": "98d7c2fca96c86183f3151448964208c92a85bd279dd4c41e33c78722001a408",
+      "normalized_utf8_byte_count": 109,
+      "privacy_classification": "public_test_text",
+      "pronunciation_notes": [
+        "Do not translate, omit, or reorder company and product names."
+      ],
+      "sample_id": "es-foreign-006",
+      "schema_version": "1.0.0",
+      "text": "OpenAI, ElevenLabs, Microsoft Azure, Google Cloud y Amazon Polly ofrecen enfoques distintos para texto a voz."
+    },
+    {
+      "allowed_for_external_submission": true,
+      "category": "calm_expressive_closing",
+      "critical_tokens": [
+        "confiable",
+        "natural",
+        "serena"
+      ],
+      "error_categories": [
+        "content_substitution",
+        "overacting",
+        "prosody_error",
+        "unnatural_pause"
+      ],
+      "expected_duration_range_ms": {
+        "maximum": 11000,
+        "minimum": 7000
+      },
+      "locale": "es-419",
+      "normalized_character_count": 105,
+      "normalized_text_hash": "7a45e0765b37a3f1fb10bdb638d37c298b4c4228f5b04a467eb878189549fd9d",
+      "normalized_utf8_byte_count": 106,
+      "privacy_classification": "public_test_text",
+      "pronunciation_notes": [
+        "Calm, restrained closing; avoid promotional overstatement."
+      ],
+      "sample_id": "es-closing-007",
+      "schema_version": "1.0.0",
+      "text": "No buscamos exagerar: queremos una voz confiable, natural y serena que acompañe la historia sin distraer."
+    },
+    {
+      "allowed_for_external_submission": true,
+      "category": "scene_to_scene_continuity",
+      "critical_tokens": [
+        "primera escena",
+        "escena siguiente",
+        "misma voz",
+        "mismo ritmo"
+      ],
+      "error_categories": [
+        "content_substitution",
+        "prosody_error",
+        "truncation",
+        "voice_drift"
+      ],
+      "expected_duration_range_ms": {
+        "maximum": 14000,
+        "minimum": 9000
+      },
+      "locale": "es-419",
+      "normalized_character_count": 134,
+      "normalized_text_hash": "4ef3b4b44beaa9d8fbcbd8305da92e2ac30799b34303c689d8f87af1014a0de4",
+      "normalized_utf8_byte_count": 136,
+      "privacy_classification": "public_test_text",
+      "pronunciation_notes": [
+        "Compare this sample after the neutral opening to detect voice or pacing drift."
+      ],
+      "sample_id": "es-continuity-008",
+      "schema_version": "1.0.0",
+      "text": "La primera escena presenta el contexto. La escena siguiente continúa la idea con la misma voz, el mismo ritmo y una transición serena."
+    }
+  ],
+  "schema_version": "1.0.0",
+  "script_id": "orion-tts-listening-es-v1",
+  "script_version_hash": "ee9d6e5efe0982de2d2fd95dce33a673af7d3ffa5b319ee01d6ad3492ee57b7d"
+}

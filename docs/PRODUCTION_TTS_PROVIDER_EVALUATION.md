@@ -511,6 +511,22 @@ score with measured evidence. A provider must clear minimum thresholds for
 pronunciation, consistency, no critical number/name errors, and cost ceiling.
 The ADR can become accepted only after those results and legal approval.
 
+## Phase 5G.3B preparation package
+
+Phase 5G.3B converts this future plan into strict, linked, offline artifacts
+without executing it. The package is documented in
+[`PRODUCTION_TTS_LISTENING_TEST_PREPARATION.md`](PRODUCTION_TTS_LISTENING_TEST_PREPARATION.md)
+and
+[`PRODUCTION_TTS_LISTENING_TEST_RUNBOOK.md`](PRODUCTION_TTS_LISTENING_TEST_RUNBOOK.md).
+
+It preserves Azure, Google, and Amazon Polly as blocked candidate slots; adds
+an eighth continuity sample; fixes common audio-normalization, evaluator,
+scoring, critical-failure, and stopping rules; and expands the matrix to 24
+generation units. Every unit remains `not_authorized`, `blocked`, and `absent`.
+The USD 10 amount remains a policy ceiling, not authorization.
+
+No Phase 5G.3 ranking or provider decision changed.
+
 ## Security and offline confirmation
 
 Phase 5G.3 used only public, unauthenticated documentation. It created no

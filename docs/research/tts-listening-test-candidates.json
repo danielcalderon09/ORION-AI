@@ -1,0 +1,231 @@
+{
+  "based_on_research_artifact": "docs/research/tts-provider-evaluation.json",
+  "blocking_conditions": [
+    "candidate_model_unselected",
+    "candidate_voice_unselected",
+    "commercial_review_incomplete",
+    "current_price_unverified",
+    "regional_availability_unverified",
+    "retention_review_incomplete",
+    "separate_execution_authorization_absent"
+  ],
+  "candidates": [
+    {
+      "availability_status": "unverified",
+      "blocking_reasons": [
+        "candidate_model_unselected",
+        "candidate_voice_unselected",
+        "commercial_review_incomplete",
+        "current_price_unverified",
+        "regional_availability_unverified",
+        "retention_review_incomplete",
+        "separate_execution_authorization_absent"
+      ],
+      "candidate_id": "candidate-azure-01",
+      "commercial_review_status": "pending",
+      "currency": null,
+      "disclosure_requirements": [
+        "provider_specific_disclosure_review_pending"
+      ],
+      "eligibility_status": "blocked",
+      "evidence_snapshot_date": "2026-07-28",
+      "language": "es",
+      "locale": "es-CO",
+      "maximum_authorized_cost": null,
+      "maximum_estimated_cost": null,
+      "normalization_required": true,
+      "pricing_status": "unknown",
+      "provider_display_name": "Microsoft Azure AI Speech",
+      "provider_generation_mode": "synchronous",
+      "provider_id": "azure",
+      "provider_model": null,
+      "provider_native_output": "riff_pcm_s16le_mono_24000_hz",
+      "provider_voice": null,
+      "region": null,
+      "requested_output_format": "wav_pcm_s16le_mono_24000_hz",
+      "retention_review_status": "pending",
+      "source_ids": [
+        "azure-batch",
+        "azure-language",
+        "azure-pricing",
+        "azure-privacy",
+        "azure-product-terms",
+        "azure-rest"
+      ],
+      "target_channel_count": 1,
+      "target_loudness_standard": "ITU-R BS.1770-4 integrated loudness at -16.0 LUFS",
+      "target_sample_rate_hz": 24000,
+      "target_sample_width_bytes": 2,
+      "timing_capability": "word_and_sentence_boundaries_documented_for_batch",
+      "timing_requested": false
+    },
+    {
+      "availability_status": "unverified",
+      "blocking_reasons": [
+        "candidate_model_unselected",
+        "candidate_voice_unselected",
+        "commercial_review_incomplete",
+        "current_price_unverified",
+        "regional_availability_unverified",
+        "retention_review_incomplete",
+        "separate_execution_authorization_absent"
+      ],
+      "candidate_id": "candidate-google-01",
+      "commercial_review_status": "pending",
+      "currency": "USD",
+      "disclosure_requirements": [
+        "provider_specific_disclosure_review_pending"
+      ],
+      "eligibility_status": "blocked",
+      "evidence_snapshot_date": "2026-07-28",
+      "language": "es",
+      "locale": "es-US",
+      "maximum_authorized_cost": null,
+      "maximum_estimated_cost": null,
+      "normalization_required": true,
+      "pricing_status": "requires_same_day_verification",
+      "provider_display_name": "Google Cloud Text-to-Speech",
+      "provider_generation_mode": "synchronous",
+      "provider_id": "google",
+      "provider_model": null,
+      "provider_native_output": "LINEAR16_model_dependent_sample_rate",
+      "provider_voice": null,
+      "region": null,
+      "requested_output_format": "LINEAR16",
+      "retention_review_status": "pending",
+      "source_ids": [
+        "google-data-logging",
+        "google-gemini",
+        "google-pricing",
+        "google-service-terms",
+        "google-sla",
+        "google-ssml",
+        "google-voices"
+      ],
+      "target_channel_count": 1,
+      "target_loudness_standard": "ITU-R BS.1770-4 integrated loudness at -16.0 LUFS",
+      "target_sample_rate_hz": 24000,
+      "target_sample_width_bytes": 2,
+      "timing_capability": "ssml_mark_timepoints_documented",
+      "timing_requested": false
+    },
+    {
+      "availability_status": "unverified",
+      "blocking_reasons": [
+        "candidate_model_unselected",
+        "candidate_voice_unselected",
+        "commercial_review_incomplete",
+        "current_price_unverified",
+        "regional_availability_unverified",
+        "retention_review_incomplete",
+        "separate_execution_authorization_absent"
+      ],
+      "candidate_id": "candidate-polly-01",
+      "commercial_review_status": "pending",
+      "currency": "USD",
+      "disclosure_requirements": [
+        "provider_specific_disclosure_review_pending"
+      ],
+      "eligibility_status": "blocked",
+      "evidence_snapshot_date": "2026-07-28",
+      "language": "es",
+      "locale": "es-MX",
+      "maximum_authorized_cost": null,
+      "maximum_estimated_cost": null,
+      "normalization_required": true,
+      "pricing_status": "requires_same_day_verification",
+      "provider_display_name": "Amazon Polly",
+      "provider_generation_mode": "synchronous",
+      "provider_id": "aws_polly",
+      "provider_model": null,
+      "provider_native_output": "pcm_s16le_mono_16000_hz",
+      "provider_voice": null,
+      "region": null,
+      "requested_output_format": "raw_pcm_s16le_mono_16000_hz",
+      "retention_review_status": "pending",
+      "source_ids": [
+        "aws-ai-opt-out",
+        "aws-limits",
+        "aws-pricing",
+        "aws-service-sla",
+        "aws-service-terms",
+        "aws-speech-marks",
+        "aws-synthesize",
+        "aws-voices"
+      ],
+      "target_channel_count": 1,
+      "target_loudness_standard": "ITU-R BS.1770-4 integrated loudness at -16.0 LUFS",
+      "target_sample_rate_hz": 24000,
+      "target_sample_width_bytes": 2,
+      "timing_capability": "separate_billable_speech_marks_request_documented",
+      "timing_requested": false
+    }
+  ],
+  "created_at": "2026-07-28T13:00:00Z",
+  "eligibility_rules": [
+    "exact_model_and_voice_verified",
+    "exact_current_price_verified",
+    "commercial_review_approved",
+    "retention_review_approved",
+    "regional_availability_verified",
+    "worst_case_cost_within_separate_authorization",
+    "research_snapshot_not_stale",
+    "all_plan_hashes_match"
+  ],
+  "excluded_providers": [
+    {
+      "provider_id": "elevenlabs",
+      "reason": "Excluded from the initial paid test because retention mode, commercial plan, high-rate PCM access, and stable voice selection remain unresolved.",
+      "source_ids": [
+        "eleven-capabilities",
+        "eleven-terms",
+        "eleven-voice-library",
+        "eleven-zrm"
+      ],
+      "status": "excluded_from_initial_test"
+    },
+    {
+      "provider_id": "openai",
+      "reason": "Excluded from the initial paid test because Colombian specificity, timing support, durable submission identity, and the recommended TTS model lifecycle remain insufficiently resolved.",
+      "source_ids": [
+        "openai-api-speech",
+        "openai-model-catalog",
+        "openai-tts-guide"
+      ],
+      "status": "excluded_from_initial_test"
+    }
+  ],
+  "normalization_specification": {
+    "leading_silence_ms": 250,
+    "loudness_measurement": "ITU-R BS.1770-4 integrated loudness",
+    "loudness_target_lufs": "-16.0",
+    "peak_ceiling_dbtp": "-1.0",
+    "permitted_channel_conversion": "deterministic_downmix_to_mono_without_provider_specific_weighting",
+    "permitted_resampling": "single_deterministic_resample_to_24000_hz",
+    "prohibited_transformations": [
+      "artificial_prosody_correction",
+      "denoising",
+      "destructive_clipping",
+      "dynamic_range_enhancement",
+      "provider_specific_equalization",
+      "voice_enhancement"
+    ],
+    "retain_original_provider_output": true,
+    "silence_policy": "trim_only_external_silence_then_pad_exact_target_do_not_modify_internal_pauses",
+    "target_channel_count": 1,
+    "target_format": "wav_pcm",
+    "target_sample_rate_hz": 24000,
+    "target_sample_width_bytes": 2,
+    "trailing_silence_ms": 250,
+    "validator_version": "1.0.0"
+  },
+  "research_snapshot_hash": "7fcfb48e479a50e01b78b90175bddadb714a9b6ee161f28211b97898e61de005",
+  "review_after": "2026-10-28",
+  "safe_metadata": {
+    "audio_generated": false,
+    "billable_request_authorized": false,
+    "provider_selected": false,
+    "test_executed": false
+  },
+  "schema_version": "1.0.0"
+}
