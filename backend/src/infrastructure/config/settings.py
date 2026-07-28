@@ -156,6 +156,19 @@ class Settings(BaseSettings):
     ORION_SPEECH_GENERATION_REMOTE_MAX_POLL_ATTEMPTS: int = 120
     ORION_SPEECH_GENERATION_REMOTE_POLL_INTERVAL_SECONDS: float = 5
     ORION_SPEECH_GENERATION_REMOTE_JOB_MAX_BYTES: int = 1_000_000
+    ORION_MUSIC_GENERATION_PROVIDER: Literal["simulated"] = "simulated"
+    ORION_SOUND_EFFECT_GENERATION_PROVIDER: Literal["simulated"] = "simulated"
+    ORION_AUDIO_DESIGN_SAMPLE_RATE_HZ: Literal[24_000] = 24_000
+    ORION_AUDIO_DESIGN_CHANNEL_COUNT: Literal[1] = 1
+    ORION_AUDIO_DESIGN_SAMPLE_WIDTH_BYTES: Literal[2] = 2
+    ORION_AUDIO_DESIGN_MIN_MUSIC_DURATION_MS: int = 1_000
+    ORION_AUDIO_DESIGN_MAX_MUSIC_DURATION_MS: int = 180_000
+    ORION_AUDIO_DESIGN_MIN_SOUND_EFFECT_DURATION_MS: int = 50
+    ORION_AUDIO_DESIGN_MAX_SOUND_EFFECT_DURATION_MS: int = 5_000
+    ORION_AUDIO_DESIGN_MAX_AUDIO_BYTES: int = 10_000_000
+    ORION_AUDIO_DESIGN_MAX_MANIFEST_BYTES: int = 4_000_000
+    ORION_AUDIO_DESIGN_MAX_SCRIPT_BYTES: int = 2_000_000
+    ORION_AUDIO_DESIGN_GENERATING_STALE_AFTER_SECONDS: float = 30
     ORION_OPENROUTER_HTTP_REFERER: str | None = None
     ORION_OPENROUTER_APP_TITLE: str | None = None
 
@@ -283,6 +296,7 @@ class Settings(BaseSettings):
             "ORION_ASSET_PUBLISHING_LIFETIME_SECONDS": self.ORION_ASSET_PUBLISHING_LIFETIME_SECONDS,
             "ORION_SPEECH_GENERATION_GENERATING_STALE_AFTER_SECONDS": self.ORION_SPEECH_GENERATION_GENERATING_STALE_AFTER_SECONDS,
             "ORION_SPEECH_GENERATION_REMOTE_POLL_INTERVAL_SECONDS": self.ORION_SPEECH_GENERATION_REMOTE_POLL_INTERVAL_SECONDS,
+            "ORION_AUDIO_DESIGN_GENERATING_STALE_AFTER_SECONDS": self.ORION_AUDIO_DESIGN_GENERATING_STALE_AFTER_SECONDS,
         }
         for name, value in positive.items():
             if value <= 0:
@@ -342,6 +356,9 @@ class Settings(BaseSettings):
             "ORION_SPEECH_GENERATION_MAX_MANIFEST_BYTES": self.ORION_SPEECH_GENERATION_MAX_MANIFEST_BYTES,
             "ORION_SPEECH_GENERATION_MAX_SCRIPT_BYTES": self.ORION_SPEECH_GENERATION_MAX_SCRIPT_BYTES,
             "ORION_SPEECH_GENERATION_REMOTE_JOB_MAX_BYTES": self.ORION_SPEECH_GENERATION_REMOTE_JOB_MAX_BYTES,
+            "ORION_AUDIO_DESIGN_MAX_AUDIO_BYTES": self.ORION_AUDIO_DESIGN_MAX_AUDIO_BYTES,
+            "ORION_AUDIO_DESIGN_MAX_MANIFEST_BYTES": self.ORION_AUDIO_DESIGN_MAX_MANIFEST_BYTES,
+            "ORION_AUDIO_DESIGN_MAX_SCRIPT_BYTES": self.ORION_AUDIO_DESIGN_MAX_SCRIPT_BYTES,
         }.items():
             maximum = {
                 "ORION_ASSET_PUBLISHING_MAX_ASSET_BYTES": 250_000_000,
@@ -376,6 +393,32 @@ class Settings(BaseSettings):
         )
         if speech_bytes > self.ORION_SPEECH_GENERATION_MAX_AUDIO_BYTES:
             raise ValueError("speech audio limit cannot hold maximum duration")
+        if not (
+            250
+            <= self.ORION_AUDIO_DESIGN_MIN_MUSIC_DURATION_MS
+            <= self.ORION_AUDIO_DESIGN_MAX_MUSIC_DURATION_MS
+            <= 600_000
+        ):
+            raise ValueError("audio-design music duration limits are invalid")
+        if not (
+            20
+            <= self.ORION_AUDIO_DESIGN_MIN_SOUND_EFFECT_DURATION_MS
+            <= self.ORION_AUDIO_DESIGN_MAX_SOUND_EFFECT_DURATION_MS
+            <= 30_000
+        ):
+            raise ValueError("audio-design SFX duration limits are invalid")
+        audio_design_frames = (
+            self.ORION_AUDIO_DESIGN_MAX_MUSIC_DURATION_MS * self.ORION_AUDIO_DESIGN_SAMPLE_RATE_HZ
+            + 500
+        ) // 1_000
+        audio_design_bytes = (
+            44
+            + audio_design_frames
+            * self.ORION_AUDIO_DESIGN_CHANNEL_COUNT
+            * self.ORION_AUDIO_DESIGN_SAMPLE_WIDTH_BYTES
+        )
+        if audio_design_bytes > self.ORION_AUDIO_DESIGN_MAX_AUDIO_BYTES:
+            raise ValueError("audio-design audio limit cannot hold maximum music")
         if not 1 <= self.ORION_SPEECH_GENERATION_REMOTE_MAX_POLL_ATTEMPTS <= 1000:
             raise ValueError("remote speech poll attempts are outside safe limits")
         if not 1_024 <= self.ORION_SPEECH_GENERATION_REMOTE_JOB_MAX_BYTES <= 4_000_000:

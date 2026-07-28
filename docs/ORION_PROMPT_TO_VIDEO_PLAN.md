@@ -1,5 +1,22 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 5H.1
+
+PREPARING_MUSIC conserva su nombre serializado y su posicion despues de
+GENERATING_NARRATION, pero ahora ejecuta el bounded context durable
+`audio_design`. Solo metadata explicita del `ProductionScript` habilita un bed
+musical o cues SFX; sin ella, la etapa completa correctamente con cero assets.
+Los providers separados de musica y efectos producen WAV PCM mono de 24 kHz,
+deterministas y sinteticos, con stores write-once, sidecars, manifest CAS,
+recovery e inspeccion read-only.
+
+No se descargaron ni incorporaron samples, no se imita ningun artista y el
+resultado no es audio de calidad final. Siguen sin existir provider real, API
+key, URL, SDK, red, cloud, cobro, FFmpeg de audio, DaVinci, mezcla final o
+render final. Narracion, imagenes y publicacion mantienen sus contratos. La
+siguiente fase recomendada es preparar contratos de subtitulos/alineacion o el
+paquete de mezcla/timeline, manteniendo providers reales en una fase separada.
+
 ## Estado posterior a Fase 5G.3B
 
 El listening test futuro ya tiene un paquete reproducible pero no ejecutable:

@@ -290,3 +290,89 @@ def test_only_composition_selects_concrete_speech_capability_source() -> None:
         if any(imported.startswith(source_module) for imported in _imports(path)):
             violations.append(relative.as_posix())
     assert violations == []
+
+
+def test_audio_design_core_contracts_have_no_runtime_or_transport_dependency() -> None:
+    audio_design = PRODUCTION_ROOT / "audio_design"
+    files = tuple(
+        audio_design / name
+        for name in (
+            "configuration.py",
+            "duration.py",
+            "fingerprints.py",
+            "models.py",
+            "plan.py",
+            "ports.py",
+            "wav.py",
+        )
+    )
+    forbidden = (
+        f"{PRODUCTION_PREFIX}composition",
+        f"{PRODUCTION_PREFIX}runtime",
+        "backend.src.infrastructure",
+        "httpx",
+        "requests",
+        "aiohttp",
+        "urllib",
+        "socket",
+        "sqlalchemy",
+        "fastapi",
+    )
+    assert _violations(files, forbidden) == []
+
+
+def test_simulated_audio_design_providers_are_offline_and_speech_independent() -> None:
+    providers = PRODUCTION_ROOT / "audio_design" / "providers"
+    files = tuple(providers.glob("simulated_*_provider.py"))
+    forbidden = (
+        f"{PRODUCTION_PREFIX}speech_generation",
+        "httpx",
+        "requests",
+        "aiohttp",
+        "urllib",
+        "socket",
+        "subprocess",
+        "openai",
+        "openrouter",
+        "elevenlabs",
+        "azure",
+        "google",
+        "boto3",
+        "botocore",
+    )
+    assert files
+    assert _violations(files, forbidden) == []
+
+
+def test_audio_design_handler_uses_ports_not_concrete_provider_adapters() -> None:
+    files = (PRODUCTION_ROOT / "audio_design" / "handler.py",)
+    forbidden = (f"{PRODUCTION_PREFIX}audio_design.providers",)
+    assert _violations(files, forbidden) == []
+
+
+def test_only_composition_selects_simulated_audio_design_providers() -> None:
+    provider_prefix = f"{PRODUCTION_PREFIX}audio_design.providers"
+    violations: list[str] = []
+    for path in _python_files():
+        relative = path.relative_to(PRODUCTION_ROOT)
+        if relative.parts[0] == "composition" or "providers" in relative.parts[:-1]:
+            continue
+        if any(imported.startswith(provider_prefix) for imported in _imports(path)):
+            violations.append(relative.as_posix())
+    assert violations == []
+
+
+def test_audio_design_has_no_research_or_narration_reverse_dependency() -> None:
+    files = tuple((PRODUCTION_ROOT / "audio_design").rglob("*.py"))
+    forbidden = (
+        "backend.tests",
+        "scripts.",
+        f"{PRODUCTION_PREFIX}speech_generation",
+    )
+    assert _violations(files, forbidden) == []
+
+
+def test_speech_context_does_not_reverse_depend_on_audio_design() -> None:
+    files = tuple((PRODUCTION_ROOT / "speech_generation").rglob("*.py"))
+    forbidden = (f"{PRODUCTION_PREFIX}audio_design",)
+    assert _violations(files, forbidden) == []

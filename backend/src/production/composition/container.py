@@ -43,6 +43,33 @@ from backend.src.production.asset_publishing.service import AssetPublishingServi
 from backend.src.production.asset_publishing.sources import (
     ManifestPublishableAssetCollector,
 )
+from backend.src.production.audio_design.asset_store import (
+    FilesystemAudioDesignAssetStore,
+)
+from backend.src.production.audio_design.configuration import (
+    AudioDesignConfiguration,
+)
+from backend.src.production.audio_design.handler import AudioDesignHandler
+from backend.src.production.audio_design.manifest_store import (
+    LocalAudioDesignManifestStore,
+)
+from backend.src.production.audio_design.models import AudioAssetKind
+from backend.src.production.audio_design.ports import (
+    AudioDesignAssetStore,
+    MusicGenerationProvider,
+    SoundEffectGenerationProvider,
+)
+from backend.src.production.audio_design.providers import (
+    SimulatedMusicGenerationProvider,
+    SimulatedSoundEffectGenerationProvider,
+)
+from backend.src.production.audio_design.reconciliation import (
+    AudioDesignReconciler,
+)
+from backend.src.production.audio_design.source_reader import (
+    AudioDesignSourceScriptReaderAdapter,
+)
+from backend.src.production.audio_design.wav import AudioDesignWavValidator
 from backend.src.production.binary_assets.configuration import (
     AssetStorageConfiguration,
 )
@@ -313,6 +340,8 @@ class ProductionContainer:
     image_acquisition_provider: ImageAcquisitionProvider
     video_clip_generation_provider: VideoClipGenerationProvider
     speech_generation_provider: SpeechGenerationProvider
+    music_generation_provider: MusicGenerationProvider
+    sound_effect_generation_provider: SoundEffectGenerationProvider
     speech_capability_source: SpeechCapabilitySource
     speech_remote_configuration: SpeechRemotePreparationConfiguration
     binary_asset_configuration: AssetStorageConfiguration
@@ -326,6 +355,9 @@ class ProductionContainer:
     video_clip_reconciler: FilesystemVideoClipReconciler
     speech_audio_store: SpeechAudioStore
     speech_reconciler: SpeechGenerationReconciler
+    music_asset_store: AudioDesignAssetStore
+    sound_effect_asset_store: AudioDesignAssetStore
+    audio_design_reconciler: AudioDesignReconciler
     remote_speech_job_store: LocalRemoteSpeechJobStore
     remote_speech_reconciler: RemoteSpeechJobReconciler
     asset_publisher: AssetPublisher
@@ -632,6 +664,67 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         configuration=speech_configuration,
         clock=clock,
     )
+    audio_design_configuration = AudioDesignConfiguration(
+        music_provider=settings.ORION_MUSIC_GENERATION_PROVIDER,
+        sound_effect_provider=settings.ORION_SOUND_EFFECT_GENERATION_PROVIDER,
+        sample_rate_hz=settings.ORION_AUDIO_DESIGN_SAMPLE_RATE_HZ,
+        channel_count=settings.ORION_AUDIO_DESIGN_CHANNEL_COUNT,
+        sample_width_bytes=settings.ORION_AUDIO_DESIGN_SAMPLE_WIDTH_BYTES,
+        min_music_duration_ms=settings.ORION_AUDIO_DESIGN_MIN_MUSIC_DURATION_MS,
+        max_music_duration_ms=settings.ORION_AUDIO_DESIGN_MAX_MUSIC_DURATION_MS,
+        min_sound_effect_duration_ms=(settings.ORION_AUDIO_DESIGN_MIN_SOUND_EFFECT_DURATION_MS),
+        max_sound_effect_duration_ms=(settings.ORION_AUDIO_DESIGN_MAX_SOUND_EFFECT_DURATION_MS),
+        max_audio_bytes=settings.ORION_AUDIO_DESIGN_MAX_AUDIO_BYTES,
+        max_manifest_bytes=settings.ORION_AUDIO_DESIGN_MAX_MANIFEST_BYTES,
+        max_script_bytes=settings.ORION_AUDIO_DESIGN_MAX_SCRIPT_BYTES,
+        generating_stale_after_seconds=(settings.ORION_AUDIO_DESIGN_GENERATING_STALE_AFTER_SECONDS),
+    )
+    music_generation_provider = SimulatedMusicGenerationProvider(audio_design_configuration)
+    sound_effect_generation_provider = SimulatedSoundEffectGenerationProvider(
+        audio_design_configuration
+    )
+    audio_design_source_reader = AudioDesignSourceScriptReaderAdapter(
+        DurableProductionScriptReader(
+            workspace_root=settings.PROJECTS_DIR,
+            repository=SQLAlchemyProductionScriptQueryRepository(sessions),
+            max_script_bytes=audio_design_configuration.max_script_bytes,
+        )
+    )
+    audio_design_wav_validator = AudioDesignWavValidator(
+        max_audio_bytes=audio_design_configuration.max_audio_bytes
+    )
+    music_asset_store = FilesystemAudioDesignAssetStore(
+        workspace_root=settings.PROJECTS_DIR,
+        kind=AudioAssetKind.MUSIC,
+        validator=audio_design_wav_validator,
+        max_audio_bytes=audio_design_configuration.max_audio_bytes,
+    )
+    sound_effect_asset_store = FilesystemAudioDesignAssetStore(
+        workspace_root=settings.PROJECTS_DIR,
+        kind=AudioAssetKind.SOUND_EFFECT,
+        validator=audio_design_wav_validator,
+        max_audio_bytes=audio_design_configuration.max_audio_bytes,
+    )
+    audio_design_handler = AudioDesignHandler(
+        script_reader=audio_design_source_reader,
+        music_provider=music_generation_provider,
+        sound_effect_provider=sound_effect_generation_provider,
+        music_store=music_asset_store,
+        sound_effect_store=sound_effect_asset_store,
+        manifest_store=LocalAudioDesignManifestStore(
+            settings.PROJECTS_DIR,
+            max_manifest_bytes=audio_design_configuration.max_manifest_bytes,
+        ),
+        configuration=audio_design_configuration,
+        clock=clock,
+    )
+    audio_design_reconciler = AudioDesignReconciler(
+        workspace_root=settings.PROJECTS_DIR,
+        script_reader=audio_design_source_reader,
+        music_store=music_asset_store,
+        sound_effect_store=sound_effect_asset_store,
+        configuration=audio_design_configuration,
+    )
     binary_asset_reconciler = FilesystemBinaryAssetReconciler(
         configuration=binary_asset_configuration,
         store=filesystem_binary_asset_store,
@@ -731,6 +824,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                 image_acquisition_handler=image_acquisition_handler,
                 video_clip_generation_handler=video_clip_generation_handler,
                 speech_generation_handler=speech_generation_handler,
+                audio_design_handler=audio_design_handler,
                 clock=clock,
                 uuid_factory=uuid4,
             )
@@ -783,6 +877,8 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         image_acquisition_provider=image_acquisition_provider,
         video_clip_generation_provider=video_clip_generation_provider,
         speech_generation_provider=speech_generation_provider,
+        music_generation_provider=music_generation_provider,
+        sound_effect_generation_provider=sound_effect_generation_provider,
         speech_capability_source=speech_capability_source,
         speech_remote_configuration=speech_remote_configuration,
         binary_asset_configuration=binary_asset_configuration,
@@ -796,6 +892,9 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         video_clip_reconciler=video_clip_reconciler,
         speech_audio_store=speech_audio_store,
         speech_reconciler=speech_reconciler,
+        music_asset_store=music_asset_store,
+        sound_effect_asset_store=sound_effect_asset_store,
+        audio_design_reconciler=audio_design_reconciler,
         remote_speech_job_store=remote_speech_job_store,
         remote_speech_reconciler=remote_speech_reconciler,
         asset_publisher=asset_publisher,
@@ -812,6 +911,8 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             scripting_provider,
             planning_provider,
             speech_generation_provider,
+            music_generation_provider,
+            sound_effect_generation_provider,
             speech_capability_source,
             asset_publisher,
         ),

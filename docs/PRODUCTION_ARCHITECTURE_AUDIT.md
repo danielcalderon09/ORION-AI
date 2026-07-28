@@ -296,3 +296,14 @@ No broad ignore or configuration weakening was added.
 Phase 5I made no live OpenRouter request, no provider-discovery request, no cloud
 request, no upload, and no billable request. No API key, funded account, public
 URL, tunnel, DaVinci installation, or external infrastructure was used.
+
+## 16. Phase 5H.1 follow-up
+
+The later Phase 5H.1 adds `audio_design` as a bounded context behind the
+existing `PREPARING_MUSIC` stage. Core audio contracts stay independent from
+runtime, composition, transports, provider SDKs, and speech. Separate music and
+sound-effect ports are implemented only by offline simulators selected in
+composition. Dedicated write-once stores and a context-owned CAS manifest avoid
+changes to speech, image, video, and publishing schemas. Architecture guards
+enforce these boundaries; details are in
+`docs/PRODUCTION_SIMULATED_AUDIO_DESIGN.md`.
