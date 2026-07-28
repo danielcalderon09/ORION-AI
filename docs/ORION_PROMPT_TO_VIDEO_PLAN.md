@@ -1,5 +1,22 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 5G.3
+
+La evaluacion fechada de OpenAI, ElevenLabs, Azure AI Speech, Google Cloud TTS
+y Amazon Polly usa exclusivamente documentacion oficial publica. No selecciona
+todavia un provider: Azure es el primer candidato para un listening test
+controlado y Google el segundo, pero la calidad auditiva en español, el precio
+numerico actual de Azure y la revision legal siguen siendo bloqueantes.
+
+El informe, ADR diferido y evidencia JSON canonica estan en
+`docs/PRODUCTION_TTS_PROVIDER_EVALUATION.md`,
+`docs/adrs/019-real-tts-provider-selection.md` y
+`docs/research/tts-provider-evaluation.json`. No se agregaron adapter, SDK, API
+key, URL de runtime, cuenta, request autenticado ni cobro. `simulated` sigue
+activo y billable speech sigue false. La siguiente fase recomendada es una
+validacion auditiva separadamente autorizada, con presupuesto maximo, pricing
+reverificado y aprobacion legal antes de aceptar un ADR de provider.
+
 ## Estado posterior a Fase 5G.2
 
 ORION ya dispone de contratos provider-neutral para capabilities TTS,

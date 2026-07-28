@@ -1,0 +1,1448 @@
+{
+  "confidence": {
+    "overall": "medium",
+    "reason": "Official public documentation supports an architectural shortlist, but documentation cannot establish Spanish narration quality and Azure numeric pay-as-you-go pricing was not exposed by the accessible public page.",
+    "uncertainty": "Scores within three points are treated as tied; no provider is selected until a bounded listening test, price verification, and legal review are complete."
+  },
+  "criteria": [
+    {
+      "description": "Safety of synchronous or asynchronous execution, durable identity, idempotency, and recovery semantics.",
+      "id": "api_recovery",
+      "rubric": "0=no usable lifecycle evidence; 3=adaptable synchronous lifecycle with ambiguity controls; 5=durable provider identity and recovery-friendly lifecycle."
+    },
+    {
+      "description": "Production-safe audio formats, sample rates, and fit with ORION validation and later editing.",
+      "id": "audio",
+      "rubric": "0=incompatible or unknown; 3=usable with conversion or constraints; 5=direct PCM or WAV fit at production sample rates."
+    },
+    {
+      "description": "Estimated effort for authentication, transport, parsing, recovery, testing, and provider-specific infrastructure.",
+      "id": "complexity",
+      "rubric": "0=very high or contaminating; 3=medium; 5=low. Higher is simpler."
+    },
+    {
+      "description": "Regions, status or SLA evidence, quotas, versioning, and model stability.",
+      "id": "operations",
+      "rubric": "0=materially undocumented; 3=public operational evidence with gaps; 5=strong public SLA, quota, and lifecycle evidence."
+    },
+    {
+      "description": "Public pricing, predictable billing units, ceilings, and cost observability.",
+      "id": "pricing",
+      "rubric": "0=unknown or sales-only; 3=public but model-dependent or incomplete; 5=public, simple, and predictable."
+    },
+    {
+      "description": "Official retention, training, deletion, regional processing, and enterprise controls.",
+      "id": "privacy",
+      "rubric": "0=unclear or materially risky; 3=manageable with configuration or review; 5=explicit no-training or no-retention posture for the evaluated API."
+    },
+    {
+      "description": "Documented Spanish and Latin American locale or voice fit for initial narration.",
+      "id": "spanish",
+      "rubric": "0=no reliable Spanish; 3=Spanish without Colombian specificity; 5=documented Colombian voices plus broader Latin American options."
+    },
+    {
+      "description": "Word, character, mark, viseme, or alignment information useful for future synchronization.",
+      "id": "timing",
+      "rubric": "0=none documented; 3=manual marks or separate timing flow; 5=word or character alignment available with generation."
+    }
+  ],
+  "metadata": {
+    "assumptions": [
+      "A 60-second Spanish narration is modeled as 130-170 words and 850-1150 Unicode characters including spaces.",
+      "Character-priced examples scale linearly and exclude taxes, regional price variation, plan discounts, overages, and separate timing requests.",
+      "Gemini TTS minute examples include documented audio-output tokens only; text-input token cost remains additional because no contractual Spanish word-to-token conversion was assumed.",
+      "Scores are decision aids, not measurements of subjective voice quality."
+    ],
+    "currency_normalization": "No currency conversion was performed. Only publicly documented USD list prices were compared.",
+    "offline_status": "Public documentation only; no login, account, credential, authenticated API call, audio generation, upload, or billable request occurred.",
+    "research_tools": [
+      "OpenAI official documentation web fallback after the newly registered OpenAI documentation MCP was unavailable until session restart",
+      "web.run official-domain search and official-page open"
+    ]
+  },
+  "providers": [
+    {
+      "account_or_sales_gated": "Custom voices and some enterprise controls are eligibility or sales gated; normal API documentation and model prices are public.",
+      "compatibility": {
+        "asynchronous_provider_ports": "provider_does_not_support",
+        "audio_store": "supported_with_adapter",
+        "downloader": "provider_does_not_support",
+        "local_wav_validation": "directly_supported",
+        "polling": "provider_does_not_support",
+        "recovery_policy": "supported_with_adapter",
+        "remote_speech_job_record": "supported_with_adapter",
+        "speech_audio_format_capability": "supported_with_adapter",
+        "speech_billable_request_gate": "directly_supported",
+        "speech_cost_estimator": "supported_with_adapter",
+        "speech_pricing_capability": "supported_with_adapter",
+        "speech_provider_capabilities": "supported_with_adapter",
+        "speech_remote_generation_mode": "supported_with_adapter",
+        "speech_voice_capability": "supported_with_adapter",
+        "speech_voice_selector": "supported_with_adapter",
+        "synchronous_provider_port": "supported_with_adapter"
+      },
+      "findings": [
+        {
+          "claim": "The speech API supports Spanish text, but the built-in voices are documented as optimized for English and no Colombian locale-specific voice was documented.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "openai-tts-guide"
+          ]
+        },
+        {
+          "claim": "The API is synchronous with chunked streaming and supports MP3, Opus, AAC, FLAC, WAV, and raw 24 kHz 16-bit mono PCM.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "openai-api-speech",
+            "openai-tts-guide"
+          ]
+        },
+        {
+          "claim": "The current GPT-4o mini TTS page documents a 2000-token input limit, text and audio-token pricing, and a dated snapshot, while the current model catalog signals deprecation risk.",
+          "confidence": "medium",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "openai-gpt4omini",
+            "openai-model-catalog"
+          ]
+        },
+        {
+          "claim": "TTS-1 and TTS-1 HD retain public per-character prices, but are older model families than the guide's recommended GPT-4o mini TTS path.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "openai-tts1",
+            "openai-tts1hd",
+            "openai-tts-guide"
+          ]
+        },
+        {
+          "claim": "The reviewed speech API documentation does not document a durable remote job identity, provider-side idempotency key, cancellation, or word-level timing output.",
+          "confidence": "medium",
+          "evidence_type": "inferred",
+          "source_ids": [
+            "openai-api-speech",
+            "openai-tts-guide"
+          ]
+        },
+        {
+          "claim": "API input and output are not used for training by default; the speech endpoint is documented with 30-day abuse-monitoring retention and Zero Data Retention eligibility.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "openai-data-controls"
+          ]
+        },
+        {
+          "claim": "The TTS guide requires disclosure that the voice is AI generated.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "openai-tts-guide"
+          ]
+        },
+        {
+          "claim": "Commercial API use remains subject to the current service agreement and service terms, including output-related limitations and indemnity exclusions that require legal review.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "openai-service-terms"
+          ]
+        },
+        {
+          "claim": "A public status history exists, but standard-tier latency is not generally guaranteed; enterprise service tiers require separate commercial review.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "openai-latency-sla",
+            "openai-status"
+          ]
+        }
+      ],
+      "id": "openai",
+      "integration_complexity": "low for a synchronous adapter, but elevated operational risk from model lifecycle ambiguity and absent durable provider identity",
+      "models_found": [
+        "gpt-4o-mini-tts",
+        "gpt-4o-mini-tts-2025-12-15",
+        "tts-1",
+        "tts-1-hd"
+      ],
+      "pricing": [
+        {
+          "billing_unit": "per_million_characters",
+          "currency": "USD",
+          "illustrative_costs": {
+            "one_hundred_minutes": "1.275-1.725",
+            "one_minute": "0.01275-0.01725",
+            "sixty_second_short": "0.01275-0.01725",
+            "ten_minutes": "0.1275-0.1725"
+          },
+          "model_or_tier": "tts-1",
+          "notes": "Character-range assumption only.",
+          "price": "15",
+          "price_basis": "USD per 1000000 characters",
+          "source_ids": [
+            "openai-tts1"
+          ]
+        },
+        {
+          "billing_unit": "per_million_characters",
+          "currency": "USD",
+          "illustrative_costs": {
+            "one_hundred_minutes": "2.55-3.45",
+            "one_minute": "0.0255-0.0345",
+            "sixty_second_short": "0.0255-0.0345",
+            "ten_minutes": "0.255-0.345"
+          },
+          "model_or_tier": "tts-1-hd",
+          "notes": "Character-range assumption only.",
+          "price": "30",
+          "price_basis": "USD per 1000000 characters",
+          "source_ids": [
+            "openai-tts1hd"
+          ]
+        },
+        {
+          "billing_unit": "text_and_audio_tokens",
+          "currency": "USD",
+          "illustrative_costs": {
+            "one_hundred_minutes": null,
+            "one_minute": null,
+            "sixty_second_short": null,
+            "ten_minutes": null
+          },
+          "model_or_tier": "gpt-4o-mini-tts",
+          "notes": "The official page prices text and audio tokens, but no undocumented token-to-minute conversion was used.",
+          "price": "0.60 text input and 12 audio output",
+          "price_basis": "USD per 1000000 respective tokens",
+          "source_ids": [
+            "openai-gpt4omini"
+          ]
+        }
+      ]
+    },
+    {
+      "account_or_sales_gated": "Public API pricing exists, but commercial use requires a paid plan and highest-quality PCM plus zero-retention controls require higher or enterprise tiers.",
+      "compatibility": {
+        "asynchronous_provider_ports": "provider_does_not_support",
+        "audio_store": "supported_with_adapter",
+        "downloader": "provider_does_not_support",
+        "local_wav_validation": "requires_contract_extension",
+        "polling": "provider_does_not_support",
+        "recovery_policy": "supported_with_adapter",
+        "remote_speech_job_record": "supported_with_adapter",
+        "speech_audio_format_capability": "supported_with_adapter",
+        "speech_billable_request_gate": "directly_supported",
+        "speech_cost_estimator": "supported_with_adapter",
+        "speech_pricing_capability": "supported_with_adapter",
+        "speech_provider_capabilities": "supported_with_adapter",
+        "speech_remote_generation_mode": "supported_with_adapter",
+        "speech_voice_capability": "supported_with_adapter",
+        "speech_voice_selector": "supported_with_adapter",
+        "synchronous_provider_port": "supported_with_adapter"
+      },
+      "findings": [
+        {
+          "claim": "Current multilingual models document Spanish support, including Spanish from Spain and Mexico for Multilingual v2; no Colombian locale-specific voice was documented.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "eleven-capabilities"
+          ]
+        },
+        {
+          "claim": "The API supports streamed MP3, Opus, and raw 16-bit PCM at multiple sample rates; 44.1 kHz PCM is plan gated rather than universally available.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "eleven-capabilities"
+          ]
+        },
+        {
+          "claim": "Text-to-speech with timestamps returns character-level alignment with the same streamed generation response.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "eleven-timestamps"
+          ]
+        },
+        {
+          "claim": "The reviewed API is synchronous or streaming and does not document an asynchronous remote-job lifecycle or provider-side idempotency key.",
+          "confidence": "medium",
+          "evidence_type": "inferred",
+          "source_ids": [
+            "eleven-capabilities",
+            "eleven-timestamps"
+          ]
+        },
+        {
+          "claim": "Public API prices are character based, with Flash or Turbo cheaper than Multilingual v2 or v3; subscription plan and overage details remain relevant to total spend.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "eleven-api-pricing"
+          ]
+        },
+        {
+          "claim": "Default retention permits troubleshooting and service improvement; enterprise zero-retention mode removes most TTS text and audio after processing.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "eleven-zrm"
+          ]
+        },
+        {
+          "claim": "Paid-plan output may be used commercially, while the terms grant the provider a broad service and improvement license unless prospective data-use controls apply; legal review is required.",
+          "confidence": "medium",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "eleven-terms"
+          ]
+        },
+        {
+          "claim": "A public provider status page exists, but no contractual API SLA was verified in the reviewed official material.",
+          "confidence": "medium",
+          "evidence_type": "inferred",
+          "source_ids": [
+            "eleven-status"
+          ]
+        },
+        {
+          "claim": "The public voice catalog is extensive, but current default voices are scheduled to expire on 2026-12-31, so ORION cannot treat catalog voice identifiers as permanently stable.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "eleven-voice-library"
+          ]
+        }
+      ],
+      "id": "elevenlabs",
+      "integration_complexity": "low to medium for synchronous streaming; higher for stable voice governance, retention controls, and wrapping raw PCM as WAV",
+      "models_found": [
+        "Eleven Flash v2.5",
+        "Eleven Multilingual v2",
+        "Eleven Turbo v2.5",
+        "Eleven v3"
+      ],
+      "pricing": [
+        {
+          "billing_unit": "per_thousand_characters",
+          "currency": "USD",
+          "illustrative_costs": {
+            "one_hundred_minutes": "4.25-5.75",
+            "one_minute": "0.0425-0.0575",
+            "sixty_second_short": "0.0425-0.0575",
+            "ten_minutes": "0.425-0.575"
+          },
+          "model_or_tier": "Flash or Turbo API list price",
+          "notes": "Character-range assumption; subscription, included credits, and overages excluded.",
+          "price": "0.05",
+          "price_basis": "USD per 1000 characters",
+          "source_ids": [
+            "eleven-api-pricing"
+          ]
+        },
+        {
+          "billing_unit": "per_thousand_characters",
+          "currency": "USD",
+          "illustrative_costs": {
+            "one_hundred_minutes": "8.50-11.50",
+            "one_minute": "0.085-0.115",
+            "sixty_second_short": "0.085-0.115",
+            "ten_minutes": "0.85-1.15"
+          },
+          "model_or_tier": "Multilingual v2 or v3 API list price",
+          "notes": "Character-range assumption; subscription, included credits, and overages excluded.",
+          "price": "0.10",
+          "price_basis": "USD per 1000 characters",
+          "source_ids": [
+            "eleven-api-pricing"
+          ]
+        }
+      ]
+    },
+    {
+      "account_or_sales_gated": "The service is public, but exact pay-as-you-go pricing depended on region or calculator context and was not exposed in the accessible official page.",
+      "compatibility": {
+        "asynchronous_provider_ports": "supported_with_adapter",
+        "audio_store": "supported_with_adapter",
+        "downloader": "supported_with_adapter",
+        "local_wav_validation": "directly_supported",
+        "polling": "supported_with_adapter",
+        "recovery_policy": "supported_with_adapter",
+        "remote_speech_job_record": "supported_with_adapter",
+        "speech_audio_format_capability": "supported_with_adapter",
+        "speech_billable_request_gate": "directly_supported",
+        "speech_cost_estimator": "unknown_from_official_documentation",
+        "speech_pricing_capability": "unknown_from_official_documentation",
+        "speech_provider_capabilities": "supported_with_adapter",
+        "speech_remote_generation_mode": "supported_with_adapter",
+        "speech_voice_capability": "supported_with_adapter",
+        "speech_voice_selector": "supported_with_adapter",
+        "synchronous_provider_port": "supported_with_adapter"
+      },
+      "findings": [
+        {
+          "claim": "Azure documents two Colombian Spanish neural voices, es-CO-SalomeNeural and es-CO-GonzaloNeural, alongside many other Latin American locales.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "azure-language"
+          ]
+        },
+        {
+          "claim": "The REST API supports SSML and RIFF PCM outputs including 24 kHz and 48 kHz, 16-bit mono, with a documented ten-minute synchronous audio limit.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "azure-rest"
+          ]
+        },
+        {
+          "claim": "Batch synthesis uses a client-selected synthesis identifier, durable status polling, downloadable results, expiry controls, and billing details, closely matching ORION's asynchronous remote-job architecture.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "azure-batch"
+          ]
+        },
+        {
+          "claim": "Batch result locations are time-limited signed locations and must be consumed without persisting the raw location in ORION records.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "azure-batch"
+          ]
+        },
+        {
+          "claim": "Word and sentence boundary metadata can be requested with batch output, supporting later synchronization.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "azure-batch"
+          ]
+        },
+        {
+          "claim": "Real-time prebuilt TTS input text and generated audio are documented as not retained; batch text and outputs persist until deletion or configured expiry.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "azure-privacy"
+          ]
+        },
+        {
+          "claim": "Microsoft's current product terms expressly permit commercial use of paid-tier prebuilt neural TTS audio, subject to the applicable code of conduct and customer input-rights obligations.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "azure-product-terms"
+          ]
+        },
+        {
+          "claim": "The official pricing page exposed a free allowance but did not expose a current numeric pay-as-you-go price in the accessible regional rendering, so cost estimates remain unknown.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "azure-pricing"
+          ]
+        },
+        {
+          "claim": "A public Azure status surface exists, but resource-specific health and some operational evidence are account contextual; a Speech-specific SLA was not verified in this research session.",
+          "confidence": "medium",
+          "evidence_type": "inferred",
+          "source_ids": [
+            "azure-status"
+          ]
+        }
+      ],
+      "id": "azure",
+      "integration_complexity": "low for synchronous REST and medium for batch; client-selected batch identity materially improves duplicate-submission safety",
+      "models_found": [
+        "Azure Speech prebuilt neural voices",
+        "Azure Speech batch synthesis"
+      ],
+      "pricing": [
+        {
+          "billing_unit": "per_character",
+          "currency": null,
+          "illustrative_costs": {
+            "one_hundred_minutes": null,
+            "one_minute": null,
+            "sixty_second_short": null,
+            "ten_minutes": null
+          },
+          "model_or_tier": "Neural text to speech pay as you go",
+          "notes": "Numeric list price was not visible in the official regional rendering; free allowance is not treated as a production price.",
+          "price": null,
+          "price_basis": "unknown",
+          "source_ids": [
+            "azure-pricing"
+          ]
+        }
+      ]
+    },
+    {
+      "account_or_sales_gated": "Public usage pricing and documentation exist; cloud project, billing, and object storage are required for long-audio synthesis.",
+      "compatibility": {
+        "asynchronous_provider_ports": "requires_contract_extension",
+        "audio_store": "supported_with_adapter",
+        "downloader": "requires_contract_extension",
+        "local_wav_validation": "supported_with_adapter",
+        "polling": "supported_with_adapter",
+        "recovery_policy": "requires_contract_extension",
+        "remote_speech_job_record": "supported_with_adapter",
+        "speech_audio_format_capability": "supported_with_adapter",
+        "speech_billable_request_gate": "directly_supported",
+        "speech_cost_estimator": "supported_with_adapter",
+        "speech_pricing_capability": "supported_with_adapter",
+        "speech_provider_capabilities": "supported_with_adapter",
+        "speech_remote_generation_mode": "supported_with_adapter",
+        "speech_voice_capability": "supported_with_adapter",
+        "speech_voice_selector": "supported_with_adapter",
+        "synchronous_provider_port": "supported_with_adapter"
+      },
+      "findings": [
+        {
+          "claim": "Google documents Spanish for the United States and Spain across current voices, but no Colombian locale-specific voice was found in the official catalog.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "google-voices"
+          ]
+        },
+        {
+          "claim": "Current Gemini TTS and Cloud TTS models support LINEAR16 or PCM plus compressed formats; model-specific encoding and sample-rate constraints require adapter validation.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "google-gemini"
+          ]
+        },
+        {
+          "claim": "The newest documented Gemini TTS families include preview model names and token-based billing, while established Cloud TTS families remain character priced.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "google-gemini",
+            "google-pricing"
+          ]
+        },
+        {
+          "claim": "SSML mark timepoints are documented, but automatic word-level alignment was not documented for the evaluated generation request.",
+          "confidence": "medium",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "google-ssml"
+          ]
+        },
+        {
+          "claim": "Long-audio synthesis is asynchronous and accepts large input, but requires Cloud Storage and identity permissions, which is a contract extension and infrastructure dependency for ORION.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "google-long-audio"
+          ]
+        },
+        {
+          "claim": "Cloud Text-to-Speech is documented as stateless and not logging customer text or audio.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "google-data-logging"
+          ]
+        },
+        {
+          "claim": "Google Cloud service-specific terms include generated-output and abuse-monitoring conditions for generative AI services; applicability by chosen TTS model requires legal review.",
+          "confidence": "medium",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "google-service-terms"
+          ]
+        },
+        {
+          "claim": "Google publishes a 99.9 percent monthly uptime objective for Text-to-Speech.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "google-sla"
+          ]
+        },
+        {
+          "claim": "Published prices are predictable, but model-family differences and preview churn make initial model pinning and review dates mandatory.",
+          "confidence": "high",
+          "evidence_type": "inferred",
+          "source_ids": [
+            "google-gemini",
+            "google-pricing"
+          ]
+        }
+      ],
+      "id": "google",
+      "integration_complexity": "medium; synchronous generation is straightforward, while long-audio operation would add Google Cloud Storage and provider-specific identity semantics",
+      "models_found": [
+        "Chirp 3 HD",
+        "Gemini 2.5 Flash Lite Preview TTS",
+        "Gemini 2.5 Flash TTS",
+        "Gemini 2.5 Pro TTS",
+        "Gemini 3.1 Flash TTS Preview",
+        "Neural2",
+        "Studio",
+        "Standard",
+        "WaveNet"
+      ],
+      "pricing": [
+        {
+          "billing_unit": "per_million_characters",
+          "currency": "USD",
+          "illustrative_costs": {
+            "one_hundred_minutes": "1.36-1.84",
+            "one_minute": "0.0136-0.0184",
+            "sixty_second_short": "0.0136-0.0184",
+            "ten_minutes": "0.136-0.184"
+          },
+          "model_or_tier": "Neural2 or WaveNet",
+          "notes": "Character-range assumption; free allowance and regional taxes excluded.",
+          "price": "16",
+          "price_basis": "USD per 1000000 characters",
+          "source_ids": [
+            "google-pricing"
+          ]
+        },
+        {
+          "billing_unit": "per_million_characters",
+          "currency": "USD",
+          "illustrative_costs": {
+            "one_hundred_minutes": "2.55-3.45",
+            "one_minute": "0.0255-0.0345",
+            "sixty_second_short": "0.0255-0.0345",
+            "ten_minutes": "0.255-0.345"
+          },
+          "model_or_tier": "Chirp 3 HD",
+          "notes": "Character-range assumption; free allowance and regional taxes excluded.",
+          "price": "30",
+          "price_basis": "USD per 1000000 characters",
+          "source_ids": [
+            "google-pricing"
+          ]
+        },
+        {
+          "billing_unit": "audio_and_text_tokens",
+          "currency": "USD",
+          "illustrative_costs": {
+            "one_hundred_minutes": "1.50 plus text input",
+            "one_minute": "0.015 plus text input",
+            "sixty_second_short": "0.015 plus text input",
+            "ten_minutes": "0.15 plus text input"
+          },
+          "model_or_tier": "Gemini 2.5 Flash TTS",
+          "notes": "Audio-output component uses the documented 25 audio tokens per second; text-input token cost is additional and not guessed.",
+          "price": "0.50 text input and 10 audio output",
+          "price_basis": "USD per 1000000 respective tokens",
+          "source_ids": [
+            "google-pricing"
+          ]
+        }
+      ]
+    },
+    {
+      "account_or_sales_gated": "Public usage pricing and documentation exist; normal use requires an AWS account, and asynchronous output requires S3.",
+      "compatibility": {
+        "asynchronous_provider_ports": "requires_contract_extension",
+        "audio_store": "supported_with_adapter",
+        "downloader": "requires_contract_extension",
+        "local_wav_validation": "requires_contract_extension",
+        "polling": "supported_with_adapter",
+        "recovery_policy": "requires_contract_extension",
+        "remote_speech_job_record": "supported_with_adapter",
+        "speech_audio_format_capability": "supported_with_adapter",
+        "speech_billable_request_gate": "directly_supported",
+        "speech_cost_estimator": "supported_with_adapter",
+        "speech_pricing_capability": "supported_with_adapter",
+        "speech_provider_capabilities": "supported_with_adapter",
+        "speech_remote_generation_mode": "supported_with_adapter",
+        "speech_voice_capability": "supported_with_adapter",
+        "speech_voice_selector": "supported_with_adapter",
+        "synchronous_provider_port": "supported_with_adapter"
+      },
+      "findings": [
+        {
+          "claim": "Polly documents Mexican Spanish and United States Spanish voices, but no Colombian locale-specific voice.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "aws-voices"
+          ]
+        },
+        {
+          "claim": "Synchronous synthesis supports MP3, Ogg Vorbis, and raw 16-bit mono PCM; raw PCM is limited to 8 or 16 kHz, below ORION's current 24 kHz WAV baseline.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "aws-synthesize"
+          ]
+        },
+        {
+          "claim": "Asynchronous synthesis has a durable task identity and status but writes output to S3, introducing cloud storage and identity dependencies.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "aws-async"
+          ]
+        },
+        {
+          "claim": "Speech marks provide sentence, word, viseme, and SSML timing, but are returned instead of audio and therefore require a separate priced synthesis request.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "aws-pricing",
+            "aws-speech-marks"
+          ]
+        },
+        {
+          "claim": "Public per-character prices are available for Standard, Neural, Generative, and Long-form engines.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "aws-pricing"
+          ]
+        },
+        {
+          "claim": "Engine-specific throttling, concurrency, and duration limits are publicly documented, supporting bounded retries after clearly non-ambiguous failures.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "aws-limits"
+          ]
+        },
+        {
+          "claim": "AWS documents service-improvement use and cross-region storage unless an organization-level AI service opt-out policy is applied.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "aws-ai-opt-out"
+          ]
+        },
+        {
+          "claim": "Commercial use remains governed by the AWS agreement and service terms; no Polly-specific output-ownership conclusion was established, so legal review remains required.",
+          "confidence": "medium",
+          "evidence_type": "inferred",
+          "source_ids": [
+            "aws-service-terms"
+          ]
+        },
+        {
+          "claim": "Amazon Polly is covered by the Amazon Machine Learning Language Service SLA, last updated in 2023.",
+          "confidence": "high",
+          "evidence_type": "explicit",
+          "source_ids": [
+            "aws-service-sla"
+          ]
+        }
+      ],
+      "id": "aws_polly",
+      "integration_complexity": "medium; direct synthesis needs signed AWS requests and PCM wrapping, while asynchronous output and timing add S3 plus a second synthesis flow",
+      "models_found": [
+        "Generative",
+        "Long-form",
+        "Neural",
+        "Standard"
+      ],
+      "pricing": [
+        {
+          "billing_unit": "per_million_characters",
+          "currency": "USD",
+          "illustrative_costs": {
+            "one_hundred_minutes": "0.34-0.46",
+            "one_minute": "0.0034-0.0046",
+            "sixty_second_short": "0.0034-0.0046",
+            "ten_minutes": "0.034-0.046"
+          },
+          "model_or_tier": "Standard",
+          "notes": "Character-range assumption; a separate speech-marks request adds another engine-priced character charge.",
+          "price": "4",
+          "price_basis": "USD per 1000000 characters",
+          "source_ids": [
+            "aws-pricing"
+          ]
+        },
+        {
+          "billing_unit": "per_million_characters",
+          "currency": "USD",
+          "illustrative_costs": {
+            "one_hundred_minutes": "1.36-1.84",
+            "one_minute": "0.0136-0.0184",
+            "sixty_second_short": "0.0136-0.0184",
+            "ten_minutes": "0.136-0.184"
+          },
+          "model_or_tier": "Neural",
+          "notes": "Character-range assumption; a separate speech-marks request adds another engine-priced character charge.",
+          "price": "16",
+          "price_basis": "USD per 1000000 characters",
+          "source_ids": [
+            "aws-pricing"
+          ]
+        },
+        {
+          "billing_unit": "per_million_characters",
+          "currency": "USD",
+          "illustrative_costs": {
+            "one_hundred_minutes": "2.55-3.45",
+            "one_minute": "0.0255-0.0345",
+            "sixty_second_short": "0.0255-0.0345",
+            "ten_minutes": "0.255-0.345"
+          },
+          "model_or_tier": "Generative",
+          "notes": "Character-range assumption; a separate speech-marks request adds another engine-priced character charge.",
+          "price": "30",
+          "price_basis": "USD per 1000000 characters",
+          "source_ids": [
+            "aws-pricing"
+          ]
+        }
+      ]
+    }
+  ],
+  "recommendation": {
+    "decision": "no_provider_selected_yet",
+    "evaluation_order": [
+      "azure",
+      "google",
+      "aws_polly",
+      "elevenlabs",
+      "openai"
+    ],
+    "primary_candidate": "azure",
+    "rationale": "Azure is the strongest first listening-test candidate because it documents Colombian Spanish voices, production PCM, word boundaries, and a recovery-friendly batch identity. It is not selected because exact current pricing was not verified, legal review is incomplete, and no controlled listening evidence exists. Google is the secondary candidate because its pricing, privacy, SLA, and format evidence are strong, although it lacks a documented Colombian voice and long-audio mode requires cloud storage.",
+    "secondary_candidate": "google"
+  },
+  "researched_at": "2026-07-28T11:24:00Z",
+  "review_after": "2026-10-28",
+  "risks": [
+    {
+      "classification": "blocking",
+      "description": "Documentation cannot establish naturalness, pronunciation, or cross-segment consistency for ORION's Spanish narration.",
+      "id": "unmeasured_voice_quality",
+      "providers": [
+        "aws_polly",
+        "azure",
+        "elevenlabs",
+        "google",
+        "openai"
+      ]
+    },
+    {
+      "classification": "blocking",
+      "description": "Azure numeric pay-as-you-go pricing was not visible in the accessible official regional page, preventing a complete cost ceiling.",
+      "id": "azure_price_unverified",
+      "providers": [
+        "azure"
+      ]
+    },
+    {
+      "classification": "blocking",
+      "description": "Provider terms, output rights, disclosure duties, and data-processing choices require product and legal approval before real narration is enabled.",
+      "id": "legal_review_pending",
+      "providers": [
+        "aws_polly",
+        "azure",
+        "elevenlabs",
+        "google",
+        "openai"
+      ]
+    },
+    {
+      "classification": "manageable",
+      "description": "Synchronous providers generally lack a durable remote identity, so ambiguous submission must remain uncertain and require deliberate recovery.",
+      "id": "synchronous_ambiguity",
+      "providers": [
+        "elevenlabs",
+        "google",
+        "openai"
+      ]
+    },
+    {
+      "classification": "manageable",
+      "description": "Google and AWS long-audio paths require provider cloud storage, which should not be introduced for the initial 30-second to 3-minute use case.",
+      "id": "cloud_storage_coupling",
+      "providers": [
+        "aws_polly",
+        "google"
+      ]
+    },
+    {
+      "classification": "deferred",
+      "description": "Voice cloning and custom voices add consent, identity, retention, and commercial complexity outside the initial release.",
+      "id": "custom_voice_governance",
+      "providers": [
+        "aws_polly",
+        "azure",
+        "elevenlabs",
+        "google",
+        "openai"
+      ]
+    }
+  ],
+  "schema_version": "1.0.0",
+  "scores": [
+    {
+      "category_scores": {
+        "api_recovery": "2",
+        "audio": "5",
+        "complexity": "5",
+        "operations": "3",
+        "pricing": "3.5",
+        "privacy": "4.5",
+        "spanish": "2.5",
+        "timing": "1"
+      },
+      "confidence_factor": "0.82",
+      "confidence_level": "medium",
+      "final_score": "44.4",
+      "provider": "openai",
+      "raw_weighted_score": "62.7",
+      "unresolved_risk_penalty": "7",
+      "weighted_after_confidence": "51.4"
+    },
+    {
+      "category_scores": {
+        "api_recovery": "2.5",
+        "audio": "4.5",
+        "complexity": "4",
+        "operations": "3",
+        "pricing": "4",
+        "privacy": "2.5",
+        "spanish": "4",
+        "timing": "5"
+      },
+      "confidence_factor": "0.88",
+      "confidence_level": "medium_high",
+      "final_score": "58.4",
+      "provider": "elevenlabs",
+      "raw_weighted_score": "73.2",
+      "unresolved_risk_penalty": "6",
+      "weighted_after_confidence": "64.4"
+    },
+    {
+      "category_scores": {
+        "api_recovery": "5",
+        "audio": "5",
+        "complexity": "4",
+        "operations": "4",
+        "pricing": "2.5",
+        "privacy": "5",
+        "spanish": "5",
+        "timing": "5"
+      },
+      "confidence_factor": "0.84",
+      "confidence_level": "medium",
+      "final_score": "67.8",
+      "provider": "azure",
+      "raw_weighted_score": "89.0",
+      "unresolved_risk_penalty": "7",
+      "weighted_after_confidence": "74.8"
+    },
+    {
+      "category_scores": {
+        "api_recovery": "3",
+        "audio": "5",
+        "complexity": "3",
+        "operations": "4",
+        "pricing": "4.5",
+        "privacy": "5",
+        "spanish": "3.5",
+        "timing": "2.5"
+      },
+      "confidence_factor": "0.90",
+      "confidence_level": "high",
+      "final_score": "65.3",
+      "provider": "google",
+      "raw_weighted_score": "77.0",
+      "unresolved_risk_penalty": "4",
+      "weighted_after_confidence": "69.3"
+    },
+    {
+      "category_scores": {
+        "api_recovery": "3.5",
+        "audio": "3",
+        "complexity": "3",
+        "operations": "5",
+        "pricing": "5",
+        "privacy": "3",
+        "spanish": "3.5",
+        "timing": "4"
+      },
+      "confidence_factor": "0.91",
+      "confidence_level": "high",
+      "final_score": "64.2",
+      "provider": "aws_polly",
+      "raw_weighted_score": "74.9",
+      "unresolved_risk_penalty": "4",
+      "weighted_after_confidence": "68.2"
+    }
+  ],
+  "sources": [
+    {
+      "accessed_at": "2026-07-28",
+      "id": "aws-ai-opt-out",
+      "notes": "Documents organization-level opt-out behavior and historical service-improvement data deletion.",
+      "official": true,
+      "provider": "aws_polly",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "AI services opt-out policies",
+      "url": "https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_ai-opt-out.html"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "aws-async",
+      "notes": "Documents StartSpeechSynthesisTask identity, status, S3 output, and retention.",
+      "official": true,
+      "provider": "aws_polly",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "StartSpeechSynthesisTask",
+      "url": "https://docs.aws.amazon.com/polly/latest/dg/asynchronous.html"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "aws-limits",
+      "notes": "Documents per-engine quotas, concurrency, request size, and output duration.",
+      "official": true,
+      "provider": "aws_polly",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Quotas in Amazon Polly",
+      "url": "https://docs.aws.amazon.com/polly/latest/dg/limits.html"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "aws-pricing",
+      "notes": "Public USD list prices and speech-marks billing.",
+      "official": true,
+      "provider": "aws_polly",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Amazon Polly pricing",
+      "url": "https://aws.amazon.com/polly/pricing/"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "aws-service-sla",
+      "notes": "Includes Amazon Polly in the Amazon ML Language Service SLA.",
+      "official": true,
+      "provider": "aws_polly",
+      "publication_or_update_date": "2023-11-28",
+      "source_kind": "official_primary",
+      "title": "Amazon Machine Learning Language Service Level Agreement",
+      "url": "https://aws.amazon.com/ai/services/language-sla/"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "aws-service-terms",
+      "notes": "Current service-specific contractual terms; legal interpretation remains outside this research.",
+      "official": true,
+      "provider": "aws_polly",
+      "publication_or_update_date": "2026-07-09",
+      "source_kind": "official_primary",
+      "title": "AWS service terms",
+      "url": "https://aws.amazon.com/service-terms/"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "aws-speech-marks",
+      "notes": "Documents word, sentence, viseme, and SSML timing output.",
+      "official": true,
+      "provider": "aws_polly",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Speech marks",
+      "url": "https://docs.aws.amazon.com/polly/latest/dg/speechmarks.html"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "aws-synthesize",
+      "notes": "Documents synchronous request limits and output encodings.",
+      "official": true,
+      "provider": "aws_polly",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "SynthesizeSpeech API",
+      "url": "https://docs.aws.amazon.com/polly/latest/APIReference/API_SynthesizeSpeech.html"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "aws-voices",
+      "notes": "Current voice and engine availability by locale.",
+      "official": true,
+      "provider": "aws_polly",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Available voices",
+      "url": "https://docs.aws.amazon.com/polly/latest/dg/available-voices.html"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "azure-batch",
+      "notes": "Documents asynchronous identity, polling, output, expiry, boundaries, and billing details.",
+      "official": true,
+      "provider": "azure",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Batch synthesis API for text to speech",
+      "url": "https://learn.microsoft.com/en-us/azure/ai-services/speech-service/batch-synthesis"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "azure-language",
+      "notes": "Current language, locale, and prebuilt voice catalog.",
+      "official": true,
+      "provider": "azure",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Language and voice support for the Speech service",
+      "url": "https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "azure-pricing",
+      "notes": "Public pricing surface; numeric regional pay-as-you-go values were not exposed to the research tool.",
+      "official": true,
+      "provider": "azure",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Azure AI Speech pricing",
+      "url": "https://azure.microsoft.com/en-us/pricing/details/speech/"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "azure-privacy",
+      "notes": "Documents retention differences between real-time prebuilt and batch synthesis.",
+      "official": true,
+      "provider": "azure",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Data, privacy, and security for text to speech",
+      "url": "https://learn.microsoft.com/en-us/azure/ai-foundry/responsible-ai/speech-service/text-to-speech/data-privacy-security"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "azure-product-terms",
+      "notes": "Current paid-tier prebuilt TTS commercial output rights and synthetic-voice obligations.",
+      "official": true,
+      "provider": "azure",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Microsoft Product Terms for Azure",
+      "url": "https://www.microsoft.com/licensing/terms/en-US/productoffering/MicrosoftAzure/MOSA"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "azure-rest",
+      "notes": "Documents REST synthesis, SSML, limits, and audio output formats.",
+      "official": true,
+      "provider": "azure",
+      "publication_or_update_date": "2026-05-21",
+      "source_kind": "official_primary",
+      "title": "Text to speech REST API",
+      "url": "https://learn.microsoft.com/en-us/azure/ai-services/speech-service/rest-text-to-speech"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "azure-status",
+      "notes": "Public Azure Status exists; authenticated Service Health is resource contextual.",
+      "official": true,
+      "provider": "azure",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Azure status overview",
+      "url": "https://azure.status.microsoft/en-us/status"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "eleven-api-pricing",
+      "notes": "Public API character pricing by model family.",
+      "official": true,
+      "provider": "elevenlabs",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "ElevenLabs API pricing",
+      "url": "https://elevenlabs.io/pricing/api"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "eleven-capabilities",
+      "notes": "Documents model language coverage, input limits, and output formats.",
+      "official": true,
+      "provider": "elevenlabs",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Text to speech capabilities",
+      "url": "https://elevenlabs.io/docs/overview/capabilities/text-to-speech"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "eleven-status",
+      "notes": "Public service status and incident history; no contractual API SLA was established.",
+      "official": true,
+      "provider": "elevenlabs",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "ElevenLabs status",
+      "url": "https://status.elevenlabs.io/"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "eleven-terms",
+      "notes": "Commercial plan, output, data-use, and prohibited-use terms requiring legal review.",
+      "official": true,
+      "provider": "elevenlabs",
+      "publication_or_update_date": "2026-03-31",
+      "source_kind": "official_primary",
+      "title": "ElevenLabs terms of use",
+      "url": "https://elevenlabs.io/terms-of-use"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "eleven-timestamps",
+      "notes": "Documents streamed generation with character alignment.",
+      "official": true,
+      "provider": "elevenlabs",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Stream speech with timestamps",
+      "url": "https://elevenlabs.io/docs/api-reference/text-to-speech/stream-with-timestamps"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "eleven-voice-library",
+      "notes": "Current catalog, regional accent guidance, and default voice expiry notice.",
+      "official": true,
+      "provider": "elevenlabs",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Voices",
+      "url": "https://elevenlabs.io/docs/overview/capabilities/voices"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "eleven-zrm",
+      "notes": "Enterprise zero-retention behavior and default retention context.",
+      "official": true,
+      "provider": "elevenlabs",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Zero retention mode",
+      "url": "https://elevenlabs.io/docs/eleven-api/resources/zero-retention-mode"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "google-data-logging",
+      "notes": "Documents stateless processing and no customer text or audio logging.",
+      "official": true,
+      "provider": "google",
+      "publication_or_update_date": "2026-06-09",
+      "source_kind": "official_primary",
+      "title": "Data logging",
+      "url": "https://cloud.google.com/text-to-speech/docs/data-logging"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "google-gemini",
+      "notes": "Current Gemini TTS models, limits, modes, and audio formats.",
+      "official": true,
+      "provider": "google",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Gemini-TTS",
+      "url": "https://cloud.google.com/text-to-speech/docs/gemini-tts"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "google-long-audio",
+      "notes": "Asynchronous long-audio requirements, limits, and Cloud Storage output.",
+      "official": true,
+      "provider": "google",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Synthesize long-form audio",
+      "url": "https://cloud.google.com/text-to-speech/docs/create-audio-text-long-audio-synthesis"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "google-pricing",
+      "notes": "Public character and token pricing by model family.",
+      "official": true,
+      "provider": "google",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Cloud Text-to-Speech pricing",
+      "url": "https://cloud.google.com/text-to-speech/pricing"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "google-service-terms",
+      "notes": "Current service-specific generated-output, safety, and abuse-monitoring terms.",
+      "official": true,
+      "provider": "google",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Google Cloud service specific terms",
+      "url": "https://cloud.google.com/terms/service-terms"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "google-sla",
+      "notes": "Public 99.9 percent Text-to-Speech service-level objective.",
+      "official": true,
+      "provider": "google",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Text-to-Speech Service Level Agreement",
+      "url": "https://cloud.google.com/text-to-speech/sla"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "google-ssml",
+      "notes": "SSML controls and mark timepoints.",
+      "official": true,
+      "provider": "google",
+      "publication_or_update_date": "2026-07-22",
+      "source_kind": "official_primary",
+      "title": "Speech Synthesis Markup Language",
+      "url": "https://cloud.google.com/text-to-speech/docs/ssml"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "google-voices",
+      "notes": "Current language, locale, model, and voice catalog.",
+      "official": true,
+      "provider": "google",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Supported voices and languages",
+      "url": "https://cloud.google.com/text-to-speech/docs/voices"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "openai-api-speech",
+      "notes": "Speech endpoint request, formats, limits, and streaming response.",
+      "official": true,
+      "provider": "openai",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Create speech API reference",
+      "url": "https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "openai-data-controls",
+      "notes": "Endpoint training, abuse-monitoring retention, and Zero Data Retention eligibility.",
+      "official": true,
+      "provider": "openai",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Data controls in the OpenAI platform",
+      "url": "https://platform.openai.com/docs/models/default-usage-policies-by-endpoint"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "openai-gpt4omini",
+      "notes": "Current model page with limit, snapshot, and token pricing.",
+      "official": true,
+      "provider": "openai",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "GPT-4o mini TTS model",
+      "url": "https://developers.openai.com/api/docs/models/gpt-4o-mini-tts"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "openai-latency-sla",
+      "notes": "Documents that standard latency is not generally guaranteed and directs special requirements to commercial support.",
+      "official": true,
+      "provider": "openai",
+      "publication_or_update_date": "2026-07-17",
+      "source_kind": "official_primary",
+      "title": "Is there an SLA for latency guarantees on the various engines?",
+      "url": "https://help.openai.com/en/articles/5008641-is-there-an-sla-for-latency-guarantees-on-the-various-engines"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "openai-model-catalog",
+      "notes": "Current model catalog used to identify lifecycle ambiguity around the guide's TTS recommendation.",
+      "official": true,
+      "provider": "openai",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "OpenAI model catalog",
+      "url": "https://developers.openai.com/api/docs/models"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "openai-service-terms",
+      "notes": "Current API service terms and output-related indemnity scope.",
+      "official": true,
+      "provider": "openai",
+      "publication_or_update_date": "2026-06-12",
+      "source_kind": "official_primary",
+      "title": "OpenAI service terms",
+      "url": "https://openai.com/policies/service-terms/"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "openai-status",
+      "notes": "Public incident history; not a TTS-specific SLA.",
+      "official": true,
+      "provider": "openai",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "OpenAI status history",
+      "url": "https://status.openai.com/history"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "openai-tts1",
+      "notes": "Current TTS-1 model page and list price.",
+      "official": true,
+      "provider": "openai",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "TTS-1 model",
+      "url": "https://developers.openai.com/api/docs/models/tts-1"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "openai-tts1hd",
+      "notes": "Current TTS-1 HD model page and list price.",
+      "official": true,
+      "provider": "openai",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "TTS-1 HD model",
+      "url": "https://developers.openai.com/api/docs/models/tts-1-hd"
+    },
+    {
+      "accessed_at": "2026-07-28",
+      "id": "openai-tts-guide",
+      "notes": "Current guide for voices, language support, output formats, disclosure, and streaming.",
+      "official": true,
+      "provider": "openai",
+      "publication_or_update_date": null,
+      "source_kind": "official_primary",
+      "title": "Text to speech",
+      "url": "https://developers.openai.com/api/docs/guides/text-to-speech"
+    }
+  ],
+  "weights": {
+    "api_recovery": 18,
+    "audio": 12,
+    "complexity": 5,
+    "operations": 5,
+    "pricing": 18,
+    "privacy": 10,
+    "spanish": 25,
+    "timing": 7
+  }
+}

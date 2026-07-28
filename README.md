@@ -118,6 +118,13 @@ y remote jobs durables. Sigue completamente deshabilitada: no existe adapter
 real, API key, URL, discovery, red ni ruta ejecutable. Consulta
 [`docs/PRODUCTION_REAL_TTS_PREPARATION.md`](docs/PRODUCTION_REAL_TTS_PREPARATION.md).
 
+La evaluacion oficial y fechada de TTS real no selecciona todavia un provider:
+Azure queda como primer candidato de listening test y Google como segundo,
+pendientes de calidad auditiva, precio Azure verificable y revision legal. No
+se implemento integracion ni se activo gasto. Consulta
+[`docs/PRODUCTION_TTS_PROVIDER_EVALUATION.md`](docs/PRODUCTION_TTS_PROVIDER_EVALUATION.md)
+y [`docs/adrs/019-real-tts-provider-selection.md`](docs/adrs/019-real-tts-provider-selection.md).
+
 La infraestructura de publicacion segura es un bounded context independiente y desactivado por
 defecto. Publica temporalmente solo bytes ya verificados, con manifiesto durable, expiracion,
 recovery, cleanup y reconciliacion de solo lectura. Incluye adaptadores `null` y filesystem de

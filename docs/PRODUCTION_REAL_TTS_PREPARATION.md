@@ -294,13 +294,21 @@ record is created during normal narration.
 - no real alignment/timestamps;
 - no automatic resolution of uncertain submissions.
 
-## 22. Future provider-selection phase
+## 22. Phase 5G.3 provider evaluation follow-up
 
-A future phase may select one provider only after reviewing privacy,
-retention, region, terms, pricing, authentication, transport bounds,
-idempotency semantics, request timeout ambiguity, download integrity, and
-manual uncertain-job recovery.
+Phase 5G.3 reviewed current official documentation for OpenAI, ElevenLabs,
+Azure AI Speech, Google Cloud Text-to-Speech, and Amazon Polly. The result is
+deliberately deferred: Azure is the first controlled-listening candidate and
+Google is second, but no provider is selected.
 
-That phase must remain opt-in, introduce credentials through secret types, add
-an official pinned endpoint, use fake transports for unit tests, and require a
-separate explicit live-validation authorization.
+The dated findings, compatibility mapping, cost assumptions, listening plan,
+and decision record are in
+[`PRODUCTION_TTS_PROVIDER_EVALUATION.md`](PRODUCTION_TTS_PROVIDER_EVALUATION.md)
+and
+[`adrs/019-real-tts-provider-selection.md`](adrs/019-real-tts-provider-selection.md).
+
+Any later integration must first verify current pricing, complete legal and
+privacy review, run the separately authorized listening test, and accept a new
+provider-specific ADR. It must remain opt-in, introduce credentials through
+secret types, pin an official endpoint, use fake transports for unit tests,
+and require a separate explicit live-validation authorization.
