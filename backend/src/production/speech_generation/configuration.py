@@ -2,9 +2,10 @@
 
 import hashlib
 import json
-from typing import Literal
+from decimal import Decimal
+from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from backend.src.production.domain.base import ContractModel
 
@@ -43,3 +44,42 @@ class SpeechGenerationConfiguration(ContractModel):
             separators=(",", ":"),
         ).encode("utf-8")
         return hashlib.sha256(content).hexdigest()
+
+
+class SpeechRemotePreparationConfiguration(ContractModel):
+    """Fail-closed settings for architecture that has no live adapter."""
+
+    allow_billable_requests: bool = False
+    remote_provider: Literal["disabled"] = "disabled"
+    remote_model: str | None = Field(default=None, min_length=1, max_length=300)
+    remote_voice: str | None = Field(default=None, min_length=1, max_length=200)
+    maximum_estimated_cost: Decimal | None = Field(
+        default=None,
+        gt=0,
+        max_digits=18,
+        decimal_places=9,
+    )
+    max_poll_attempts: int = Field(default=120, ge=1, le=1000)
+    poll_interval_seconds: float = Field(default=5, gt=0, le=300)
+    remote_job_max_bytes: int = Field(
+        default=1_000_000,
+        ge=1_024,
+        le=4_000_000,
+    )
+
+    @field_validator("maximum_estimated_cost", mode="before")
+    @classmethod
+    def reject_float_cost(cls, value: Any) -> Any:
+        if isinstance(value, float):
+            raise ValueError("remote speech maximum cost must not use float")
+        return value
+
+    @model_validator(mode="after")
+    def fail_closed(self) -> "SpeechRemotePreparationConfiguration":
+        if self.allow_billable_requests:
+            raise ValueError("no billable remote speech provider is available")
+        if self.remote_model is not None or self.remote_voice is not None:
+            raise ValueError("disabled remote speech cannot select a model or voice")
+        if self.maximum_estimated_cost is not None:
+            raise ValueError("disabled remote speech cannot authorize a cost")
+        return self

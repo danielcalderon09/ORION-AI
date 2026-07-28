@@ -112,6 +112,12 @@ provider es `simulated`, funciona sin red, FFmpeg, API key o cuenta financiada.
 Consulta
 [`docs/PRODUCTION_SIMULATED_SPEECH_GENERATION.md`](docs/PRODUCTION_SIMULATED_SPEECH_GENERATION.md).
 
+La preparacion para TTS real agrega contratos neutrales de capabilities,
+seleccion exacta de voz, precios Decimal, autorizacion facturable, fingerprints
+y remote jobs durables. Sigue completamente deshabilitada: no existe adapter
+real, API key, URL, discovery, red ni ruta ejecutable. Consulta
+[`docs/PRODUCTION_REAL_TTS_PREPARATION.md`](docs/PRODUCTION_REAL_TTS_PREPARATION.md).
+
 La infraestructura de publicacion segura es un bounded context independiente y desactivado por
 defecto. Publica temporalmente solo bytes ya verificados, con manifiesto durable, expiracion,
 recovery, cleanup y reconciliacion de solo lectura. Incluye adaptadores `null` y filesystem de

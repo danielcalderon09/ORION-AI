@@ -88,6 +88,11 @@ def test_production_defaults_are_offline_and_non_billable(tmp_path) -> None:
     assert settings.ORION_SPEECH_GENERATION_PROVIDER == "simulated"
     assert settings.ORION_SPEECH_GENERATION_VOICE == "simulated-neutral-v1"
     assert settings.ORION_SPEECH_GENERATION_LANGUAGE == "es-ES"
+    assert settings.ORION_SPEECH_GENERATION_ALLOW_BILLABLE_REQUESTS is False
+    assert settings.ORION_SPEECH_GENERATION_REMOTE_PROVIDER == "disabled"
+    assert settings.ORION_SPEECH_GENERATION_REMOTE_MODEL is None
+    assert settings.ORION_SPEECH_GENERATION_REMOTE_VOICE is None
+    assert settings.ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST is None
     assert settings.ORION_PLANNING_API_KEY is None
     assert settings.ORION_SCRIPTING_API_KEY is None
     assert settings.ORION_SCENE_PLANNING_API_KEY is None

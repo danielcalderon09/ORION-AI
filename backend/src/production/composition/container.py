@@ -194,8 +194,12 @@ from backend.src.production.scripting.providers.availability import (
 from backend.src.production.speech_generation.audio_store import (
     FilesystemSpeechAudioStore,
 )
+from backend.src.production.speech_generation.capability_sources import (
+    StaticSimulatedSpeechCapabilitySource,
+)
 from backend.src.production.speech_generation.configuration import (
     SpeechGenerationConfiguration,
+    SpeechRemotePreparationConfiguration,
 )
 from backend.src.production.speech_generation.handler import (
     SpeechGenerationHandler,
@@ -212,6 +216,15 @@ from backend.src.production.speech_generation.providers import (
 )
 from backend.src.production.speech_generation.reconciliation import (
     SpeechGenerationReconciler,
+)
+from backend.src.production.speech_generation.remote_job_store import (
+    LocalRemoteSpeechJobStore,
+)
+from backend.src.production.speech_generation.remote_ports import (
+    SpeechCapabilitySource,
+)
+from backend.src.production.speech_generation.remote_reconciliation import (
+    RemoteSpeechJobReconciler,
 )
 from backend.src.production.speech_generation.source_reader import (
     SpeechSourceScriptReaderAdapter,
@@ -300,6 +313,8 @@ class ProductionContainer:
     image_acquisition_provider: ImageAcquisitionProvider
     video_clip_generation_provider: VideoClipGenerationProvider
     speech_generation_provider: SpeechGenerationProvider
+    speech_capability_source: SpeechCapabilitySource
+    speech_remote_configuration: SpeechRemotePreparationConfiguration
     binary_asset_configuration: AssetStorageConfiguration
     binary_asset_store: BinaryAssetStore
     binary_asset_writer: BinaryAssetWriter
@@ -311,6 +326,8 @@ class ProductionContainer:
     video_clip_reconciler: FilesystemVideoClipReconciler
     speech_audio_store: SpeechAudioStore
     speech_reconciler: SpeechGenerationReconciler
+    remote_speech_job_store: LocalRemoteSpeechJobStore
+    remote_speech_reconciler: RemoteSpeechJobReconciler
     asset_publisher: AssetPublisher
     asset_publishing_service: AssetPublishingService
     asset_publishing_cleanup: PublishedAssetCleanupService
@@ -577,6 +594,20 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         ),
     )
     speech_generation_provider = SimulatedSpeechGenerationProvider()
+    speech_capability_source = StaticSimulatedSpeechCapabilitySource(
+        configuration=speech_configuration,
+        clock=clock,
+    )
+    speech_remote_configuration = SpeechRemotePreparationConfiguration(
+        allow_billable_requests=(settings.ORION_SPEECH_GENERATION_ALLOW_BILLABLE_REQUESTS),
+        remote_provider=settings.ORION_SPEECH_GENERATION_REMOTE_PROVIDER,
+        remote_model=settings.ORION_SPEECH_GENERATION_REMOTE_MODEL,
+        remote_voice=settings.ORION_SPEECH_GENERATION_REMOTE_VOICE,
+        maximum_estimated_cost=(settings.ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST),
+        max_poll_attempts=(settings.ORION_SPEECH_GENERATION_REMOTE_MAX_POLL_ATTEMPTS),
+        poll_interval_seconds=(settings.ORION_SPEECH_GENERATION_REMOTE_POLL_INTERVAL_SECONDS),
+        remote_job_max_bytes=(settings.ORION_SPEECH_GENERATION_REMOTE_JOB_MAX_BYTES),
+    )
     speech_source_reader = SpeechSourceScriptReaderAdapter(
         DurableProductionScriptReader(
             workspace_root=settings.PROJECTS_DIR,
@@ -634,6 +665,15 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             ),
         ),
         max_manifest_bytes=speech_configuration.max_manifest_bytes,
+    )
+    remote_speech_job_store = LocalRemoteSpeechJobStore(
+        settings.PROJECTS_DIR,
+        max_bytes=speech_remote_configuration.remote_job_max_bytes,
+    )
+    remote_speech_reconciler = RemoteSpeechJobReconciler(
+        workspace_root=settings.PROJECTS_DIR,
+        audio_store=speech_audio_store,
+        max_record_bytes=speech_remote_configuration.remote_job_max_bytes,
     )
     planning_artifact_reconciler = LocalProductionArtifactReconciler(
         workspace_root=settings.PROJECTS_DIR,
@@ -743,6 +783,8 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         image_acquisition_provider=image_acquisition_provider,
         video_clip_generation_provider=video_clip_generation_provider,
         speech_generation_provider=speech_generation_provider,
+        speech_capability_source=speech_capability_source,
+        speech_remote_configuration=speech_remote_configuration,
         binary_asset_configuration=binary_asset_configuration,
         binary_asset_store=filesystem_binary_asset_store,
         binary_asset_writer=filesystem_binary_asset_store,
@@ -754,6 +796,8 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         video_clip_reconciler=video_clip_reconciler,
         speech_audio_store=speech_audio_store,
         speech_reconciler=speech_reconciler,
+        remote_speech_job_store=remote_speech_job_store,
+        remote_speech_reconciler=remote_speech_reconciler,
         asset_publisher=asset_publisher,
         asset_publishing_service=asset_publishing_service,
         asset_publishing_cleanup=asset_publishing_cleanup,
@@ -768,6 +812,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             scripting_provider,
             planning_provider,
             speech_generation_provider,
+            speech_capability_source,
             asset_publisher,
         ),
     )

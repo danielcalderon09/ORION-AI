@@ -71,3 +71,43 @@ class SpeechManifestConflictError(SpeechManifestError):
 
 class SpeechManifestCorruptError(SpeechManifestError):
     pass
+
+
+class SpeechRemotePreparationError(SpeechGenerationError):
+    """Base failure for disabled provider-neutral remote preparation."""
+
+
+class SpeechCapabilityError(SpeechRemotePreparationError):
+    pass
+
+
+class SpeechCapabilityConfigurationError(SpeechCapabilityError):
+    pass
+
+
+class SpeechVoiceSelectionError(SpeechRemotePreparationError):
+    pass
+
+
+class SpeechCostEstimationError(SpeechRemotePreparationError):
+    pass
+
+
+class SpeechBillableAuthorizationError(SpeechRemotePreparationError):
+    pass
+
+
+class RemoteSpeechProviderDisabledError(SpeechRemotePreparationError):
+    pass
+
+
+class RemoteSpeechJobStoreError(SpeechRemotePreparationError):
+    pass
+
+
+class RemoteSpeechJobConflictError(RemoteSpeechJobStoreError):
+    pass
+
+
+class RemoteSpeechJobCorruptError(RemoteSpeechJobStoreError):
+    pass

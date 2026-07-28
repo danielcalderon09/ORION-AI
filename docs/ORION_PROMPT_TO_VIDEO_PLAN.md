@@ -1,5 +1,21 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 5G.2
+
+ORION ya dispone de contratos provider-neutral para capabilities TTS,
+seleccion determinista de modelo/voz, precios y autorizacion Decimal,
+fingerprints canonicos, remote speech jobs durables, recovery sin doble cobro y
+reconciliacion read-only. El ciclo futuro exige checkpoints `prepared` y
+`submitting`; una entrega ambigua pasa a `uncertain` y nunca se reenvia
+automaticamente.
+
+La etapa activa no cambio: GENERATING_NARRATION sigue usando exclusivamente el
+simulador tonal de Fase 5G.1. El unico remote provider es `disabled`, billable
+speech es false, y no existen API key, URL, SDK, discovery, red, cloud ni
+provider real. La siguiente fase recomendada es evaluar y seleccionar un TTS
+real bajo una revision separada de privacidad, retencion, coste e idempotencia,
+sin autorizar todavia una validacion live.
+
 ## Estado posterior a Fase 5G.1
 
 GENERATING_NARRATION ya reemplaza el placeholder historico con un bounded

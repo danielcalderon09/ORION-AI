@@ -174,3 +174,119 @@ def test_shared_script_reader_does_not_reverse_depend_on_speech() -> None:
     files = (PRODUCTION_ROOT / "infrastructure" / "durable_production_script_reader.py",)
     forbidden = (f"{PRODUCTION_PREFIX}speech_generation",)
     assert _violations(files, forbidden) == []
+
+
+def test_remote_speech_contracts_have_no_transport_or_runtime_dependency() -> None:
+    speech = PRODUCTION_ROOT / "speech_generation"
+    files = tuple(
+        speech / name
+        for name in (
+            "billable_gate.py",
+            "cost.py",
+            "fingerprinting.py",
+            "remote_capabilities.py",
+            "remote_models.py",
+            "remote_ports.py",
+            "remote_recovery.py",
+            "voice_selection.py",
+        )
+    )
+    forbidden = (
+        f"{PRODUCTION_PREFIX}composition",
+        f"{PRODUCTION_PREFIX}runtime.handlers",
+        f"{PRODUCTION_PREFIX}speech_generation.providers",
+        "backend.src.infrastructure",
+        "httpx",
+        "requests",
+        "aiohttp",
+        "urllib",
+        "socket",
+        "openai",
+        "sqlalchemy",
+        "fastapi",
+    )
+    assert _violations(files, forbidden) == []
+
+
+def test_disabled_remote_speech_provider_has_no_transport_or_sdk_dependency() -> None:
+    files = (PRODUCTION_ROOT / "speech_generation" / "providers" / "disabled_remote_provider.py",)
+    forbidden = (
+        "httpx",
+        "requests",
+        "aiohttp",
+        "urllib",
+        "socket",
+        "subprocess",
+        "openai",
+        "openrouter",
+        "elevenlabs",
+        "azure",
+        "google",
+        "boto3",
+        "botocore",
+    )
+    assert _violations(files, forbidden) == []
+
+
+def test_simulated_speech_provider_does_not_import_remote_preparation() -> None:
+    path = PRODUCTION_ROOT / "speech_generation" / "providers" / "simulated_provider.py"
+    imported = _imports(path)
+    assert not any(
+        name.startswith(f"{PRODUCTION_PREFIX}speech_generation.remote")
+        or name.startswith(f"{PRODUCTION_PREFIX}speech_generation.billable")
+        or name.startswith(f"{PRODUCTION_PREFIX}speech_generation.cost")
+        for name in imported
+    )
+
+
+def test_remote_speech_store_is_provider_neutral() -> None:
+    files = (
+        PRODUCTION_ROOT / "speech_generation" / "remote_job_store.py",
+        PRODUCTION_ROOT / "speech_generation" / "remote_reconciliation.py",
+    )
+    forbidden = (
+        f"{PRODUCTION_PREFIX}speech_generation.providers",
+        f"{PRODUCTION_PREFIX}video_clip_generation.providers",
+        "httpx",
+        "sqlalchemy",
+    )
+    assert _violations(files, forbidden) == []
+
+
+def test_active_speech_handler_has_no_remote_provider_route() -> None:
+    path = PRODUCTION_ROOT / "speech_generation" / "handler.py"
+    imported = _imports(path)
+    assert not any(
+        name.startswith(f"{PRODUCTION_PREFIX}speech_generation.remote")
+        or name.endswith("disabled_remote_provider")
+        for name in imported
+    )
+
+
+def test_speech_context_has_no_real_provider_sdk_dependency() -> None:
+    speech_files = tuple((PRODUCTION_ROOT / "speech_generation").rglob("*.py"))
+    forbidden = (
+        "openai",
+        "openrouter",
+        "elevenlabs",
+        "azure",
+        "google.cloud",
+        "boto3",
+        "botocore",
+    )
+    assert _violations(speech_files, forbidden) == []
+
+
+def test_only_composition_selects_concrete_speech_capability_source() -> None:
+    source_module = f"{PRODUCTION_PREFIX}speech_generation.capability_sources"
+    violations: list[str] = []
+    for path in _python_files():
+        relative = path.relative_to(PRODUCTION_ROOT)
+        if (
+            relative.parts[0] == "composition"
+            or relative.as_posix() == "speech_generation/capability_sources.py"
+        ):
+            continue
+        if any(imported.startswith(source_module) for imported in _imports(path)):
+            violations.append(relative.as_posix())
+    assert violations == []

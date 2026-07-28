@@ -148,6 +148,14 @@ class Settings(BaseSettings):
     ORION_SPEECH_GENERATION_MAX_MANIFEST_BYTES: int = 4_000_000
     ORION_SPEECH_GENERATION_MAX_SCRIPT_BYTES: int = 2_000_000
     ORION_SPEECH_GENERATION_GENERATING_STALE_AFTER_SECONDS: float = 30
+    ORION_SPEECH_GENERATION_ALLOW_BILLABLE_REQUESTS: bool = False
+    ORION_SPEECH_GENERATION_REMOTE_PROVIDER: Literal["disabled"] = "disabled"
+    ORION_SPEECH_GENERATION_REMOTE_MODEL: str | None = None
+    ORION_SPEECH_GENERATION_REMOTE_VOICE: str | None = None
+    ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST: Decimal | None = None
+    ORION_SPEECH_GENERATION_REMOTE_MAX_POLL_ATTEMPTS: int = 120
+    ORION_SPEECH_GENERATION_REMOTE_POLL_INTERVAL_SECONDS: float = 5
+    ORION_SPEECH_GENERATION_REMOTE_JOB_MAX_BYTES: int = 1_000_000
     ORION_OPENROUTER_HTTP_REFERER: str | None = None
     ORION_OPENROUTER_APP_TITLE: str | None = None
 
@@ -210,6 +218,18 @@ class Settings(BaseSettings):
         return value
 
     @field_validator(
+        "ORION_SPEECH_GENERATION_REMOTE_MODEL",
+        "ORION_SPEECH_GENERATION_REMOTE_VOICE",
+        "ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST",
+        mode="before",
+    )
+    @classmethod
+    def empty_remote_speech_value_is_unset(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator(
         "ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD",
         mode="before",
     )
@@ -217,6 +237,16 @@ class Settings(BaseSettings):
     def reject_float_video_cost(cls, value: Any) -> Any:
         if isinstance(value, float):
             raise ValueError("OpenRouter video cost must not use float")
+        return value
+
+    @field_validator(
+        "ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST",
+        mode="before",
+    )
+    @classmethod
+    def reject_float_speech_cost(cls, value: Any) -> Any:
+        if isinstance(value, float):
+            raise ValueError("remote speech cost must not use float")
         return value
 
     def __init__(self, **kwargs: Any) -> None:
@@ -252,6 +282,7 @@ class Settings(BaseSettings):
             "ORION_VIDEO_CLIP_GENERATION_OPENROUTER_CAPABILITY_CACHE_TTL_SECONDS": self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_CAPABILITY_CACHE_TTL_SECONDS,
             "ORION_ASSET_PUBLISHING_LIFETIME_SECONDS": self.ORION_ASSET_PUBLISHING_LIFETIME_SECONDS,
             "ORION_SPEECH_GENERATION_GENERATING_STALE_AFTER_SECONDS": self.ORION_SPEECH_GENERATION_GENERATING_STALE_AFTER_SECONDS,
+            "ORION_SPEECH_GENERATION_REMOTE_POLL_INTERVAL_SECONDS": self.ORION_SPEECH_GENERATION_REMOTE_POLL_INTERVAL_SECONDS,
         }
         for name, value in positive.items():
             if value <= 0:
@@ -310,6 +341,7 @@ class Settings(BaseSettings):
             "ORION_SPEECH_GENERATION_MAX_AUDIO_BYTES": self.ORION_SPEECH_GENERATION_MAX_AUDIO_BYTES,
             "ORION_SPEECH_GENERATION_MAX_MANIFEST_BYTES": self.ORION_SPEECH_GENERATION_MAX_MANIFEST_BYTES,
             "ORION_SPEECH_GENERATION_MAX_SCRIPT_BYTES": self.ORION_SPEECH_GENERATION_MAX_SCRIPT_BYTES,
+            "ORION_SPEECH_GENERATION_REMOTE_JOB_MAX_BYTES": self.ORION_SPEECH_GENERATION_REMOTE_JOB_MAX_BYTES,
         }.items():
             maximum = {
                 "ORION_ASSET_PUBLISHING_MAX_ASSET_BYTES": 250_000_000,
@@ -344,6 +376,20 @@ class Settings(BaseSettings):
         )
         if speech_bytes > self.ORION_SPEECH_GENERATION_MAX_AUDIO_BYTES:
             raise ValueError("speech audio limit cannot hold maximum duration")
+        if not 1 <= self.ORION_SPEECH_GENERATION_REMOTE_MAX_POLL_ATTEMPTS <= 1000:
+            raise ValueError("remote speech poll attempts are outside safe limits")
+        if not 1_024 <= self.ORION_SPEECH_GENERATION_REMOTE_JOB_MAX_BYTES <= 4_000_000:
+            raise ValueError("remote speech job size is outside safe limits")
+        if not (0 < self.ORION_SPEECH_GENERATION_REMOTE_POLL_INTERVAL_SECONDS <= 300):
+            raise ValueError("remote speech poll interval is outside safe limits")
+        if self.ORION_SPEECH_GENERATION_ALLOW_BILLABLE_REQUESTS:
+            raise ValueError("no billable remote speech provider is available")
+        if (
+            self.ORION_SPEECH_GENERATION_REMOTE_MODEL is not None
+            or self.ORION_SPEECH_GENERATION_REMOTE_VOICE is not None
+            or self.ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST is not None
+        ):
+            raise ValueError("disabled remote speech cannot configure model, voice, or cost")
         if (
             self.ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS
             > self.ORION_VIDEO_CLIP_GENERATION_MAX_DURATION_SECONDS
