@@ -85,9 +85,38 @@ def test_production_defaults_are_offline_and_non_billable(tmp_path) -> None:
     assert settings.ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS is False
     assert settings.ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER == "disabled"
     assert settings.ORION_ASSET_PUBLISHING_PUBLISHER == "null"
+    assert settings.ORION_SPEECH_GENERATION_PROVIDER == "simulated"
+    assert settings.ORION_SPEECH_GENERATION_VOICE == "simulated-neutral-v1"
+    assert settings.ORION_SPEECH_GENERATION_LANGUAGE == "es-ES"
     assert settings.ORION_PLANNING_API_KEY is None
     assert settings.ORION_SCRIPTING_API_KEY is None
     assert settings.ORION_SCENE_PLANNING_API_KEY is None
     assert settings.ORION_VISUAL_ASSET_PLANNING_API_KEY is None
     assert settings.ORION_IMAGE_ACQUISITION_API_KEY is None
     assert settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_API_KEY is None
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("ORION_SPEECH_GENERATION_WORDS_PER_MINUTE", 59),
+        ("ORION_SPEECH_GENERATION_SAMPLE_RATE_HZ", 96_000),
+        ("ORION_SPEECH_GENERATION_MIN_DURATION_MS", 99),
+        ("ORION_SPEECH_GENERATION_MAX_SEGMENT_DURATION_MS", 700_000),
+        ("ORION_SPEECH_GENERATION_MAX_AUDIO_BYTES", 1_023),
+    ],
+)
+def test_speech_settings_reject_unsafe_limits(tmp_path, name, value) -> None:
+    from pydantic import ValidationError
+
+    from backend.src.infrastructure.config.settings import Settings
+
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            ORION_HOME=tmp_path / "home",
+            MODELS_DIR=tmp_path / "models",
+            PROJECTS_DIR=tmp_path / "projects",
+            TEMP_DIR=tmp_path / "temp",
+            **{name: value},
+        )

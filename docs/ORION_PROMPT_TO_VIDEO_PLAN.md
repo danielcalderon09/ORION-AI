@@ -1,5 +1,21 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 5G.1
+
+GENERATING_NARRATION ya reemplaza el placeholder historico con un bounded
+context durable y provider-neutral. Consume exclusivamente la narracion del
+`ProductionScript` aprobado, construye segmentos deterministas por escena,
+produce WAV PCM mono de 24 kHz mediante un simulador standard-library y
+checkpointa `speech-generation-manifest.json` con recovery, CAS, idempotencia y
+reconciliacion read-only.
+
+El audio sigue siendo un patron tonal de prueba, no voz humana. No existen TTS
+real, API key, red, cloud, cobro, FFmpeg de audio, musica, SFX, mezcla,
+subtitulos, DaVinci ni frontend. `simulated` permanece como unico provider. La
+siguiente fase recomendada es planificar subtitulos/alineacion simulados o el
+paquete de edicion, manteniendo cualquier TTS real como una fase separada con
+revision de privacidad, coste e idempotencia remota.
+
 ## Estado posterior a Fase 5I
 
 La auditoria global de arquitectura confirma una base offline y no facturable:

@@ -51,6 +51,7 @@ def create_simulated_handler_registry(
     clock: Callable[[], datetime],
     uuid_factory: Callable[[], UUID],
     video_clip_generation_handler: StageHandler | None = None,
+    speech_generation_handler: StageHandler | None = None,
 ) -> StageHandlerRegistry:
     handlers: list[StageHandler] = [
         PlanningHandler(
@@ -71,7 +72,7 @@ def create_simulated_handler_registry(
         handlers.append(video_clip_generation_handler)
     handlers.extend(
         (
-            NarrationHandler(clock=clock, uuid_factory=uuid_factory),
+            speech_generation_handler or NarrationHandler(clock=clock, uuid_factory=uuid_factory),
             MusicHandler(clock=clock, uuid_factory=uuid_factory),
             SubtitleHandler(clock=clock, uuid_factory=uuid_factory),
             TimelineHandler(clock=clock, uuid_factory=uuid_factory),
@@ -91,6 +92,7 @@ def create_handler_registry(
     visual_asset_planning_handler: VisualAssetPlanningHandler | None = None,
     image_acquisition_handler: ImageAcquisitionHandler | None = None,
     video_clip_generation_handler: VideoClipGenerationHandler | None = None,
+    speech_generation_handler: StageHandler | None = None,
     clock: Callable[[], datetime],
     uuid_factory: Callable[[], UUID],
 ) -> StageHandlerRegistry:
@@ -112,7 +114,7 @@ def create_handler_registry(
         handlers.append(video_clip_generation_handler)
     handlers.extend(
         (
-            NarrationHandler(clock=clock, uuid_factory=uuid_factory),
+            speech_generation_handler or NarrationHandler(clock=clock, uuid_factory=uuid_factory),
             MusicHandler(clock=clock, uuid_factory=uuid_factory),
             SubtitleHandler(clock=clock, uuid_factory=uuid_factory),
             TimelineHandler(clock=clock, uuid_factory=uuid_factory),

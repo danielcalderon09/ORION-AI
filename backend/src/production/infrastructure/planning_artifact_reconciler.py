@@ -53,6 +53,10 @@ VIDEO_CLIP_GENERATION_POLICY = JsonArtifactReconciliationPolicy(
     stage="generating_video_clips",
     filename="video-clip-generation-manifest.json",
 )
+SPEECH_GENERATION_POLICY = JsonArtifactReconciliationPolicy(
+    stage="generating_narration",
+    filename="speech-generation-manifest.json",
+)
 
 
 class LocalPlanningArtifactReconciler:
@@ -188,9 +192,12 @@ class LocalPlanningArtifactReconciler:
             counts["registered"] += 1
             return
         counts["orphaned"] += 1
-        if relative.parts[2] == VIDEO_CLIP_GENERATION_POLICY.stage:
-            # Video reconciliation is strictly read-only: never delete, quarantine,
-            # or regenerate a video manifest automatically.
+        if relative.parts[2] in {
+            VIDEO_CLIP_GENERATION_POLICY.stage,
+            SPEECH_GENERATION_POLICY.stage,
+        }:
+            # Durable media reconciliation is strictly read-only: never delete,
+            # quarantine, repair, or regenerate a media manifest automatically.
             counts["skipped_recent"] += 1
             return
         modified = datetime.fromtimestamp(candidate.stat().st_mtime, tz=UTC)
@@ -211,9 +218,7 @@ class LocalPlanningArtifactReconciler:
         _remove_empty_parents(candidate.parent, stop=production_root)
 
     def _quarantine_destination(self, relative: Path) -> Path:
-        quarantine_root = self._root.joinpath(
-            *PurePosixPath(self._quarantine_relative).parts
-        )
+        quarantine_root = self._root.joinpath(*PurePosixPath(self._quarantine_relative).parts)
         _reject_symlink_path(self._root, quarantine_root)
         destination = quarantine_root.joinpath(*relative.parts[1:])
         destination.resolve(strict=False).relative_to(self._root)
@@ -237,10 +242,7 @@ def _is_contractual_artifact_path(
         UUID(parts[1])
     except ValueError:
         return False
-    return any(
-        parts[2] == policy.stage and parts[4] == policy.filename
-        for policy in policies
-    )
+    return any(parts[2] == policy.stage and parts[4] == policy.filename for policy in policies)
 
 
 class LocalProductionArtifactReconciler(LocalPlanningArtifactReconciler):
@@ -274,6 +276,7 @@ class LocalProductionArtifactReconciler(LocalPlanningArtifactReconciler):
                 VISUAL_ASSET_PLANNING_POLICY,
                 IMAGE_ACQUISITION_POLICY,
                 VIDEO_CLIP_GENERATION_POLICY,
+                SPEECH_GENERATION_POLICY,
             ),
         )
 
@@ -314,7 +317,10 @@ def _remove_empty_parents(directory: Path, *, stop: Path) -> None:
         try:
             current.rmdir()
         except OSError as exc:
-            if exc.errno in {errno.EEXIST, errno.ENOTEMPTY} or getattr(exc, "winerror", None) == 145:
+            if (
+                exc.errno in {errno.EEXIST, errno.ENOTEMPTY}
+                or getattr(exc, "winerror", None) == 145
+            ):
                 return
             raise
         current = current.parent

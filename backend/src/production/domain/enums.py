@@ -58,10 +58,9 @@ class ArtifactType(StrEnum):
     PRODUCTION_SCRIPT = "production_script"
     PRODUCTION_SCENE_PLAN = "production_scene_plan"
     PRODUCTION_VISUAL_ASSET_PLAN = "production_visual_asset_plan"
-    PRODUCTION_IMAGE_ACQUISITION_MANIFEST = (
-        "production_image_acquisition_manifest"
-    )
+    PRODUCTION_IMAGE_ACQUISITION_MANIFEST = "production_image_acquisition_manifest"
     PRODUCTION_VIDEO_CLIP_MANIFEST = "production_video_clip_manifest"
+    PRODUCTION_SPEECH_GENERATION_MANIFEST = "production_speech_generation_manifest"
     SOURCE_IMAGE = "source_image"
     SOURCE_VIDEO_CLIP = "source_video_clip"
     SOURCE_VIDEO = "source_video"

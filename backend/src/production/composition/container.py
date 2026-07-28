@@ -191,6 +191,32 @@ from backend.src.production.scripting.providers.availability import (
     ScriptingProviderFactory,
     load_openrouter_scripting_provider,
 )
+from backend.src.production.speech_generation.audio_store import (
+    FilesystemSpeechAudioStore,
+)
+from backend.src.production.speech_generation.configuration import (
+    SpeechGenerationConfiguration,
+)
+from backend.src.production.speech_generation.handler import (
+    SpeechGenerationHandler,
+)
+from backend.src.production.speech_generation.manifest_writer import (
+    LocalSpeechManifestWriter,
+)
+from backend.src.production.speech_generation.ports import (
+    SpeechAudioStore,
+    SpeechGenerationProvider,
+)
+from backend.src.production.speech_generation.providers import (
+    SimulatedSpeechGenerationProvider,
+)
+from backend.src.production.speech_generation.reconciliation import (
+    SpeechGenerationReconciler,
+)
+from backend.src.production.speech_generation.source_reader import (
+    SpeechSourceScriptReaderAdapter,
+)
+from backend.src.production.speech_generation.wav import SpeechWavValidator
 from backend.src.production.video_clip_generation.configuration import (
     VideoClipGenerationConfiguration,
 )
@@ -273,6 +299,7 @@ class ProductionContainer:
     visual_asset_planning_provider: VisualAssetPlanningProvider
     image_acquisition_provider: ImageAcquisitionProvider
     video_clip_generation_provider: VideoClipGenerationProvider
+    speech_generation_provider: SpeechGenerationProvider
     binary_asset_configuration: AssetStorageConfiguration
     binary_asset_store: BinaryAssetStore
     binary_asset_writer: BinaryAssetWriter
@@ -282,6 +309,8 @@ class ProductionContainer:
     video_clip_binary_store: VideoClipBinaryStore
     video_clip_integrity_validator: VideoClipIntegrityValidator
     video_clip_reconciler: FilesystemVideoClipReconciler
+    speech_audio_store: SpeechAudioStore
+    speech_reconciler: SpeechGenerationReconciler
     asset_publisher: AssetPublisher
     asset_publishing_service: AssetPublishingService
     asset_publishing_cleanup: PublishedAssetCleanupService
@@ -530,6 +559,48 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         configuration=video_clip_configuration,
         clock=clock,
     )
+    speech_configuration = SpeechGenerationConfiguration(
+        provider=settings.ORION_SPEECH_GENERATION_PROVIDER,
+        voice=settings.ORION_SPEECH_GENERATION_VOICE,
+        language=settings.ORION_SPEECH_GENERATION_LANGUAGE,
+        words_per_minute=settings.ORION_SPEECH_GENERATION_WORDS_PER_MINUTE,
+        sample_rate_hz=settings.ORION_SPEECH_GENERATION_SAMPLE_RATE_HZ,
+        channel_count=settings.ORION_SPEECH_GENERATION_CHANNEL_COUNT,
+        sample_width_bytes=settings.ORION_SPEECH_GENERATION_SAMPLE_WIDTH_BYTES,
+        min_duration_ms=settings.ORION_SPEECH_GENERATION_MIN_DURATION_MS,
+        max_segment_duration_ms=(settings.ORION_SPEECH_GENERATION_MAX_SEGMENT_DURATION_MS),
+        max_audio_bytes=settings.ORION_SPEECH_GENERATION_MAX_AUDIO_BYTES,
+        max_manifest_bytes=settings.ORION_SPEECH_GENERATION_MAX_MANIFEST_BYTES,
+        max_script_bytes=settings.ORION_SPEECH_GENERATION_MAX_SCRIPT_BYTES,
+        generating_stale_after_seconds=(
+            settings.ORION_SPEECH_GENERATION_GENERATING_STALE_AFTER_SECONDS
+        ),
+    )
+    speech_generation_provider = SimulatedSpeechGenerationProvider()
+    speech_source_reader = SpeechSourceScriptReaderAdapter(
+        DurableProductionScriptReader(
+            workspace_root=settings.PROJECTS_DIR,
+            repository=SQLAlchemyProductionScriptQueryRepository(sessions),
+            max_script_bytes=speech_configuration.max_script_bytes,
+        )
+    )
+    speech_audio_store = FilesystemSpeechAudioStore(
+        workspace_root=settings.PROJECTS_DIR,
+        validator=SpeechWavValidator(max_audio_bytes=speech_configuration.max_audio_bytes),
+        max_audio_bytes=speech_configuration.max_audio_bytes,
+        clock=clock,
+    )
+    speech_generation_handler = SpeechGenerationHandler(
+        script_reader=speech_source_reader,
+        provider=speech_generation_provider,
+        audio_store=speech_audio_store,
+        manifest_writer=LocalSpeechManifestWriter(
+            settings.PROJECTS_DIR,
+            max_manifest_bytes=speech_configuration.max_manifest_bytes,
+        ),
+        configuration=speech_configuration,
+        clock=clock,
+    )
     binary_asset_reconciler = FilesystemBinaryAssetReconciler(
         configuration=binary_asset_configuration,
         store=filesystem_binary_asset_store,
@@ -549,6 +620,21 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         ),
         max_manifest_bytes=settings.ORION_VIDEO_CLIP_GENERATION_MAX_MANIFEST_BYTES,
     )
+    speech_reconciler = SpeechGenerationReconciler(
+        workspace_root=settings.PROJECTS_DIR,
+        audio_store=speech_audio_store,
+        source_reader=speech_source_reader,
+        registered_reader=SQLAlchemyRegisteredPlanningArtifactReader(
+            sessions,
+            artifact_types=frozenset(
+                {
+                    ArtifactType.NARRATION,
+                    ArtifactType.PRODUCTION_SPEECH_GENERATION_MANIFEST,
+                }
+            ),
+        ),
+        max_manifest_bytes=speech_configuration.max_manifest_bytes,
+    )
     planning_artifact_reconciler = LocalProductionArtifactReconciler(
         workspace_root=settings.PROJECTS_DIR,
         registered_reader=SQLAlchemyRegisteredPlanningArtifactReader(
@@ -561,6 +647,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                     ArtifactType.PRODUCTION_VISUAL_ASSET_PLAN,
                     ArtifactType.PRODUCTION_IMAGE_ACQUISITION_MANIFEST,
                     ArtifactType.PRODUCTION_VIDEO_CLIP_MANIFEST,
+                    ArtifactType.PRODUCTION_SPEECH_GENERATION_MANIFEST,
                 }
             ),
         ),
@@ -603,6 +690,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                 visual_asset_planning_handler=visual_asset_planning_handler,
                 image_acquisition_handler=image_acquisition_handler,
                 video_clip_generation_handler=video_clip_generation_handler,
+                speech_generation_handler=speech_generation_handler,
                 clock=clock,
                 uuid_factory=uuid4,
             )
@@ -654,6 +742,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         visual_asset_planning_provider=visual_asset_planning_provider,
         image_acquisition_provider=image_acquisition_provider,
         video_clip_generation_provider=video_clip_generation_provider,
+        speech_generation_provider=speech_generation_provider,
         binary_asset_configuration=binary_asset_configuration,
         binary_asset_store=filesystem_binary_asset_store,
         binary_asset_writer=filesystem_binary_asset_store,
@@ -663,6 +752,8 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         video_clip_binary_store=filesystem_video_clip_store,
         video_clip_integrity_validator=video_clip_integrity_validator,
         video_clip_reconciler=video_clip_reconciler,
+        speech_audio_store=speech_audio_store,
+        speech_reconciler=speech_reconciler,
         asset_publisher=asset_publisher,
         asset_publishing_service=asset_publishing_service,
         asset_publishing_cleanup=asset_publishing_cleanup,
@@ -676,6 +767,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             scene_planning_provider,
             scripting_provider,
             planning_provider,
+            speech_generation_provider,
             asset_publisher,
         ),
     )

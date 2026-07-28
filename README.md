@@ -105,6 +105,13 @@ segura, pero permanece no ejecutable sin un publisher HTTPS real (no incluido). 
 [`docs/PRODUCTION_VIDEO_CLIP_GENERATION.md`](docs/PRODUCTION_VIDEO_CLIP_GENERATION.md) y
 [`docs/PRODUCTION_OPENROUTER_VIDEO_PROVIDER.md`](docs/PRODUCTION_OPENROUTER_VIDEO_PROVIDER.md).
 
+GENERATING_NARRATION consume el `ProductionScript` durable y crea un WAV PCM
+determinista por escena, con manifest CAS, sidecars, checksum, recovery e
+idempotencia. El audio es un placeholder audible, no una voz humana; el unico
+provider es `simulated`, funciona sin red, FFmpeg, API key o cuenta financiada.
+Consulta
+[`docs/PRODUCTION_SIMULATED_SPEECH_GENERATION.md`](docs/PRODUCTION_SIMULATED_SPEECH_GENERATION.md).
+
 La infraestructura de publicacion segura es un bounded context independiente y desactivado por
 defecto. Publica temporalmente solo bytes ya verificados, con manifiesto durable, expiracion,
 recovery, cleanup y reconciliacion de solo lectura. Incluye adaptadores `null` y filesystem de

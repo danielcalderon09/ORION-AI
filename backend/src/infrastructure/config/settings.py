@@ -135,6 +135,19 @@ class Settings(BaseSettings):
     ORION_ASSET_PUBLISHING_LIFETIME_SECONDS: int = 900
     ORION_ASSET_PUBLISHING_MAX_ASSET_BYTES: int = 250_000_000
     ORION_ASSET_PUBLISHING_MAX_MANIFEST_BYTES: int = 4_000_000
+    ORION_SPEECH_GENERATION_PROVIDER: Literal["simulated"] = "simulated"
+    ORION_SPEECH_GENERATION_VOICE: str = "simulated-neutral-v1"
+    ORION_SPEECH_GENERATION_LANGUAGE: str = "es-ES"
+    ORION_SPEECH_GENERATION_WORDS_PER_MINUTE: int = 150
+    ORION_SPEECH_GENERATION_SAMPLE_RATE_HZ: int = 24_000
+    ORION_SPEECH_GENERATION_CHANNEL_COUNT: Literal[1] = 1
+    ORION_SPEECH_GENERATION_SAMPLE_WIDTH_BYTES: Literal[2] = 2
+    ORION_SPEECH_GENERATION_MIN_DURATION_MS: int = 250
+    ORION_SPEECH_GENERATION_MAX_SEGMENT_DURATION_MS: int = 120_000
+    ORION_SPEECH_GENERATION_MAX_AUDIO_BYTES: int = 8_000_000
+    ORION_SPEECH_GENERATION_MAX_MANIFEST_BYTES: int = 4_000_000
+    ORION_SPEECH_GENERATION_MAX_SCRIPT_BYTES: int = 2_000_000
+    ORION_SPEECH_GENERATION_GENERATING_STALE_AFTER_SECONDS: float = 30
     ORION_OPENROUTER_HTTP_REFERER: str | None = None
     ORION_OPENROUTER_APP_TITLE: str | None = None
 
@@ -238,6 +251,7 @@ class Settings(BaseSettings):
             "ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_SECONDS": self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_SECONDS,
             "ORION_VIDEO_CLIP_GENERATION_OPENROUTER_CAPABILITY_CACHE_TTL_SECONDS": self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_CAPABILITY_CACHE_TTL_SECONDS,
             "ORION_ASSET_PUBLISHING_LIFETIME_SECONDS": self.ORION_ASSET_PUBLISHING_LIFETIME_SECONDS,
+            "ORION_SPEECH_GENERATION_GENERATING_STALE_AFTER_SECONDS": self.ORION_SPEECH_GENERATION_GENERATING_STALE_AFTER_SECONDS,
         }
         for name, value in positive.items():
             if value <= 0:
@@ -293,6 +307,9 @@ class Settings(BaseSettings):
             "ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_VIDEO_BYTES": self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_VIDEO_BYTES,
             "ORION_ASSET_PUBLISHING_MAX_ASSET_BYTES": self.ORION_ASSET_PUBLISHING_MAX_ASSET_BYTES,
             "ORION_ASSET_PUBLISHING_MAX_MANIFEST_BYTES": self.ORION_ASSET_PUBLISHING_MAX_MANIFEST_BYTES,
+            "ORION_SPEECH_GENERATION_MAX_AUDIO_BYTES": self.ORION_SPEECH_GENERATION_MAX_AUDIO_BYTES,
+            "ORION_SPEECH_GENERATION_MAX_MANIFEST_BYTES": self.ORION_SPEECH_GENERATION_MAX_MANIFEST_BYTES,
+            "ORION_SPEECH_GENERATION_MAX_SCRIPT_BYTES": self.ORION_SPEECH_GENERATION_MAX_SCRIPT_BYTES,
         }.items():
             maximum = {
                 "ORION_ASSET_PUBLISHING_MAX_ASSET_BYTES": 250_000_000,
@@ -302,6 +319,31 @@ class Settings(BaseSettings):
                 raise ValueError(f"{name} is outside safe limits")
         if not 1 <= self.ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES <= 100_000_000:
             raise ValueError("ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES is outside safe limits")
+        if not 60 <= self.ORION_SPEECH_GENERATION_WORDS_PER_MINUTE <= 360:
+            raise ValueError("speech words per minute is outside safe limits")
+        if not 8_000 <= self.ORION_SPEECH_GENERATION_SAMPLE_RATE_HZ <= 48_000:
+            raise ValueError("speech sample rate is outside safe limits")
+        if not 100 <= self.ORION_SPEECH_GENERATION_MIN_DURATION_MS <= 10_000:
+            raise ValueError("minimum speech duration is outside safe limits")
+        if not (
+            self.ORION_SPEECH_GENERATION_MIN_DURATION_MS
+            <= self.ORION_SPEECH_GENERATION_MAX_SEGMENT_DURATION_MS
+            <= 600_000
+        ):
+            raise ValueError("maximum speech duration is outside safe limits")
+        speech_frames = (
+            self.ORION_SPEECH_GENERATION_MAX_SEGMENT_DURATION_MS
+            * self.ORION_SPEECH_GENERATION_SAMPLE_RATE_HZ
+            + 999
+        ) // 1_000
+        speech_bytes = (
+            44
+            + speech_frames
+            * self.ORION_SPEECH_GENERATION_CHANNEL_COUNT
+            * self.ORION_SPEECH_GENERATION_SAMPLE_WIDTH_BYTES
+        )
+        if speech_bytes > self.ORION_SPEECH_GENERATION_MAX_AUDIO_BYTES:
+            raise ValueError("speech audio limit cannot hold maximum duration")
         if (
             self.ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS
             > self.ORION_VIDEO_CLIP_GENERATION_MAX_DURATION_SECONDS
@@ -315,9 +357,7 @@ class Settings(BaseSettings):
             raise ValueError("OpenRouter video poll attempts are outside safe limits")
         if self.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD <= 0:
             raise ValueError("OpenRouter video maximum cost must be positive")
-        parsed_video_url = urlsplit(
-            self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_BASE_URL
-        )
+        parsed_video_url = urlsplit(self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_BASE_URL)
         if (
             parsed_video_url.scheme != "https"
             or parsed_video_url.hostname != "openrouter.ai"
@@ -332,16 +372,10 @@ class Settings(BaseSettings):
             self.ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS
             and self.ORION_VIDEO_CLIP_GENERATION_PROVIDER != "openrouter"
         ):
-            raise ValueError(
-                "billable video authorization requires provider=openrouter"
-            )
-        if (
-            self.ORION_VIDEO_CLIP_GENERATION_PROVIDER == "openrouter"
-            and (
-                not self.ORION_VIDEO_CLIP_GENERATION_MODEL.strip()
-                or self.ORION_VIDEO_CLIP_GENERATION_MODEL
-                == "simulated-video-v1"
-            )
+            raise ValueError("billable video authorization requires provider=openrouter")
+        if self.ORION_VIDEO_CLIP_GENERATION_PROVIDER == "openrouter" and (
+            not self.ORION_VIDEO_CLIP_GENERATION_MODEL.strip()
+            or self.ORION_VIDEO_CLIP_GENERATION_MODEL == "simulated-video-v1"
         ):
             raise ValueError("OpenRouter video requires an explicit model ID")
         for name in (
