@@ -157,6 +157,22 @@ from backend.src.production.infrastructure.persistence.transactions import (
 from backend.src.production.infrastructure.planning_artifact_reconciler import (
     LocalProductionArtifactReconciler,
 )
+from backend.src.production.media_composition.application.handler import (
+    MediaCompositionHandler,
+)
+from backend.src.production.media_composition.configuration import (
+    MediaCompositionConfiguration,
+)
+from backend.src.production.media_composition.infrastructure import (
+    DurableMediaCompositionSourceReader,
+    SQLAlchemyMediaCompositionArtifactInventory,
+)
+from backend.src.production.media_composition.reconciliation import (
+    MediaCompositionReconciler,
+)
+from backend.src.production.media_composition.storage import (
+    LocalMediaCompositionStore,
+)
 from backend.src.production.planning.artifact_writer import LocalPlanningArtifactWriter
 from backend.src.production.planning.exceptions import (
     PlanningProviderConfigurationError,
@@ -358,6 +374,7 @@ class ProductionContainer:
     music_asset_store: AudioDesignAssetStore
     sound_effect_asset_store: AudioDesignAssetStore
     audio_design_reconciler: AudioDesignReconciler
+    media_composition_reconciler: MediaCompositionReconciler
     remote_speech_job_store: LocalRemoteSpeechJobStore
     remote_speech_reconciler: RemoteSpeechJobReconciler
     asset_publisher: AssetPublisher
@@ -725,6 +742,43 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         sound_effect_store=sound_effect_asset_store,
         configuration=audio_design_configuration,
     )
+    media_composition_configuration = MediaCompositionConfiguration(
+        max_source_manifest_bytes=(settings.ORION_MEDIA_COMPOSITION_MAX_SOURCE_MANIFEST_BYTES),
+        max_plan_bytes=settings.ORION_MEDIA_COMPOSITION_MAX_PLAN_BYTES,
+        max_manifest_bytes=settings.ORION_MEDIA_COMPOSITION_MAX_MANIFEST_BYTES,
+    )
+    media_composition_store = LocalMediaCompositionStore(
+        settings.PROJECTS_DIR,
+        max_plan_bytes=media_composition_configuration.max_plan_bytes,
+        max_manifest_bytes=media_composition_configuration.max_manifest_bytes,
+    )
+    media_composition_source_reader = DurableMediaCompositionSourceReader(
+        workspace_root=settings.PROJECTS_DIR,
+        inventory=SQLAlchemyMediaCompositionArtifactInventory(artifacts),
+        script_reader=DurableProductionScriptReader(
+            workspace_root=settings.PROJECTS_DIR,
+            repository=SQLAlchemyProductionScriptQueryRepository(sessions),
+            max_script_bytes=audio_design_configuration.max_script_bytes,
+        ),
+        scene_plan_reader=DurableProductionScenePlanReader(
+            workspace_root=settings.PROJECTS_DIR,
+            repository=SQLAlchemyProductionScenePlanQueryRepository(sessions),
+            max_scene_plan_bytes=(media_composition_configuration.max_source_manifest_bytes),
+        ),
+        audio_design_configuration=audio_design_configuration,
+        configuration=media_composition_configuration,
+    )
+    media_composition_handler = MediaCompositionHandler(
+        source_reader=media_composition_source_reader,
+        store=media_composition_store,
+        configuration=media_composition_configuration,
+        clock=clock,
+    )
+    media_composition_reconciler = MediaCompositionReconciler(
+        source_reader=media_composition_source_reader,
+        store=media_composition_store,
+        configuration=media_composition_configuration,
+    )
     binary_asset_reconciler = FilesystemBinaryAssetReconciler(
         configuration=binary_asset_configuration,
         store=filesystem_binary_asset_store,
@@ -754,6 +808,8 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                 {
                     ArtifactType.NARRATION,
                     ArtifactType.PRODUCTION_SPEECH_GENERATION_MANIFEST,
+                    ArtifactType.MEDIA_COMPOSITION_PLAN,
+                    ArtifactType.MEDIA_COMPOSITION_MANIFEST,
                 }
             ),
         ),
@@ -825,6 +881,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                 video_clip_generation_handler=video_clip_generation_handler,
                 speech_generation_handler=speech_generation_handler,
                 audio_design_handler=audio_design_handler,
+                media_composition_handler=media_composition_handler,
                 clock=clock,
                 uuid_factory=uuid4,
             )
@@ -895,6 +952,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         music_asset_store=music_asset_store,
         sound_effect_asset_store=sound_effect_asset_store,
         audio_design_reconciler=audio_design_reconciler,
+        media_composition_reconciler=media_composition_reconciler,
         remote_speech_job_store=remote_speech_job_store,
         remote_speech_reconciler=remote_speech_reconciler,
         asset_publisher=asset_publisher,

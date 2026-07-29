@@ -376,3 +376,72 @@ def test_speech_context_does_not_reverse_depend_on_audio_design() -> None:
     files = tuple((PRODUCTION_ROOT / "speech_generation").rglob("*.py"))
     forbidden = (f"{PRODUCTION_PREFIX}audio_design",)
     assert _violations(files, forbidden) == []
+
+
+def test_media_composition_core_is_renderer_and_runtime_independent() -> None:
+    context = PRODUCTION_ROOT / "media_composition"
+    files = tuple((context / "domain").rglob("*.py")) + (
+        context / "configuration.py",
+        context / "ports.py",
+        context / "recovery.py",
+        context / "serialization.py",
+    )
+    forbidden = (
+        f"{PRODUCTION_PREFIX}composition",
+        f"{PRODUCTION_PREFIX}runtime",
+        "backend.src.infrastructure",
+        "httpx",
+        "requests",
+        "aiohttp",
+        "urllib",
+        "socket",
+        "subprocess",
+        "ffmpeg",
+        "moviepy",
+        "opentimelineio",
+        "sqlalchemy",
+        "fastapi",
+    )
+    assert _violations(files, forbidden) == []
+
+
+def test_media_composition_handler_depends_on_ports_not_adapters() -> None:
+    files = (PRODUCTION_ROOT / "media_composition" / "application" / "handler.py",)
+    forbidden = (
+        f"{PRODUCTION_PREFIX}media_composition.infrastructure",
+        f"{PRODUCTION_PREFIX}media_composition.storage",
+    )
+    assert _violations(files, forbidden) == []
+
+
+def test_media_composition_has_no_render_or_transport_execution_route() -> None:
+    files = tuple((PRODUCTION_ROOT / "media_composition").rglob("*.py"))
+    forbidden = (
+        "httpx",
+        "requests",
+        "aiohttp",
+        "socket",
+        "subprocess",
+        "ffmpeg",
+        "moviepy",
+        "opentimelineio",
+        "openai",
+        "openrouter",
+        "davinci",
+    )
+    assert _violations(files, forbidden) == []
+
+
+def test_upstream_media_contexts_do_not_reverse_depend_on_composition() -> None:
+    files = tuple(
+        path
+        for context_name in (
+            "audio_design",
+            "speech_generation",
+            "video_clip_generation",
+            "visual_asset_planning",
+        )
+        for path in (PRODUCTION_ROOT / context_name).rglob("*.py")
+    )
+    forbidden = (f"{PRODUCTION_PREFIX}media_composition",)
+    assert _violations(files, forbidden) == []

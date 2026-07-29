@@ -37,6 +37,9 @@ if TYPE_CHECKING:
     from backend.src.production.image_acquisition.handler import (
         ImageAcquisitionHandler,
     )
+    from backend.src.production.media_composition.application.handler import (
+        MediaCompositionHandler,
+    )
     from backend.src.production.scene_planning.handler import ScenePlanningHandler
     from backend.src.production.video_clip_generation.handler import (
         VideoClipGenerationHandler,
@@ -53,6 +56,7 @@ def create_simulated_handler_registry(
     video_clip_generation_handler: StageHandler | None = None,
     speech_generation_handler: StageHandler | None = None,
     audio_design_handler: StageHandler | None = None,
+    media_composition_handler: StageHandler | None = None,
 ) -> StageHandlerRegistry:
     handlers: list[StageHandler] = [
         PlanningHandler(
@@ -76,7 +80,7 @@ def create_simulated_handler_registry(
             speech_generation_handler or NarrationHandler(clock=clock, uuid_factory=uuid_factory),
             audio_design_handler or MusicHandler(clock=clock, uuid_factory=uuid_factory),
             SubtitleHandler(clock=clock, uuid_factory=uuid_factory),
-            TimelineHandler(clock=clock, uuid_factory=uuid_factory),
+            media_composition_handler or TimelineHandler(clock=clock, uuid_factory=uuid_factory),
             RenderHandler(clock=clock, uuid_factory=uuid_factory),
             ValidationHandler(clock=clock, uuid_factory=uuid_factory),
             ClipHandoffHandler(clock=clock, uuid_factory=uuid_factory),
@@ -95,6 +99,7 @@ def create_handler_registry(
     video_clip_generation_handler: VideoClipGenerationHandler | None = None,
     speech_generation_handler: StageHandler | None = None,
     audio_design_handler: StageHandler | None = None,
+    media_composition_handler: MediaCompositionHandler | None = None,
     clock: Callable[[], datetime],
     uuid_factory: Callable[[], UUID],
 ) -> StageHandlerRegistry:
@@ -119,7 +124,7 @@ def create_handler_registry(
             speech_generation_handler or NarrationHandler(clock=clock, uuid_factory=uuid_factory),
             audio_design_handler or MusicHandler(clock=clock, uuid_factory=uuid_factory),
             SubtitleHandler(clock=clock, uuid_factory=uuid_factory),
-            TimelineHandler(clock=clock, uuid_factory=uuid_factory),
+            media_composition_handler or TimelineHandler(clock=clock, uuid_factory=uuid_factory),
             RenderHandler(clock=clock, uuid_factory=uuid_factory),
             ValidationHandler(clock=clock, uuid_factory=uuid_factory),
             ClipHandoffHandler(clock=clock, uuid_factory=uuid_factory),

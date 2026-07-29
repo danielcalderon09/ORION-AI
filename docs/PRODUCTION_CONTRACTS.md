@@ -1,5 +1,18 @@
 # Contratos del bounded context `production`
 
+## Media composition plan (Fase 5H.2)
+
+`production.media_composition.MediaCompositionPlan` es el contrato
+renderer-neutral de `BUILDING_TIMELINE`. Referencia artifacts durables y fija
+perfil de salida, cinco tracks, clips, frames, transiciones, fades, volume
+envelopes, ducking y subtitulos existentes. No contiene timestamps ni comandos
+de render; usa JSON canonico y SHA-256.
+
+`MediaCompositionManifest` separa timestamps, inventario de validacion,
+summary e issues. Así, un asset desaparecido invalida sólo su entrada sin
+reescribir el timeline. Schema inicial `1.0.0`; detalles en
+[`PHASE_5H2_MEDIA_COMPOSITION_PLAN.md`](PHASE_5H2_MEDIA_COMPOSITION_PLAN.md).
+
 ## Contratos ejecutables de GENERATING_VIDEO_CLIPS (Fase 5F.1)
 
 `ProductionVideoClipManifest`, `ProductionVideoClipEntry`, `ProductionVideoClipSummary`,

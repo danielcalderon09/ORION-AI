@@ -1,5 +1,20 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 5H.2
+
+BUILDING_TIMELINE conserva su nombre y posicion serializados, pero ahora usa el
+bounded context durable `media_composition`. Construye cinco tracks canonicos,
+ranges de frames, transiciones, fades, ducking, envelopes, safe areas e
+identidades SHA-256 desde el inventario completo del job.
+
+El output es `media-composition-plan.json` mas su manifest de validacion y
+recovery. Un asset desaparecido invalida solo su entrada; el plan se conserva.
+El placeholder actual de subtitulos no se convierte en contenido: la pista
+queda deshabilitada hasta que exista un SRT durable. No se ejecutan FFmpeg,
+MoviePy, OpenTimelineIO, DaVinci, render, encoding, muxing, red, cloud ni
+providers. La siguiente fase debe preparar subtitulos durables o un renderer
+separado que consuma este contrato.
+
 ## Estado posterior a Fase 5H.1
 
 PREPARING_MUSIC conserva su nombre serializado y su posicion despues de

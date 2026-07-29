@@ -140,6 +140,13 @@ assets. Solo existen providers `simulated`; no hay samples externos, red,
 FFmpeg, DaVinci, mezcla final ni render final. Consulta
 [`docs/PRODUCTION_SIMULATED_AUDIO_DESIGN.md`](docs/PRODUCTION_SIMULATED_AUDIO_DESIGN.md).
 
+BUILDING_TIMELINE ahora construye `media-composition-plan.json` y
+`media-composition-manifest.json` durables desde assets ya verificados. El plan
+ordena video, narracion, musica, SFX y subtitulos con frames, transiciones,
+fades, ducking, safe areas y fingerprints. No genera contenido ni ejecuta
+render, FFmpeg, MoviePy, OpenTimelineIO o DaVinci. Consulta
+[`docs/PHASE_5H2_MEDIA_COMPOSITION_PLAN.md`](docs/PHASE_5H2_MEDIA_COMPOSITION_PLAN.md).
+
 La infraestructura de publicacion segura es un bounded context independiente y desactivado por
 defecto. Publica temporalmente solo bytes ya verificados, con manifiesto durable, expiracion,
 recovery, cleanup y reconciliacion de solo lectura. Incluye adaptadores `null` y filesystem de
