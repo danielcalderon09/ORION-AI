@@ -445,3 +445,65 @@ def test_upstream_media_contexts_do_not_reverse_depend_on_composition() -> None:
     )
     forbidden = (f"{PRODUCTION_PREFIX}media_composition",)
     assert _violations(files, forbidden) == []
+
+
+def test_rendering_core_is_runtime_and_infrastructure_independent() -> None:
+    context = PRODUCTION_ROOT / "rendering"
+    files = tuple(
+        context / name
+        for name in (
+            "configuration.py",
+            "fingerprints.py",
+            "models.py",
+            "ports.py",
+            "recovery.py",
+            "request_builder.py",
+            "serialization.py",
+        )
+    )
+    forbidden = (
+        f"{PRODUCTION_PREFIX}composition",
+        f"{PRODUCTION_PREFIX}runtime",
+        "backend.src.infrastructure",
+        "httpx",
+        "requests",
+        "aiohttp",
+        "urllib",
+        "socket",
+        "subprocess",
+        "sqlalchemy",
+        "fastapi",
+    )
+    assert _violations(files, forbidden) == []
+
+
+def test_rendering_has_no_executable_or_transport_adapter() -> None:
+    files = tuple((PRODUCTION_ROOT / "rendering").rglob("*.py"))
+    forbidden = (
+        "httpx",
+        "requests",
+        "aiohttp",
+        "socket",
+        "subprocess",
+        "moviepy",
+        "opentimelineio",
+        "blender",
+        "sqlalchemy",
+    )
+    assert _violations(files, forbidden) == []
+
+
+def test_upstream_contexts_do_not_reverse_depend_on_rendering() -> None:
+    files = tuple(
+        path
+        for context_name in (
+            "audio_design",
+            "media_composition",
+            "speech_generation",
+            "video_clip_generation",
+            "visual_asset_planning",
+        )
+        for path in (PRODUCTION_ROOT / context_name).rglob("*.py")
+    )
+    forbidden = (f"{PRODUCTION_PREFIX}rendering",)
+    assert _violations(files, forbidden) == []

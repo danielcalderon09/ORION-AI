@@ -184,6 +184,18 @@ from backend.src.production.planning.providers.availability import (
     load_openrouter_planning_provider,
 )
 from backend.src.production.planning.reconciliation import PlanningArtifactReconciler
+from backend.src.production.rendering.configuration import RenderingConfiguration
+from backend.src.production.rendering.handler import LocalRenderPreparationHandler
+from backend.src.production.rendering.manifest_store import (
+    LocalRenderPreparationStore,
+)
+from backend.src.production.rendering.models import RendererKind
+from backend.src.production.rendering.ports import LocalRenderer
+from backend.src.production.rendering.reconciliation import LocalRenderReconciler
+from backend.src.production.rendering.renderers import DryRunRenderer
+from backend.src.production.rendering.source_reader import (
+    VerifiedMediaCompositionSourceReader,
+)
 from backend.src.production.runtime import (
     ClaimedJobProcessor,
     ProductionExecutor,
@@ -375,6 +387,8 @@ class ProductionContainer:
     sound_effect_asset_store: AudioDesignAssetStore
     audio_design_reconciler: AudioDesignReconciler
     media_composition_reconciler: MediaCompositionReconciler
+    local_renderer: LocalRenderer
+    render_reconciler: LocalRenderReconciler
     remote_speech_job_store: LocalRemoteSpeechJobStore
     remote_speech_reconciler: RemoteSpeechJobReconciler
     asset_publisher: AssetPublisher
@@ -779,6 +793,39 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         store=media_composition_store,
         configuration=media_composition_configuration,
     )
+    rendering_configuration = RenderingConfiguration(
+        renderer=RendererKind.DRY_RUN,
+        output_container=settings.ORION_RENDER_OUTPUT_CONTAINER,
+        video_codec=settings.ORION_RENDER_VIDEO_CODEC,
+        audio_codec=settings.ORION_RENDER_AUDIO_CODEC,
+        pixel_format=settings.ORION_RENDER_PIXEL_FORMAT,
+        max_request_bytes=settings.ORION_RENDER_MAX_REQUEST_BYTES,
+        max_manifest_bytes=settings.ORION_RENDER_MAX_MANIFEST_BYTES,
+    )
+    render_store = LocalRenderPreparationStore(
+        settings.PROJECTS_DIR,
+        max_request_bytes=rendering_configuration.max_request_bytes,
+        max_manifest_bytes=rendering_configuration.max_manifest_bytes,
+    )
+    render_source_reader = VerifiedMediaCompositionSourceReader(
+        workspace_root=settings.PROJECTS_DIR,
+        inventory=SQLAlchemyMediaCompositionArtifactInventory(artifacts),
+        max_plan_bytes=media_composition_configuration.max_plan_bytes,
+        max_manifest_bytes=media_composition_configuration.max_manifest_bytes,
+    )
+    local_renderer = DryRunRenderer()
+    render_handler = LocalRenderPreparationHandler(
+        source_reader=render_source_reader,
+        store=render_store,
+        renderer=local_renderer,
+        configuration=rendering_configuration,
+        clock=clock,
+    )
+    render_reconciler = LocalRenderReconciler(
+        source_reader=render_source_reader,
+        store=render_store,
+        configuration=rendering_configuration,
+    )
     binary_asset_reconciler = FilesystemBinaryAssetReconciler(
         configuration=binary_asset_configuration,
         store=filesystem_binary_asset_store,
@@ -882,6 +929,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                 speech_generation_handler=speech_generation_handler,
                 audio_design_handler=audio_design_handler,
                 media_composition_handler=media_composition_handler,
+                render_handler=render_handler,
                 clock=clock,
                 uuid_factory=uuid4,
             )
@@ -953,6 +1001,8 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         sound_effect_asset_store=sound_effect_asset_store,
         audio_design_reconciler=audio_design_reconciler,
         media_composition_reconciler=media_composition_reconciler,
+        local_renderer=local_renderer,
+        render_reconciler=render_reconciler,
         remote_speech_job_store=remote_speech_job_store,
         remote_speech_reconciler=remote_speech_reconciler,
         asset_publisher=asset_publisher,
@@ -972,6 +1022,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             music_generation_provider,
             sound_effect_generation_provider,
             speech_capability_source,
+            local_renderer,
             asset_publisher,
         ),
     )

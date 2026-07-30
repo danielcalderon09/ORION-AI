@@ -1,5 +1,22 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 5H.3
+
+RENDERING_LONG_FORM conserva su valor serializado y posicion entre
+BUILDING_TIMELINE y VALIDATING_RENDER, pero reemplaza el placeholder MP4 de cero
+bytes por preparacion durable. Consume el plan y manifest 5H.2 verificados,
+deriva un `LocalRenderRequest` determinista, persiste request y execution
+manifest con recovery/CAS, e invoca solo `DryRunRenderer`.
+
+El resultado exitoso es `validated`, no rendered. Solo se emiten JSON
+`LOCAL_RENDER_REQUEST` y `RENDER_EXECUTION_MANIFEST`; no se registra
+`LONG_FORM_RENDER`. `dry_run` es el unico renderer activo. `ffmpeg` y
+`davinci_resolve` existen solo como identidades deshabilitadas y no configuradas.
+No se crea output, directorio de output, frame, audio codificado, proyecto,
+subproceso, comando, request de red, credencial ni servicio cloud. La siguiente
+fase recomendada es un adapter FFmpeg local controlado, con ejecucion e
+inspeccion post-render en una autorizacion separada.
+
 ## Estado posterior a Fase 5H.2
 
 BUILDING_TIMELINE conserva su nombre y posicion serializados, pero ahora usa el
@@ -12,8 +29,8 @@ recovery. Un asset desaparecido invalida solo su entrada; el plan se conserva.
 El placeholder actual de subtitulos no se convierte en contenido: la pista
 queda deshabilitada hasta que exista un SRT durable. No se ejecutan FFmpeg,
 MoviePy, OpenTimelineIO, DaVinci, render, encoding, muxing, red, cloud ni
-providers. La siguiente fase debe preparar subtitulos durables o un renderer
-separado que consuma este contrato.
+providers. La Fase 5H.3 agrega el renderer separado solo como preparacion
+`dry_run`; la ejecucion real permanece fuera de alcance.
 
 ## Estado posterior a Fase 5H.1
 

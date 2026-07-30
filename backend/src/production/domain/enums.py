@@ -64,6 +64,8 @@ class ArtifactType(StrEnum):
     PRODUCTION_AUDIO_DESIGN_MANIFEST = "production_audio_design_manifest"
     MEDIA_COMPOSITION_PLAN = "media_composition_plan"
     MEDIA_COMPOSITION_MANIFEST = "media_composition_manifest"
+    LOCAL_RENDER_REQUEST = "local_render_request"
+    RENDER_EXECUTION_MANIFEST = "render_execution_manifest"
     SOURCE_IMAGE = "source_image"
     SOURCE_VIDEO_CLIP = "source_video_clip"
     SOURCE_VIDEO = "source_video"

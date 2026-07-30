@@ -46,6 +46,16 @@ class TestVideoClipBoundaryHandler(SimulatedStageHandler):
     extension = "json"
 
 
+class TestRenderBoundaryHandler(SimulatedStageHandler):
+    """Runtime-only test double; production rendering uses durable preparation."""
+
+    __test__ = False
+    supported_stages = frozenset({ProductionStage.RENDERING_LONG_FORM})
+    artifact_type = ArtifactType.MANIFEST
+    mime_type = "application/json"
+    extension = "json"
+
+
 class MutableClock:
     def __init__(self) -> None:
         self.value = datetime(2026, 7, 17, 15, 0, tzinfo=UTC)
@@ -102,6 +112,10 @@ def build_worker(
             clock=clock,
             uuid_factory=uuids,
             video_clip_generation_handler=TestVideoClipBoundaryHandler(
+                clock=clock,
+                uuid_factory=uuids,
+            ),
+            render_handler=TestRenderBoundaryHandler(
                 clock=clock,
                 uuid_factory=uuids,
             ),

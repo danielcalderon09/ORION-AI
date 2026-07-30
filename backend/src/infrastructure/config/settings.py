@@ -172,6 +172,13 @@ class Settings(BaseSettings):
     ORION_MEDIA_COMPOSITION_MAX_SOURCE_MANIFEST_BYTES: int = 4_000_000
     ORION_MEDIA_COMPOSITION_MAX_PLAN_BYTES: int = 4_000_000
     ORION_MEDIA_COMPOSITION_MAX_MANIFEST_BYTES: int = 4_000_000
+    ORION_RENDERER: Literal["dry_run"] = "dry_run"
+    ORION_RENDER_OUTPUT_CONTAINER: Literal["mp4"] = "mp4"
+    ORION_RENDER_VIDEO_CODEC: Literal["h264"] = "h264"
+    ORION_RENDER_AUDIO_CODEC: Literal["aac"] = "aac"
+    ORION_RENDER_PIXEL_FORMAT: Literal["yuv420p"] = "yuv420p"
+    ORION_RENDER_MAX_REQUEST_BYTES: int = 4_000_000
+    ORION_RENDER_MAX_MANIFEST_BYTES: int = 4_000_000
     ORION_OPENROUTER_HTTP_REFERER: str | None = None
     ORION_OPENROUTER_APP_TITLE: str | None = None
 
@@ -365,6 +372,8 @@ class Settings(BaseSettings):
             "ORION_MEDIA_COMPOSITION_MAX_SOURCE_MANIFEST_BYTES": self.ORION_MEDIA_COMPOSITION_MAX_SOURCE_MANIFEST_BYTES,
             "ORION_MEDIA_COMPOSITION_MAX_PLAN_BYTES": self.ORION_MEDIA_COMPOSITION_MAX_PLAN_BYTES,
             "ORION_MEDIA_COMPOSITION_MAX_MANIFEST_BYTES": self.ORION_MEDIA_COMPOSITION_MAX_MANIFEST_BYTES,
+            "ORION_RENDER_MAX_REQUEST_BYTES": self.ORION_RENDER_MAX_REQUEST_BYTES,
+            "ORION_RENDER_MAX_MANIFEST_BYTES": self.ORION_RENDER_MAX_MANIFEST_BYTES,
         }.items():
             maximum = {
                 "ORION_ASSET_PUBLISHING_MAX_ASSET_BYTES": 250_000_000,
@@ -376,9 +385,14 @@ class Settings(BaseSettings):
             "ORION_MEDIA_COMPOSITION_MAX_SOURCE_MANIFEST_BYTES": self.ORION_MEDIA_COMPOSITION_MAX_SOURCE_MANIFEST_BYTES,
             "ORION_MEDIA_COMPOSITION_MAX_PLAN_BYTES": self.ORION_MEDIA_COMPOSITION_MAX_PLAN_BYTES,
             "ORION_MEDIA_COMPOSITION_MAX_MANIFEST_BYTES": self.ORION_MEDIA_COMPOSITION_MAX_MANIFEST_BYTES,
+            "ORION_RENDER_MAX_REQUEST_BYTES": self.ORION_RENDER_MAX_REQUEST_BYTES,
+            "ORION_RENDER_MAX_MANIFEST_BYTES": self.ORION_RENDER_MAX_MANIFEST_BYTES,
         }.items():
             if not 1_024 <= value <= 16_000_000:
-                raise ValueError(f"{name} is outside safe composition limits")
+                scope = (
+                    "composition" if name.startswith("ORION_MEDIA_COMPOSITION_") else "rendering"
+                )
+                raise ValueError(f"{name} is outside safe {scope} limits")
         if not 1 <= self.ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES <= 100_000_000:
             raise ValueError("ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES is outside safe limits")
         if not 60 <= self.ORION_SPEECH_GENERATION_WORDS_PER_MINUTE <= 360:

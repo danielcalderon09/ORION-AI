@@ -30,6 +30,7 @@ from backend.src.production.runtime import ProductionExecutor, create_handler_re
 from backend.src.production.runtime.handlers import PlanningHandler
 from backend.tests.unit.production.runtime.conftest import (
     MutableClock,
+    TestRenderBoundaryHandler,
     TestVideoClipBoundaryHandler,
     UUIDSequence,
     build_worker,
@@ -223,6 +224,10 @@ async def test_pipeline_with_fake_real_provider_persists_matching_file(
         create_handler_registry(
             planning_handler=planning_handler,
             video_clip_generation_handler=TestVideoClipBoundaryHandler(
+                clock=clock,
+                uuid_factory=uuids,
+            ),
+            render_handler=TestRenderBoundaryHandler(
                 clock=clock,
                 uuid_factory=uuids,
             ),

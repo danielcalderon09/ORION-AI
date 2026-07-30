@@ -35,7 +35,6 @@ from backend.src.production.runtime.handlers import (
     MusicHandler,
     NarrationHandler,
     PlanningHandler,
-    RenderHandler,
     ScenePlanningHandler,
     ScriptHandler,
     SubtitleHandler,
@@ -46,6 +45,7 @@ from backend.src.production.runtime.handlers import (
 from backend.src.production.runtime.runtime_models import StageExecutionOutput
 from backend.tests.unit.production.runtime.conftest import (
     MutableClock,
+    TestRenderBoundaryHandler,
     TestVideoClipBoundaryHandler,
     UUIDSequence,
     build_worker,
@@ -158,7 +158,7 @@ def retry_executor(clock, uuids) -> ProductionExecutor:
                 MusicHandler(**common),
                 SubtitleHandler(**common),
                 TimelineHandler(**common),
-                RenderHandler(**common),
+                TestRenderBoundaryHandler(**common),
                 ValidationHandler(**common),
                 ClipHandoffHandler(**common),
             )
@@ -265,7 +265,7 @@ async def test_cancellation_during_stage_persists_result_before_cancelling(
                 MusicHandler(**common),
                 SubtitleHandler(**common),
                 TimelineHandler(**common),
-                RenderHandler(**common),
+                TestRenderBoundaryHandler(**common),
                 ValidationHandler(**common),
                 ClipHandoffHandler(**common),
             )
@@ -299,9 +299,7 @@ async def test_new_worker_recovers_expired_running_lease(runtime_database) -> No
         clock=clock,
         lease_duration=timedelta(seconds=5),
     )
-    assert abandoned.acquire_next(
-        owner_id="dead-worker", statuses={ProductionJobStatus.RUNNING}
-    )
+    assert abandoned.acquire_next(owner_id="dead-worker", statuses={ProductionJobStatus.RUNNING})
     clock.advance(6)
     replacement = build_worker(session_factory, clock, uuids, owner_id="worker-after-restart")
     result = await replacement.run_once()

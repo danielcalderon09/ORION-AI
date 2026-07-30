@@ -1,5 +1,19 @@
 # Runtime local de Production Pipeline
 
+## RENDERING_LONG_FORM preparation-only (Fase 5H.3)
+
+Despues de BUILDING_TIMELINE y antes de VALIDATING_RENDER, el runtime inyecta
+`LocalRenderPreparationHandler`. Verifica los dos artifacts de composicion
+durable, deriva un request estable, checkpointa un manifest
+`prepared -> validating -> validated` e invoca exclusivamente
+`DryRunRenderer`. Retry reutiliza el request; una validacion interrumpida se
+repite sin riesgo de doble render porque no existe render real.
+
+El reconciliador reporta estado sin escribir ni invocar renderer. Un output
+futuro inesperado se conserva y requiere intervencion. La etapa emite solo dos
+JSON y nunca `LONG_FORM_RENDER`; no crea MP4, directorio de output, proceso,
+comando o conexion. Detalles en `PRODUCTION_LOCAL_RENDER_CONTRACT.md`.
+
 ## GENERATING_VIDEO_CLIPS durable (Fase 5F.1)
 
 Después de ACQUIRING_ASSETS y antes de audio, `VideoClipGenerationHandler` consume únicamente el

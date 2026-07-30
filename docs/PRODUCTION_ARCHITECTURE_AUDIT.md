@@ -307,3 +307,17 @@ composition. Dedicated write-once stores and a context-owned CAS manifest avoid
 changes to speech, image, video, and publishing schemas. Architecture guards
 enforce these boundaries; details are in
 `docs/PRODUCTION_SIMULATED_AUDIO_DESIGN.md`.
+
+## 17. Phase 5H.3 local render boundary
+
+The later Phase 5H.3 replaces the `rendering_long_form` zero-byte video
+placeholder with explicit durable preparation. The new `rendering` context has
+closed `dry_run`, `ffmpeg`, and `davinci_resolve` identities, but configuration
+can activate only `dry_run`. Its core contracts depend on neither the
+composition root nor runtime/infrastructure adapters.
+
+The verified source reader consumes the Phase 5H.2 plan and manifest. Atomic
+write-once request storage, CAS manifest checkpoints, deterministic recovery,
+and a read-only reconciler follow the established local workspace policy.
+Successful preparation emits only JSON artifacts and ends at `validated`.
+Details are in `docs/PRODUCTION_LOCAL_RENDER_CONTRACT.md`.

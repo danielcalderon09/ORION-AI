@@ -18,6 +18,7 @@ from backend.src.production.runtime import (
 )
 from backend.src.production.runtime.handlers import PlanningHandler
 from backend.tests.unit.production.runtime.conftest import (
+    TestRenderBoundaryHandler,
     TestVideoClipBoundaryHandler,
 )
 
@@ -44,9 +45,7 @@ def make_context(command: StageCommand) -> StageContext:
         job_prompt="Plan a short test video",
         job_configuration={},
         input_artifact_ids=command.input_artifact_ids,
-        workspace_relative_path=(
-            f"production/{command.job_id}/{command.stage.value}/attempt-1"
-        ),
+        workspace_relative_path=(f"production/{command.job_id}/{command.stage.value}/attempt-1"),
         correlation_id=command.job_id,
     )
 
@@ -58,6 +57,10 @@ async def test_dispatcher_and_all_simulated_handlers_are_executable() -> None:
         clock=lambda: NOW,
         uuid_factory=lambda: next(ids),
         video_clip_generation_handler=TestVideoClipBoundaryHandler(
+            clock=lambda: NOW,
+            uuid_factory=lambda: next(ids),
+        ),
+        render_handler=TestRenderBoundaryHandler(
             clock=lambda: NOW,
             uuid_factory=lambda: next(ids),
         ),

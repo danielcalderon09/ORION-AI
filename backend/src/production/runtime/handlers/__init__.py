@@ -6,7 +6,6 @@ from backend.src.production.runtime.handlers.clip_handoff_handler import ClipHan
 from backend.src.production.runtime.handlers.music_handler import MusicHandler
 from backend.src.production.runtime.handlers.narration_handler import NarrationHandler
 from backend.src.production.runtime.handlers.planning_handler import PlanningHandler
-from backend.src.production.runtime.handlers.render_handler import RenderHandler
 from backend.src.production.runtime.handlers.scene_planning_handler import ScenePlanningHandler
 from backend.src.production.runtime.handlers.script_handler import ScriptHandler, ScriptingHandler
 from backend.src.production.runtime.handlers.subtitle_handler import SubtitleHandler
@@ -22,7 +21,6 @@ __all__ = [
     "MusicHandler",
     "NarrationHandler",
     "PlanningHandler",
-    "RenderHandler",
     "ScenePlanningHandler",
     "ScriptHandler",
     "ScriptingHandler",
