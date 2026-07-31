@@ -57,6 +57,7 @@ def create_simulated_handler_registry(
     audio_design_handler: StageHandler | None = None,
     media_composition_handler: StageHandler | None = None,
     render_handler: StageHandler | None = None,
+    final_render_validation_handler: StageHandler | None = None,
 ) -> StageHandlerRegistry:
     handlers: list[StageHandler] = [
         PlanningHandler(
@@ -87,7 +88,8 @@ def create_simulated_handler_registry(
         handlers.append(render_handler)
     handlers.extend(
         (
-            ValidationHandler(clock=clock, uuid_factory=uuid_factory),
+            final_render_validation_handler
+            or ValidationHandler(clock=clock, uuid_factory=uuid_factory),
             ClipHandoffHandler(clock=clock, uuid_factory=uuid_factory),
         )
     )
@@ -106,6 +108,7 @@ def create_handler_registry(
     audio_design_handler: StageHandler | None = None,
     media_composition_handler: MediaCompositionHandler | None = None,
     render_handler: StageHandler | None = None,
+    final_render_validation_handler: StageHandler | None = None,
     clock: Callable[[], datetime],
     uuid_factory: Callable[[], UUID],
 ) -> StageHandlerRegistry:
@@ -137,7 +140,8 @@ def create_handler_registry(
         handlers.append(render_handler)
     handlers.extend(
         (
-            ValidationHandler(clock=clock, uuid_factory=uuid_factory),
+            final_render_validation_handler
+            or ValidationHandler(clock=clock, uuid_factory=uuid_factory),
             ClipHandoffHandler(clock=clock, uuid_factory=uuid_factory),
         )
     )

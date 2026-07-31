@@ -155,6 +155,12 @@ y registrar `LONG_FORM_RENDER`. DaVinci permanece deshabilitado. Consulta
 y
 [`docs/PRODUCTION_LOCAL_FFMPEG_RENDERER.md`](docs/PRODUCTION_LOCAL_FFMPEG_RENDERER.md).
 
+VALIDATING_RENDER vuelve a comprobar de forma independiente el MP4 y toda su
+cadena durable con FFprobe, sin ejecutar FFmpeg ni modificar el render. Solo
+despues emite `FINAL_RENDER_VALIDATION` y el pipeline puede aceptar el trabajo
+como completado. Consulta
+[`docs/PRODUCTION_FINAL_RENDER_VALIDATION.md`](docs/PRODUCTION_FINAL_RENDER_VALIDATION.md).
+
 La infraestructura de publicacion segura es un bounded context independiente y desactivado por
 defecto. Publica temporalmente solo bytes ya verificados, con manifiesto durable, expiracion,
 recovery, cleanup y reconciliacion de solo lectura. Incluye adaptadores `null` y filesystem de

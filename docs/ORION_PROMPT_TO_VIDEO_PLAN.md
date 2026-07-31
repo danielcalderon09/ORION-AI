@@ -1,5 +1,15 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 5H.5
+
+VALIDATING_RENDER es ahora el gate durable final para renders FFmpeg. Consume
+`LONG_FORM_RENDER`, request, render manifest, execution plan y composicion,
+recalcula tamano/SHA-256 y vuelve a ejecutar exclusivamente FFprobe. Persiste
+`FINAL_RENDER_VALIDATION` schema `1.0.0`; un resultado valido permite al
+orquestador completar el job y un fallo preserva el MP4 con diagnostico durable.
+Replay validado no repite FFprobe ni reescribe el manifest. Detalles en
+`PRODUCTION_FINAL_RENDER_VALIDATION.md`.
+
 ## Estado posterior a Fase 5H.4
 
 RENDERING_LONG_FORM admite activacion explicita de FFmpeg local. Persiste un
@@ -9,9 +19,8 @@ solo entonces promueve atomicamente y registra `LONG_FORM_RENDER`. `dry_run`
 sigue compatible y DaVinci sigue deshabilitado. La prueba de integracion
 produjo un MP4 real con fixtures locales, sin red ni cloud.
 
-VALIDATING_RENDER conserva su placeholder downstream y posicion serializada;
-no reemplaza el gate FFprobe requerido antes del artifact READY. Detalles en
-`PRODUCTION_LOCAL_FFMPEG_RENDERER.md`.
+VALIDATING_RENDER conservaba en esa fase su placeholder downstream; Fase 5H.5
+lo reemplaza solo para configuracion FFmpeg, sin cambiar su valor ni posicion.
 
 ## Estado posterior a Fase 5H.3
 

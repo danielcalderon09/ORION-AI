@@ -1,5 +1,20 @@
 # Runtime local de Production Pipeline
 
+## VALIDATING_RENDER durable final (Fase 5H.5)
+
+Cuando FFmpeg esta configurado, la etapa serializada existente consume el
+`LONG_FORM_RENDER` READY y su cadena completa de request, execution plan,
+render manifest y media composition. Recalcula tamano y SHA-256 y ejecuta una
+segunda inspeccion FFprobe independiente. Nunca vuelve a ejecutar FFmpeg ni
+modifica el MP4.
+
+La aceptacion persiste `FINAL_RENDER_VALIDATION` schema `1.0.0` mediante
+checkpoints CAS `prepared -> validating -> validated`. Un fallo persiste
+diagnostico `failed`, conserva el render y marca la etapa fallida. Un replay
+validado confirma la identidad actual sin repetir FFprobe ni reescribir el
+manifest. Con la politica default, el orquestador existente avanza a
+`COMPLETED`. Detalles en `PRODUCTION_FINAL_RENDER_VALIDATION.md`.
+
 ## RENDERING_LONG_FORM controlled FFmpeg (Fase 5H.4)
 
 El mismo handler durable selecciona explicitamente `dry_run` o `ffmpeg`.
@@ -7,7 +22,8 @@ FFmpeg/FFprobe se resuelven localmente, el execution plan usa argumentos
 allowlisted sin shell, cada input se revalida, y FFmpeg escribe solamente el
 partial confinado. FFprobe debe validar antes de promocion atomica y registro
 READY de `LONG_FORM_RENDER`. Recovery reutiliza output validado y preserva
-conflictos. `VALIDATING_RENDER` conserva su placeholder downstream.
+conflictos. Fase 5H.5 convierte `VALIDATING_RENDER` en la aceptacion final
+independiente para configuracion FFmpeg.
 
 Detalles en `PRODUCTION_LOCAL_FFMPEG_RENDERER.md`.
 

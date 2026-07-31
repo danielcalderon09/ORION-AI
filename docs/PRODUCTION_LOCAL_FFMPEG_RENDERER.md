@@ -117,3 +117,7 @@ stops for incomplete, undecodable, or changed assets.
 Hardware encoders, GPU discovery, alternate formats/codecs, multiple profiles,
 advanced transitions, subtitle burn-in, DaVinci, remote assets, and cloud
 rendering remain unsupported.
+
+Phase 5H.5 adds a separate definitive acceptance stage documented in
+`PRODUCTION_FINAL_RENDER_VALIDATION.md`. It consumes the READY render and runs
+FFprobe again; it never invokes FFmpeg or modifies this renderer's manifests.

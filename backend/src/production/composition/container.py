@@ -185,6 +185,16 @@ from backend.src.production.planning.providers.availability import (
     load_openrouter_planning_provider,
 )
 from backend.src.production.planning.reconciliation import PlanningArtifactReconciler
+from backend.src.production.render_validation.handler import (
+    FinalRenderValidationHandler,
+)
+from backend.src.production.render_validation.probe import FFprobeFinalRenderProbe
+from backend.src.production.render_validation.source_reader import (
+    VerifiedFinalRenderSourceReader,
+)
+from backend.src.production.render_validation.store import (
+    LocalFinalRenderValidationStore,
+)
 from backend.src.production.rendering.configuration import RenderingConfiguration
 from backend.src.production.rendering.executable_resolver import (
     LocalMediaExecutableResolver,
@@ -832,6 +842,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         max_manifest_bytes=media_composition_configuration.max_manifest_bytes,
     )
     local_renderer: LocalRenderer
+    final_render_validation_handler: FinalRenderValidationHandler | None = None
     if rendering_configuration.renderer is RendererKind.DRY_RUN:
         local_renderer = DryRunRenderer()
     else:
@@ -847,6 +858,25 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         local_renderer = LocalFFmpegRenderer(
             workspace_root=settings.PROJECTS_DIR,
             runner=render_process_runner,
+        )
+        final_render_validation_handler = FinalRenderValidationHandler(
+            source_reader=VerifiedFinalRenderSourceReader(
+                workspace_root=settings.PROJECTS_DIR,
+                inventory=SQLAlchemyMediaCompositionArtifactInventory(artifacts),
+                max_json_bytes=max(
+                    rendering_configuration.max_request_bytes,
+                    rendering_configuration.max_manifest_bytes,
+                    rendering_configuration.max_execution_plan_bytes,
+                    media_composition_configuration.max_plan_bytes,
+                    media_composition_configuration.max_manifest_bytes,
+                ),
+            ),
+            store=LocalFinalRenderValidationStore(
+                workspace_root=settings.PROJECTS_DIR,
+                max_manifest_bytes=(settings.ORION_FINAL_RENDER_VALIDATION_MAX_MANIFEST_BYTES),
+            ),
+            probe=FFprobeFinalRenderProbe(runner=render_process_runner),
+            clock=clock,
         )
     render_handler = LocalRenderPreparationHandler(
         source_reader=render_source_reader,
@@ -966,6 +996,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                 audio_design_handler=audio_design_handler,
                 media_composition_handler=media_composition_handler,
                 render_handler=render_handler,
+                final_render_validation_handler=final_render_validation_handler,
                 clock=clock,
                 uuid_factory=uuid4,
             )

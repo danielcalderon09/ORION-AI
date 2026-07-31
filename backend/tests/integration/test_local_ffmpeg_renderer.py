@@ -8,14 +8,24 @@ import shutil
 import struct
 import wave
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
+from backend.src.production.application.commands import StageCommand
 from backend.src.production.application.results import StageOutcome
-from backend.src.production.domain.enums import ArtifactType
+from backend.src.production.domain.enums import ArtifactType, ProductionStage
 from backend.src.production.media_composition.domain.models import (
     CompositionAssetKind,
     CompositionAssetValidation,
+)
+from backend.src.production.render_validation.handler import FinalRenderValidationHandler
+from backend.src.production.render_validation.probe import FFprobeFinalRenderProbe
+from backend.src.production.render_validation.source_reader import (
+    VerifiedFinalRenderSourceReader,
+)
+from backend.src.production.render_validation.store import (
+    LocalFinalRenderValidationStore,
 )
 from backend.src.production.rendering.configuration import RenderingConfiguration
 from backend.src.production.rendering.executable_resolver import (
@@ -25,12 +35,15 @@ from backend.src.production.rendering.handler import LocalRenderPreparationHandl
 from backend.src.production.rendering.manifest_store import LocalRenderPreparationStore
 from backend.src.production.rendering.process_runner import ControlledMediaProcessRunner
 from backend.src.production.rendering.renderers import LocalFFmpegRenderer
+from backend.src.production.runtime.context import StageContext
 from backend.tests.unit.production.media_composition.conftest import make_source
 from backend.tests.unit.production.rendering.conftest import (
     NOW,
+    StaticArtifactInventory,
     StaticVerifiedSourceReader,
     make_render_command_context,
     make_verified_source,
+    write_verified_source,
 )
 
 
@@ -124,6 +137,7 @@ async def test_real_ffmpeg_render_is_probed_promoted_and_replayed(
         }
     )
     verified = make_verified_source(composition_source=composition_source)
+    write_verified_source(tmp_path, verified)
     configuration = RenderingConfiguration(
         renderer="ffmpeg",
         video_preset="ultrafast",
@@ -162,6 +176,56 @@ async def test_real_ffmpeg_render_is_probed_promoted_and_replayed(
     assert video.metadata["audio_codec"] == "aac"
     assert video.metadata["validated_by_ffprobe"] is True
     modified = target.stat().st_mtime_ns
+
+    validation_command_id = UUID("20000000-0000-4000-8000-000000000955")
+    input_ids = tuple(item.artifact_id for item in output.artifacts)
+    validation_command = StageCommand(
+        command_id=validation_command_id,
+        job_id=command.job_id,
+        stage=ProductionStage.VALIDATING_RENDER,
+        attempt_number=1,
+        idempotency_key="real-final-render-validation:test",
+        input_artifact_ids=input_ids,
+        created_at=NOW,
+    )
+    validation_context = StageContext(
+        job_id=command.job_id,
+        command_id=validation_command_id,
+        stage=ProductionStage.VALIDATING_RENDER,
+        attempt_number=1,
+        input_artifact_ids=input_ids,
+        workspace_relative_path=(f"production/{command.job_id}/validating_render/attempt-1"),
+        correlation_id=command.job_id,
+    )
+    final_probe = FFprobeFinalRenderProbe(runner=runner)
+    final_handler = FinalRenderValidationHandler(
+        source_reader=VerifiedFinalRenderSourceReader(
+            workspace_root=tmp_path,
+            inventory=StaticArtifactInventory(
+                (*output.artifacts, verified.plan_artifact, verified.manifest_artifact)
+            ),
+            max_json_bytes=4_000_000,
+        ),
+        store=LocalFinalRenderValidationStore(
+            workspace_root=tmp_path,
+            max_manifest_bytes=4_000_000,
+        ),
+        probe=final_probe,
+        clock=lambda: NOW,
+    )
+    validation = await final_handler.execute(validation_command, validation_context)
+    assert validation.result.outcome is StageOutcome.SUCCEEDED
+    assert tuple(item.artifact_type for item in validation.artifacts) == (
+        ArtifactType.FINAL_RENDER_VALIDATION,
+    )
+    validation_replay = await final_handler.execute(
+        validation_command,
+        validation_context,
+    )
+    assert validation_replay.result.outcome is StageOutcome.SUCCEEDED
+    assert validation_replay.artifacts == validation.artifacts
+    assert final_probe.invocation_count == 1
+
     replay = await handler.execute(command, context)
     assert replay.result.outcome is StageOutcome.SUCCEEDED
     assert target.stat().st_mtime_ns == modified

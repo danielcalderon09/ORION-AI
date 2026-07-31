@@ -5,6 +5,10 @@
 > [PRODUCTION_LOCAL_FFMPEG_RENDERER.md](PRODUCTION_LOCAL_FFMPEG_RENDERER.md).
 > Schema `1.0.0` dry-run files remain readable and writable; FFmpeg state uses
 > `1.1.0`.
+>
+> Phase 5H.5 preserves both schemas unchanged and adds the independent final
+> acceptance contract in
+> [PRODUCTION_FINAL_RENDER_VALIDATION.md](PRODUCTION_FINAL_RENDER_VALIDATION.md).
 
 ## Scope
 

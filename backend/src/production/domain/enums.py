@@ -67,6 +67,7 @@ class ArtifactType(StrEnum):
     LOCAL_RENDER_REQUEST = "local_render_request"
     FFMPEG_EXECUTION_PLAN = "ffmpeg_execution_plan"
     RENDER_EXECUTION_MANIFEST = "render_execution_manifest"
+    FINAL_RENDER_VALIDATION = "final_render_validation"
     SOURCE_IMAGE = "source_image"
     SOURCE_VIDEO_CLIP = "source_video_clip"
     SOURCE_VIDEO = "source_video"
