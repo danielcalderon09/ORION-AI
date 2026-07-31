@@ -58,6 +58,7 @@ def create_simulated_handler_registry(
     media_composition_handler: StageHandler | None = None,
     render_handler: StageHandler | None = None,
     final_render_validation_handler: StageHandler | None = None,
+    subtitle_handler: StageHandler | None = None,
 ) -> StageHandlerRegistry:
     handlers: list[StageHandler] = [
         PlanningHandler(
@@ -80,7 +81,7 @@ def create_simulated_handler_registry(
         (
             speech_generation_handler or NarrationHandler(clock=clock, uuid_factory=uuid_factory),
             audio_design_handler or MusicHandler(clock=clock, uuid_factory=uuid_factory),
-            SubtitleHandler(clock=clock, uuid_factory=uuid_factory),
+            subtitle_handler or SubtitleHandler(clock=clock, uuid_factory=uuid_factory),
             media_composition_handler or TimelineHandler(clock=clock, uuid_factory=uuid_factory),
         )
     )
@@ -109,6 +110,7 @@ def create_handler_registry(
     media_composition_handler: MediaCompositionHandler | None = None,
     render_handler: StageHandler | None = None,
     final_render_validation_handler: StageHandler | None = None,
+    subtitle_handler: StageHandler | None = None,
     clock: Callable[[], datetime],
     uuid_factory: Callable[[], UUID],
 ) -> StageHandlerRegistry:
@@ -132,7 +134,7 @@ def create_handler_registry(
         (
             speech_generation_handler or NarrationHandler(clock=clock, uuid_factory=uuid_factory),
             audio_design_handler or MusicHandler(clock=clock, uuid_factory=uuid_factory),
-            SubtitleHandler(clock=clock, uuid_factory=uuid_factory),
+            subtitle_handler or SubtitleHandler(clock=clock, uuid_factory=uuid_factory),
             media_composition_handler or TimelineHandler(clock=clock, uuid_factory=uuid_factory),
         )
     )

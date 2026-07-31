@@ -227,7 +227,11 @@ from backend.src.production.runtime.blocking_executor import (
 from backend.src.production.runtime.decision_persister import (
     ThreadedRuntimeDecisionPersister,
 )
-from backend.src.production.runtime.handlers import PlanningHandler, ScriptingHandler
+from backend.src.production.runtime.handlers import (
+    DurableSubtitleHandler,
+    PlanningHandler,
+    ScriptingHandler,
+)
 from backend.src.production.runtime.leases import (
     ProductionLeaseManager,
     SQLAlchemyLeaseRepository,
@@ -808,6 +812,15 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         store=media_composition_store,
         configuration=media_composition_configuration,
     )
+    subtitle_handler = DurableSubtitleHandler(
+        script_reader=DurableProductionScriptReader(
+            workspace_root=settings.PROJECTS_DIR,
+            repository=SQLAlchemyProductionScriptQueryRepository(sessions),
+            max_script_bytes=settings.ORION_SCRIPTING_MAX_SCRIPT_BYTES,
+        ),
+        workspace_root=settings.PROJECTS_DIR,
+        clock=clock,
+    )
     rendering_configuration = RenderingConfiguration(
         renderer=RendererKind(settings.ORION_RENDERER),
         ffmpeg_path=(Path(settings.ORION_FFMPEG_PATH) if settings.ORION_FFMPEG_PATH else None),
@@ -994,6 +1007,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                 video_clip_generation_handler=video_clip_generation_handler,
                 speech_generation_handler=speech_generation_handler,
                 audio_design_handler=audio_design_handler,
+                subtitle_handler=subtitle_handler,
                 media_composition_handler=media_composition_handler,
                 render_handler=render_handler,
                 final_render_validation_handler=final_render_validation_handler,

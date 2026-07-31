@@ -380,10 +380,19 @@ class ProductionOrchestrator:
         )
         if next_stage is None or next_stage is ProductionStage.COMPLETED:
             TransitionPolicy.validate_transition(job.status, ProductionJobStatus.COMPLETED)
+            long_form_artifact_id = job.long_form_artifact_id
+            if command.stage is ProductionStage.VALIDATING_RENDER:
+                rendered_id = result.metadata.get("render_artifact_id")
+                if isinstance(rendered_id, str):
+                    try:
+                        long_form_artifact_id = UUID(rendered_id)
+                    except ValueError:
+                        long_form_artifact_id = job.long_form_artifact_id
             updated_job = job.model_copy(
                 update={
                     "status": ProductionJobStatus.COMPLETED,
                     "current_stage": ProductionStage.COMPLETED,
+                    "long_form_artifact_id": long_form_artifact_id,
                     "updated_at": now,
                     "error_code": None,
                     "error_message": None,

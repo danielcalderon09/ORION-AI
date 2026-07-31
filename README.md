@@ -161,6 +161,18 @@ despues emite `FINAL_RENDER_VALIDATION` y el pipeline puede aceptar el trabajo
 como completado. Consulta
 [`docs/PRODUCTION_FINAL_RENDER_VALIDATION.md`](docs/PRODUCTION_FINAL_RENDER_VALIDATION.md).
 
+La Fase 6A conecta el pipeline completo mediante el modo explícito
+`local_simulated_e2e`. Un CLI crea o reanuda un job durable, recorre las 12
+etapas canónicas, usa providers creativos simulados, renderiza un MP4 real con
+FFmpeg y solo termina tras `FINAL_RENDER_VALIDATION`. No requiere red, API key
+ni provider de pago. El contenido es una prueba técnica, no calidad creativa
+final. Consulta
+[`docs/PRODUCTION_END_TO_END_LOCAL_MVP.md`](docs/PRODUCTION_END_TO_END_LOCAL_MVP.md).
+
+```text
+python -m backend.src.production.cli.generate_video --prompt "Explica en un video corto tres curiosidades sobre Marte." --mode local_simulated_e2e
+```
+
 La infraestructura de publicacion segura es un bounded context independiente y desactivado por
 defecto. Publica temporalmente solo bytes ya verificados, con manifiesto durable, expiracion,
 recovery, cleanup y reconciliacion de solo lectura. Incluye adaptadores `null` y filesystem de

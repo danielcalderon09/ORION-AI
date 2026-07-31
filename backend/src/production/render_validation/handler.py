@@ -278,6 +278,7 @@ class FinalRenderValidationHandler:
                     "ffmpeg_executed": False,
                     "ffprobe_revalidated": probe_executed,
                     "plan_fingerprint": manifest.plan_fingerprint,
+                    "render_artifact_id": str(manifest.render_artifact_id),
                     "validation_fingerprint": manifest.validation_fingerprint,
                 },
             ),

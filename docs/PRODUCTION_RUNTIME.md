@@ -1,5 +1,25 @@
 # Runtime local de Production Pipeline
 
+## End-to-end local MVP (Fase 6A)
+
+El módulo `backend.src.production.cli.generate_video` crea o reanuda un job
+normal en modo `local_simulated_e2e`. Compone todos los providers creativos
+simulados y selecciona FFmpeg explícitamente. El servicio de aplicación conduce
+el `ProductionWorker` existente ciclo por ciclo, con un máximo de 50, sin
+invocar handlers o subprocess directamente.
+
+La propagación inmediata sigue usando `StageResult.output_artifact_ids`; los
+readers durables reconstruyen únicamente sus dependencias tipadas. El nuevo
+handler de subtítulos de producción reemplaza solo el placeholder activo por un
+SRT UTF-8, atómico, no vacío y derivado del script. La clase placeholder se
+conserva para compatibilidad histórica.
+
+COMPLETED requiere `FINAL_RENDER_VALIDATION`; el orquestador conserva también
+el ID del `LONG_FORM_RENDER` aceptado. Resume de un job completo resuelve y
+verifica manifest, artifact y MP4 sin ejecutar worker, FFmpeg ni FFprobe. Los
+estados FAILED, CANCELLED, retry futuro e intervención manual detienen el loop
+sin reset. Detalles y comando en `PRODUCTION_END_TO_END_LOCAL_MVP.md`.
+
 ## VALIDATING_RENDER durable final (Fase 5H.5)
 
 Cuando FFmpeg esta configurado, la etapa serializada existente consume el

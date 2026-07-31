@@ -1,5 +1,20 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 6A
+
+ORION dispone de un MVP local end-to-end explícito. `local_simulated_e2e` crea
+un job mediante el servicio existente, ejecuta automáticamente las 12 etapas
+canónicas con un loop limitado a 50 iteraciones, propaga artifacts durables,
+genera un SRT real y termina solo después de FFmpeg, FFprobe y
+`FINAL_RENDER_VALIDATION`. Resume reutiliza un MP4 ya aceptado sin rerender.
+
+La prueba real pasó desde un prompt natural hasta un MP4 H.264/AAC 360x640 de
+8 segundos. Los providers creativos continúan simulados y offline: se prueba
+integración técnica, no calidad creativa final. No se usaron red, proveedor de
+pago, API key, cloud, DaVinci ni MCP. El siguiente paso es una interfaz local
+mínima; providers reales permanecen para una fase posterior. Detalles en
+`PRODUCTION_END_TO_END_LOCAL_MVP.md`.
+
 ## Estado posterior a Fase 5H.5
 
 VALIDATING_RENDER es ahora el gate durable final para renders FFmpeg. Consume
