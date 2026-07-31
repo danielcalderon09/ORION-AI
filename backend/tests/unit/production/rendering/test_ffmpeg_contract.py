@@ -163,8 +163,8 @@ def test_executable_resolver_accepts_only_exact_regular_binaries(tmp_path: Path)
 async def test_version_probe_normalizes_and_excludes_banner() -> None:
     runner = FakeControlledRunner()
     versions = await probe_media_executable_versions(runner)  # type: ignore[arg-type]
-    assert versions.ffmpeg == "8.1.2-test"
-    assert versions.ffprobe == "8.1.2-test"
+    assert versions.ffmpeg == "8.1.2"
+    assert versions.ffprobe == "8.1.2"
     assert "private" not in versions.ffmpeg
     assert [item[1] for item in runner.calls] == [("-version",), ("-version",)]
 

@@ -13,7 +13,7 @@ from backend.src.production.rendering.process_runner import (
     ControlledMediaProcessRunner,
 )
 
-_VERSION_TOKEN = re.compile(r"^[0-9A-Za-z._-]{1,64}$")
+_RELEASE_VERSION = re.compile(r"^(?:n)?(?P<release>[0-9]+(?:\.[0-9]+){1,3})(?:[-_].*)?$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +96,7 @@ def _normalized_version(content: bytes, identity: str) -> str:
     if not first_line.lower().startswith(prefix):
         raise RenderingExecutableError(f"executable did not identify as {identity}")
     token = first_line[len(prefix) :].split(maxsplit=1)[0]
-    if not _VERSION_TOKEN.fullmatch(token):
+    match = _RELEASE_VERSION.fullmatch(token)
+    if match is None:
         raise RenderingExecutableError(f"{identity} version identity is invalid")
-    return token
+    return match.group("release")
