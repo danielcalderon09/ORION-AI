@@ -1,5 +1,6 @@
 """Derive one deterministic local render request from a verified plan."""
 
+from typing import Literal
 from uuid import NAMESPACE_URL, uuid5
 
 from backend.src.production.media_composition.domain.models import (
@@ -9,6 +10,7 @@ from backend.src.production.rendering.configuration import RenderingConfiguratio
 from backend.src.production.rendering.exceptions import RenderingRequestError
 from backend.src.production.rendering.fingerprints import canonical_sha256
 from backend.src.production.rendering.models import (
+    LEGACY_LOCAL_RENDER_SCHEMA_VERSION,
     LOCAL_RENDER_SCHEMA_VERSION,
     RENDERER_CONTRACT_VERSION,
     LocalRenderRequest,
@@ -24,8 +26,6 @@ def build_local_render_request(
     source: VerifiedCompositionSource,
     configuration: RenderingConfiguration,
 ) -> LocalRenderRequest:
-    if configuration.renderer is not RendererKind.DRY_RUN:
-        raise RenderingRequestError("only dry_run rendering is active")
     plan = source.plan
     if plan.schema_version not in SUPPORTED_MEDIA_COMPOSITION_VERSIONS:
         raise RenderingRequestError("composition plan schema is unsupported")
@@ -38,6 +38,8 @@ def build_local_render_request(
             sha256=item.sha256,
             fingerprint=item.fingerprint,
             media_kind=item.kind,
+            mime_type=item.mime_type,
+            size_bytes=item.size_bytes,
             duration_ms=item.duration_ms,
         )
         for item in sorted(plan.assets, key=lambda value: value.asset_id)
@@ -45,6 +47,16 @@ def build_local_render_request(
     if len({item.asset_id for item in assets}) != len(assets):
         raise RenderingRequestError("composition plan contains duplicate asset identities")
     track_summary = _track_summary(plan)
+    renderer_kind: Literal[RendererKind.DRY_RUN, RendererKind.FFMPEG] = (
+        RendererKind.FFMPEG
+        if configuration.renderer is RendererKind.FFMPEG
+        else RendererKind.DRY_RUN
+    )
+    schema_version = (
+        LOCAL_RENDER_SCHEMA_VERSION
+        if renderer_kind is RendererKind.FFMPEG
+        else LEGACY_LOCAL_RENDER_SCHEMA_VERSION
+    )
     filename = f"orion-{plan.job_id}-{plan.plan_fingerprint[:12]}.mp4"
     requested_output = RequestedRenderOutput(
         container_format=configuration.output_container,
@@ -55,11 +67,20 @@ def build_local_render_request(
         pixel_format=configuration.pixel_format,
         include_subtitles=track_summary.has_subtitles,
     )
+    encoding_policy = (
+        {
+            "audio_bitrate": configuration.audio_bitrate,
+            "video_crf": configuration.video_crf,
+            "video_preset": configuration.video_preset,
+        }
+        if renderer_kind is RendererKind.FFMPEG
+        else None
+    )
     fingerprint_payload = {
         "asset_fingerprints": [
             {"asset_id": item.asset_id, "fingerprint": item.fingerprint} for item in assets
         ],
-        "dry_run": True,
+        "dry_run": renderer_kind is RendererKind.DRY_RUN,
         "duration": {
             "frames": plan.output.expected_duration_frames,
             "milliseconds": plan.output.expected_duration_ms,
@@ -72,22 +93,30 @@ def build_local_render_request(
             "height": plan.output.height,
             "width": plan.output.width,
         },
-        "renderer_contract_version": RENDERER_CONTRACT_VERSION,
-        "renderer_kind": RendererKind.DRY_RUN.value,
+        "renderer_contract_version": (
+            RENDERER_CONTRACT_VERSION
+            if renderer_kind is RendererKind.FFMPEG
+            else LEGACY_LOCAL_RENDER_SCHEMA_VERSION
+        ),
+        "renderer_kind": renderer_kind.value,
         "requested_output": requested_output.model_dump(mode="json"),
-        "schema_version": LOCAL_RENDER_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "source_plan_fingerprint": plan.plan_fingerprint,
         "source_plan_sha256": source.plan_artifact.sha256,
         "timeline_checksum": plan.timeline_checksum,
         "track_summary": track_summary.model_dump(mode="json"),
     }
+    if encoding_policy is not None:
+        fingerprint_payload["encoding_policy"] = encoding_policy
     if source.plan_artifact.sha256 is None:
         raise RenderingRequestError("composition plan artifact has no checksum")
     fingerprint = canonical_sha256(fingerprint_payload)
     try:
         return LocalRenderRequest(
+            schema_version=schema_version,
             request_id=uuid5(NAMESPACE_URL, f"orion:local-render-request:{fingerprint}"),
             job_id=plan.job_id,
+            renderer_kind=renderer_kind,
             source_plan_artifact_id=source.plan_artifact.artifact_id,
             source_plan_relative_path=source.plan_artifact.relative_path,
             source_plan_sha256=source.plan_artifact.sha256,
@@ -106,9 +135,11 @@ def build_local_render_request(
             asset_fingerprints=assets,
             requested_output=requested_output,
             request_fingerprint=fingerprint,
+            dry_run=renderer_kind is RendererKind.DRY_RUN,
             metadata={
                 "authoritative_source": "media-composition-plan.json",
-                "renderer_execution": False,
+                **({"encoding_policy": encoding_policy} if encoding_policy is not None else {}),
+                "renderer_execution": renderer_kind is RendererKind.FFMPEG,
             },
         )
     except ValueError as exc:
@@ -116,35 +147,41 @@ def build_local_render_request(
 
 
 def render_request_fingerprint(request: LocalRenderRequest) -> str:
-    return canonical_sha256(
-        {
-            "asset_fingerprints": [
-                {"asset_id": item.asset_id, "fingerprint": item.fingerprint}
-                for item in request.asset_fingerprints
-            ],
-            "dry_run": request.dry_run,
-            "duration": {
-                "frames": request.expected_duration_frames,
-                "milliseconds": request.expected_duration_ms,
-            },
-            "frame_rate": {
-                "denominator": request.frame_rate_denominator,
-                "numerator": request.frame_rate_numerator,
-            },
-            "output_dimensions": {
-                "height": request.output_height,
-                "width": request.output_width,
-            },
-            "renderer_contract_version": RENDERER_CONTRACT_VERSION,
-            "renderer_kind": request.renderer_kind.value,
-            "requested_output": request.requested_output.model_dump(mode="json"),
-            "schema_version": request.schema_version,
-            "source_plan_fingerprint": request.source_plan_fingerprint,
-            "source_plan_sha256": request.source_plan_sha256,
-            "timeline_checksum": request.timeline_checksum,
-            "track_summary": request.track_summary.model_dump(mode="json"),
-        }
+    contract_version = (
+        LEGACY_LOCAL_RENDER_SCHEMA_VERSION
+        if request.schema_version == LEGACY_LOCAL_RENDER_SCHEMA_VERSION
+        else RENDERER_CONTRACT_VERSION
     )
+    payload = {
+        "asset_fingerprints": [
+            {"asset_id": item.asset_id, "fingerprint": item.fingerprint}
+            for item in request.asset_fingerprints
+        ],
+        "dry_run": request.dry_run,
+        "duration": {
+            "frames": request.expected_duration_frames,
+            "milliseconds": request.expected_duration_ms,
+        },
+        "frame_rate": {
+            "denominator": request.frame_rate_denominator,
+            "numerator": request.frame_rate_numerator,
+        },
+        "output_dimensions": {
+            "height": request.output_height,
+            "width": request.output_width,
+        },
+        "renderer_contract_version": contract_version,
+        "renderer_kind": request.renderer_kind.value,
+        "requested_output": request.requested_output.model_dump(mode="json"),
+        "schema_version": request.schema_version,
+        "source_plan_fingerprint": request.source_plan_fingerprint,
+        "source_plan_sha256": request.source_plan_sha256,
+        "timeline_checksum": request.timeline_checksum,
+        "track_summary": request.track_summary.model_dump(mode="json"),
+    }
+    if request.renderer_kind is RendererKind.FFMPEG:
+        payload["encoding_policy"] = request.metadata.get("encoding_policy")
+    return canonical_sha256(payload)
 
 
 def _track_summary(plan: object) -> RenderTrackSummary:

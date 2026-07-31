@@ -14,7 +14,23 @@ class RenderingRequestError(RenderingError):
 
 
 class RenderingValidationError(RenderingError):
-    """The dry-run renderer rejected a request."""
+    """The selected renderer rejected a request or output."""
+
+
+class RenderingExecutableError(RenderingError):
+    """A configured local media executable is missing or invalid."""
+
+
+class RenderingProcessError(RenderingError):
+    """A controlled local media process failed."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class RenderingProcessTimeoutError(RenderingProcessError):
+    """A controlled local media process exceeded its deadline."""
 
 
 class RenderingStorageError(RenderingError):

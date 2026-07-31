@@ -65,6 +65,7 @@ class ArtifactType(StrEnum):
     MEDIA_COMPOSITION_PLAN = "media_composition_plan"
     MEDIA_COMPOSITION_MANIFEST = "media_composition_manifest"
     LOCAL_RENDER_REQUEST = "local_render_request"
+    FFMPEG_EXECUTION_PLAN = "ffmpeg_execution_plan"
     RENDER_EXECUTION_MANIFEST = "render_execution_manifest"
     SOURCE_IMAGE = "source_image"
     SOURCE_VIDEO_CLIP = "source_video_clip"

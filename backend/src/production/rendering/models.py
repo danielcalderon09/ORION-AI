@@ -17,9 +17,13 @@ from backend.src.production.media_composition.domain.models import (
     CompositionAssetKind,
 )
 
-LOCAL_RENDER_SCHEMA_VERSION = "1.0.0"
-RENDERER_CONTRACT_VERSION = "1.0.0"
-SUPPORTED_LOCAL_RENDER_VERSIONS = frozenset({LOCAL_RENDER_SCHEMA_VERSION})
+LEGACY_LOCAL_RENDER_SCHEMA_VERSION = "1.0.0"
+LOCAL_RENDER_SCHEMA_VERSION = "1.1.0"
+RENDERER_CONTRACT_VERSION = "1.1.0"
+FFMPEG_EXECUTION_PLAN_SCHEMA_VERSION = "1.0.0"
+SUPPORTED_LOCAL_RENDER_VERSIONS = frozenset(
+    {LEGACY_LOCAL_RENDER_SCHEMA_VERSION, LOCAL_RENDER_SCHEMA_VERSION}
+)
 
 
 class RendererKind(StrEnum):
@@ -45,9 +49,13 @@ class RendererReadiness(StrEnum):
 class RenderManifestStatus(StrEnum):
     PREPARED = "prepared"
     VALIDATING = "validating"
+    READY_TO_RENDER = "ready_to_render"
+    RENDERING = "rendering"
+    PROBING = "probing"
     VALIDATED = "validated"
     INVALID = "invalid"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class OverwritePolicy(StrEnum):
@@ -101,15 +109,15 @@ class RendererDescription(ContractModel):
         if self.renderer_kind is not self.capabilities.renderer_kind:
             raise ValueError("renderer capability identity differs")
         if self.activation_state is RendererActivationState.ACTIVE:
-            if self.renderer_kind is not RendererKind.DRY_RUN:
-                raise ValueError("only dry_run can be active in this contract")
             if self.readiness is not RendererReadiness.READY:
                 raise ValueError("active renderer must be ready")
-        if self.renderer_kind is not RendererKind.DRY_RUN and (
+            if self.renderer_kind is RendererKind.DAVINCI_RESOLVE:
+                raise ValueError("davinci_resolve cannot be active")
+        if self.renderer_kind is RendererKind.DAVINCI_RESOLVE and (
             self.activation_state is not RendererActivationState.DISABLED
             or self.readiness is not RendererReadiness.NOT_CONFIGURED
         ):
-            raise ValueError("future renderers must remain disabled and not configured")
+            raise ValueError("davinci_resolve must remain disabled and not configured")
         return self
 
 
@@ -189,6 +197,8 @@ class RenderAssetReference(ContractModel):
     sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     media_kind: CompositionAssetKind
+    mime_type: str | None = Field(default=None, min_length=1, max_length=100)
+    size_bytes: int | None = Field(default=None, gt=0, le=250_000_000)
     duration_ms: int | None = Field(default=None, gt=0, le=3_600_000)
 
     @field_validator("relative_path")
@@ -204,7 +214,7 @@ class LocalRenderRequest(ContractModel):
     schema_version: str = LOCAL_RENDER_SCHEMA_VERSION
     request_id: UUID
     job_id: UUID
-    renderer_kind: Literal[RendererKind.DRY_RUN] = RendererKind.DRY_RUN
+    renderer_kind: Literal[RendererKind.DRY_RUN, RendererKind.FFMPEG] = RendererKind.DRY_RUN
     source_plan_artifact_id: UUID
     source_plan_relative_path: str
     source_plan_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -226,7 +236,7 @@ class LocalRenderRequest(ContractModel):
     )
     requested_output: RequestedRenderOutput
     request_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
-    dry_run: Literal[True] = True
+    dry_run: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("source_plan_relative_path")
@@ -247,6 +257,10 @@ class LocalRenderRequest(ContractModel):
 
     @model_validator(mode="after")
     def consistent_request(self) -> LocalRenderRequest:
+        if self.schema_version not in SUPPORTED_LOCAL_RENDER_VERSIONS:
+            raise ValueError("local render request schema is unsupported")
+        if self.dry_run != (self.renderer_kind is RendererKind.DRY_RUN):
+            raise ValueError("render request dry-run flag differs from renderer")
         ids = tuple(item.asset_id for item in self.asset_fingerprints)
         if len(ids) != len(set(ids)) or ids != tuple(sorted(ids)):
             raise ValueError("render assets must be unique and ordered")
@@ -287,13 +301,131 @@ class DryRunRenderResult(ContractModel):
         return result
 
 
+class FFmpegRenderResult(ContractModel):
+    renderer_kind: Literal[RendererKind.FFMPEG] = RendererKind.FFMPEG
+    renderer_version: str = Field(pattern=r"^[0-9A-Za-z._-]{1,64}$")
+    ffprobe_version: str = Field(pattern=r"^[0-9A-Za-z._-]{1,64}$")
+    request_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    accepted: Literal[True] = True
+    media_produced: Literal[True] = True
+    output_created: Literal[True] = True
+    output_relative_path: str
+    output_size_bytes: int = Field(gt=0)
+    output_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    duration_ms: int = Field(gt=0)
+    duration_frames: int = Field(gt=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    frame_rate_numerator: int = Field(gt=0)
+    frame_rate_denominator: int = Field(gt=0)
+    video_codec: Literal["h264"]
+    audio_codec: Literal["aac"] | None
+    pixel_format: Literal["yuv420p"]
+    video_stream_count: Literal[1] = 1
+    audio_stream_count: int = Field(ge=0, le=8)
+    subtitle_stream_count: int = Field(ge=0, le=1)
+    probe_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    validation_codes: tuple[str, ...] = Field(max_length=100)
+    return_code: Literal[0] = 0
+    diagnostic_codes: tuple[str, ...] = Field(default=(), max_length=100)
+    deterministic_preparation: Literal[True] = True
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("output_relative_path")
+    @classmethod
+    def safe_output_path(cls, value: str) -> str:
+        return validate_relative_path(value)
+
+    @field_validator("validation_codes", "diagnostic_codes")
+    @classmethod
+    def stable_result_codes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value))):
+            raise ValueError("FFmpeg result codes must be unique and sorted")
+        return value
+
+    @field_validator("metadata")
+    @classmethod
+    def safe_result_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
+        result = validate_safe_json(value, path="ffmpeg_render_result.metadata")
+        if not isinstance(result, dict):
+            raise ValueError("FFmpeg result metadata must be an object")
+        return result
+
+
+LocalRenderResult = DryRunRenderResult | FFmpegRenderResult
+
+
+class FFmpegExecutionPolicy(ContractModel):
+    video_preset: str = Field(
+        pattern=r"^(ultrafast|superfast|veryfast|faster|fast|medium|slow|slower|veryslow)$"
+    )
+    video_crf: int = Field(ge=0, le=35)
+    audio_bitrate: str = Field(pattern=r"^(96|128|160|192|256|320)k$")
+    process_timeout_seconds: int = Field(ge=1, le=7_200)
+    probe_timeout_seconds: int = Field(ge=1, le=300)
+    max_stderr_bytes: int = Field(ge=1_024, le=4_000_000)
+    max_output_bytes: int = Field(ge=1_024, le=4_000_000_000)
+    duration_tolerance_ms: int = Field(ge=0, le=5_000)
+    frame_rate_tolerance: float = Field(ge=0, le=1)
+
+
+class FFmpegExecutionPlan(ContractModel):
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    request_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    renderer_version: Literal["1.0.0"] = "1.0.0"
+    input_assets: tuple[RenderAssetReference, ...] = Field(min_length=1, max_length=5_000)
+    temporary_workspace_relative_path: str
+    temporary_output_relative_path: str
+    output_relative_path: str
+    expected_output: RequestedRenderOutput
+    argument_vector: tuple[str, ...] = Field(min_length=1, max_length=50_000)
+    argument_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    execution_policy: FFmpegExecutionPolicy
+    filter_complex_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    subtitle_strategy: Literal["none", "mux_mov_text"]
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator(
+        "temporary_workspace_relative_path",
+        "temporary_output_relative_path",
+        "output_relative_path",
+    )
+    @classmethod
+    def safe_plan_path(cls, value: str) -> str:
+        normalized = validate_relative_path(value)
+        if "\\" in normalized:
+            raise ValueError("execution-plan path must use POSIX separators")
+        return normalized
+
+    @field_validator("metadata")
+    @classmethod
+    def safe_plan_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
+        result = validate_safe_json(value, path="ffmpeg_execution_plan.metadata")
+        if not isinstance(result, dict):
+            raise ValueError("execution-plan metadata must be an object")
+        return result
+
+    @model_validator(mode="after")
+    def consistent_plan(self) -> FFmpegExecutionPlan:
+        if self.output_relative_path != self.expected_output.relative_path:
+            raise ValueError("execution-plan output identity differs")
+        if not self.temporary_output_relative_path.startswith(
+            self.temporary_workspace_relative_path + "/"
+        ):
+            raise ValueError("temporary output escapes its request-owned workspace")
+        ids = tuple(item.asset_id for item in self.input_assets)
+        if ids != tuple(sorted(ids)) or len(ids) != len(set(ids)):
+            raise ValueError("execution-plan assets must be unique and sorted")
+        return self
+
+
 class RenderExecutionManifest(ContractModel):
     schema_version: str = LOCAL_RENDER_SCHEMA_VERSION
     job_id: UUID
     stage: Literal[ProductionStage.RENDERING_LONG_FORM] = ProductionStage.RENDERING_LONG_FORM
     attempt_number: int = Field(ge=1)
-    renderer_kind: Literal[RendererKind.DRY_RUN] = RendererKind.DRY_RUN
-    renderer_version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
+    renderer_kind: Literal[RendererKind.DRY_RUN, RendererKind.FFMPEG] = RendererKind.DRY_RUN
+    renderer_version: str = Field(pattern=r"^[0-9A-Za-z._-]{1,64}$")
     source_plan_artifact_id: UUID
     source_plan_relative_path: str
     source_plan_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -304,11 +436,12 @@ class RenderExecutionManifest(ContractModel):
     capabilities_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     status: RenderManifestStatus
     dry_run_result: DryRunRenderResult | None = None
-    output_artifact_id: Literal[None] = None
+    ffmpeg_result: FFmpegRenderResult | None = None
+    output_artifact_id: UUID | None = None
     output_relative_path: str
-    output_sha256: Literal[None] = None
-    output_size_bytes: Literal[None] = None
-    media_produced: Literal[False] = False
+    output_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    output_size_bytes: int | None = Field(default=None, gt=0)
+    media_produced: bool = False
     created_at: datetime
     updated_at: datetime
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -338,15 +471,43 @@ class RenderExecutionManifest(ContractModel):
 
     @model_validator(mode="after")
     def phase_contract(self) -> RenderExecutionManifest:
+        if self.schema_version not in SUPPORTED_LOCAL_RENDER_VERSIONS:
+            raise ValueError("render manifest schema is unsupported")
         if self.updated_at < self.created_at:
             raise ValueError("render manifest update precedes creation")
         if self.output_relative_path != self.requested_output.relative_path:
             raise ValueError("render manifest output identity differs")
         if self.status is RenderManifestStatus.VALIDATED:
-            if self.dry_run_result is None or not self.dry_run_result.accepted:
-                raise ValueError("validated manifest requires an accepted dry-run result")
-        elif self.dry_run_result is not None:
-            raise ValueError("only validated manifests may contain a dry-run result")
+            if self.renderer_kind is RendererKind.DRY_RUN:
+                if self.dry_run_result is None or not self.dry_run_result.accepted:
+                    raise ValueError("validated dry-run manifest requires an accepted result")
+                if self.ffmpeg_result is not None or self.media_produced:
+                    raise ValueError("dry-run manifest cannot claim media")
+            else:
+                result = self.ffmpeg_result
+                if result is None or not result.media_produced:
+                    raise ValueError("validated FFmpeg manifest requires media result")
+                expected = (
+                    result.output_relative_path,
+                    result.output_sha256,
+                    result.output_size_bytes,
+                    True,
+                )
+                actual = (
+                    self.output_relative_path,
+                    self.output_sha256,
+                    self.output_size_bytes,
+                    self.media_produced,
+                )
+                if actual != expected or self.output_artifact_id is None:
+                    raise ValueError("FFmpeg manifest output identity differs")
+        elif self.dry_run_result is not None or self.ffmpeg_result is not None:
+            raise ValueError("only validated manifests may contain a render result")
+        if self.renderer_kind is RendererKind.DRY_RUN and (
+            self.media_produced
+            or any((self.output_artifact_id, self.output_sha256, self.output_size_bytes))
+        ):
+            raise ValueError("dry-run manifest cannot claim an output")
         return self
 
 
@@ -362,9 +523,22 @@ class RenderReconciliationResult(ContractModel):
     request_fingerprint_valid: bool
     renderer_kind: RendererKind
     renderer_readiness: RendererReadiness
+    execution_plan_present: bool = False
+    execution_plan_valid: bool = False
+    normalized_ffmpeg_version: str | None = None
+    normalized_ffprobe_version: str | None = None
     dry_run_result_present: bool
     dry_run_accepted: bool
     media_produced: bool
+    temporary_output_present: bool = False
+    final_output_present: bool = False
+    final_output_checksum_agrees: bool = False
+    output_artifact_present: bool = False
+    output_artifact_metadata_agrees: bool = False
+    probe_validation_complete: bool = False
+    interrupted_render: bool = False
+    failed_render: bool = False
+    timed_out: bool = False
     unexpected_output_file: bool
     stale_source: bool
     corrupt_state: bool

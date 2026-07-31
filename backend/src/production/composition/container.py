@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -185,14 +186,18 @@ from backend.src.production.planning.providers.availability import (
 )
 from backend.src.production.planning.reconciliation import PlanningArtifactReconciler
 from backend.src.production.rendering.configuration import RenderingConfiguration
+from backend.src.production.rendering.executable_resolver import (
+    LocalMediaExecutableResolver,
+)
 from backend.src.production.rendering.handler import LocalRenderPreparationHandler
 from backend.src.production.rendering.manifest_store import (
     LocalRenderPreparationStore,
 )
 from backend.src.production.rendering.models import RendererKind
 from backend.src.production.rendering.ports import LocalRenderer
+from backend.src.production.rendering.process_runner import ControlledMediaProcessRunner
 from backend.src.production.rendering.reconciliation import LocalRenderReconciler
-from backend.src.production.rendering.renderers import DryRunRenderer
+from backend.src.production.rendering.renderers import DryRunRenderer, LocalFFmpegRenderer
 from backend.src.production.rendering.source_reader import (
     VerifiedMediaCompositionSourceReader,
 )
@@ -794,18 +799,31 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         configuration=media_composition_configuration,
     )
     rendering_configuration = RenderingConfiguration(
-        renderer=RendererKind.DRY_RUN,
+        renderer=RendererKind(settings.ORION_RENDERER),
+        ffmpeg_path=(Path(settings.ORION_FFMPEG_PATH) if settings.ORION_FFMPEG_PATH else None),
+        ffprobe_path=(Path(settings.ORION_FFPROBE_PATH) if settings.ORION_FFPROBE_PATH else None),
         output_container=settings.ORION_RENDER_OUTPUT_CONTAINER,
         video_codec=settings.ORION_RENDER_VIDEO_CODEC,
         audio_codec=settings.ORION_RENDER_AUDIO_CODEC,
         pixel_format=settings.ORION_RENDER_PIXEL_FORMAT,
+        video_preset=settings.ORION_RENDER_VIDEO_PRESET,
+        video_crf=settings.ORION_RENDER_VIDEO_CRF,
+        audio_bitrate=settings.ORION_RENDER_AUDIO_BITRATE,
+        process_timeout_seconds=settings.ORION_RENDER_PROCESS_TIMEOUT_SECONDS,
+        probe_timeout_seconds=settings.ORION_RENDER_PROBE_TIMEOUT_SECONDS,
+        max_stderr_bytes=settings.ORION_RENDER_MAX_STDERR_BYTES,
+        max_output_bytes=settings.ORION_RENDER_MAX_OUTPUT_BYTES,
+        duration_tolerance_ms=settings.ORION_RENDER_DURATION_TOLERANCE_MS,
+        frame_rate_tolerance=settings.ORION_RENDER_FRAME_RATE_TOLERANCE,
         max_request_bytes=settings.ORION_RENDER_MAX_REQUEST_BYTES,
         max_manifest_bytes=settings.ORION_RENDER_MAX_MANIFEST_BYTES,
+        max_execution_plan_bytes=settings.ORION_RENDER_MAX_EXECUTION_PLAN_BYTES,
     )
     render_store = LocalRenderPreparationStore(
         settings.PROJECTS_DIR,
         max_request_bytes=rendering_configuration.max_request_bytes,
         max_manifest_bytes=rendering_configuration.max_manifest_bytes,
+        max_execution_plan_bytes=rendering_configuration.max_execution_plan_bytes,
     )
     render_source_reader = VerifiedMediaCompositionSourceReader(
         workspace_root=settings.PROJECTS_DIR,
@@ -813,7 +831,23 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         max_plan_bytes=media_composition_configuration.max_plan_bytes,
         max_manifest_bytes=media_composition_configuration.max_manifest_bytes,
     )
-    local_renderer = DryRunRenderer()
+    local_renderer: LocalRenderer
+    if rendering_configuration.renderer is RendererKind.DRY_RUN:
+        local_renderer = DryRunRenderer()
+    else:
+        resolved_render_binaries = LocalMediaExecutableResolver().resolve(
+            ffmpeg_path=rendering_configuration.ffmpeg_path,
+            ffprobe_path=rendering_configuration.ffprobe_path,
+        )
+        render_process_runner = ControlledMediaProcessRunner(
+            ffmpeg_path=resolved_render_binaries.ffmpeg,
+            ffprobe_path=resolved_render_binaries.ffprobe,
+            stderr_limit=rendering_configuration.max_stderr_bytes,
+        )
+        local_renderer = LocalFFmpegRenderer(
+            workspace_root=settings.PROJECTS_DIR,
+            runner=render_process_runner,
+        )
     render_handler = LocalRenderPreparationHandler(
         source_reader=render_source_reader,
         store=render_store,
@@ -825,6 +859,8 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         source_reader=render_source_reader,
         store=render_store,
         configuration=rendering_configuration,
+        renderer=local_renderer,
+        artifact_inventory=SQLAlchemyMediaCompositionArtifactInventory(artifacts),
     )
     binary_asset_reconciler = FilesystemBinaryAssetReconciler(
         configuration=binary_asset_configuration,

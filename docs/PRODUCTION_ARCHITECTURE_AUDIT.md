@@ -321,3 +321,8 @@ write-once request storage, CAS manifest checkpoints, deterministic recovery,
 and a read-only reconciler follow the established local workspace policy.
 Successful preparation emits only JSON artifacts and ends at `validated`.
 Details are in `docs/PRODUCTION_LOCAL_RENDER_CONTRACT.md`.
+
+Phase 5H.4 keeps that boundary and adds one explicitly constructed local FFmpeg
+adapter. Only its controlled runner may execute FFmpeg/FFprobe; final media is
+registered only after confined partial rendering, FFprobe validation, checksum,
+and atomic promotion. See `docs/PRODUCTION_LOCAL_FFMPEG_RENDERER.md`.

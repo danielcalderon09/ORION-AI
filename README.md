@@ -148,11 +148,12 @@ render, FFmpeg, MoviePy, OpenTimelineIO o DaVinci. Consulta
 [`docs/PHASE_5H2_MEDIA_COMPOSITION_PLAN.md`](docs/PHASE_5H2_MEDIA_COMPOSITION_PLAN.md).
 
 RENDERING_LONG_FORM consume ese plan y manifest verificados mediante un contrato
-local renderer-neutral. Solo `dry_run` esta activo: persiste
-`local-render-request.json` y `render-execution-manifest.json`, valida la
-preparacion y no crea MP4 ni artefacto de video. `ffmpeg` y `davinci_resolve`
-son identidades futuras deshabilitadas. Consulta
-[`docs/PRODUCTION_LOCAL_RENDER_CONTRACT.md`](docs/PRODUCTION_LOCAL_RENDER_CONTRACT.md).
+local renderer-neutral. `dry_run` conserva la validacion sin media y `ffmpeg`
+puede activarse explicitamente para producir un MP4 real, validarlo con FFprobe
+y registrar `LONG_FORM_RENDER`. DaVinci permanece deshabilitado. Consulta
+[`docs/PRODUCTION_LOCAL_RENDER_CONTRACT.md`](docs/PRODUCTION_LOCAL_RENDER_CONTRACT.md)
+y
+[`docs/PRODUCTION_LOCAL_FFMPEG_RENDERER.md`](docs/PRODUCTION_LOCAL_FFMPEG_RENDERER.md).
 
 La infraestructura de publicacion segura es un bounded context independiente y desactivado por
 defecto. Publica temporalmente solo bytes ya verificados, con manifiesto durable, expiracion,

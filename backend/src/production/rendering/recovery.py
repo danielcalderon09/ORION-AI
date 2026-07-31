@@ -4,8 +4,9 @@ from datetime import datetime
 
 from backend.src.production.rendering.fingerprints import canonical_sha256
 from backend.src.production.rendering.models import (
-    DryRunRenderResult,
+    FFmpegRenderResult,
     LocalRenderRequest,
+    LocalRenderResult,
     RendererCapabilities,
     RenderExecutionManifest,
     RenderManifestStatus,
@@ -24,8 +25,10 @@ def prepare_manifest(
     now: datetime,
 ) -> RenderExecutionManifest:
     return RenderExecutionManifest(
+        schema_version=request.schema_version,
         job_id=request.job_id,
         attempt_number=attempt_number,
+        renderer_kind=request.renderer_kind,
         renderer_version=capabilities.renderer_version,
         source_plan_artifact_id=request.source_plan_artifact_id,
         source_plan_relative_path=request.source_plan_relative_path,
@@ -40,7 +43,7 @@ def prepare_manifest(
         created_at=now,
         updated_at=now,
         metadata={
-            "preparation_only": True,
+            "preparation_only": request.dry_run,
             "real_renderer_executed": False,
         },
     )
@@ -62,14 +65,89 @@ def validating_manifest(
 def validated_manifest(
     manifest: RenderExecutionManifest,
     *,
-    result: DryRunRenderResult,
+    result: LocalRenderResult,
+    now: datetime,
+    output_artifact_id: object | None = None,
+) -> RenderExecutionManifest:
+    updates: dict[str, object] = {
+        "status": RenderManifestStatus.VALIDATED,
+        "updated_at": now,
+    }
+    if isinstance(result, FFmpegRenderResult):
+        from uuid import UUID
+
+        if not isinstance(output_artifact_id, UUID):
+            raise ValueError("validated FFmpeg result requires an output artifact ID")
+        updates.update(
+            {
+                "ffmpeg_result": result,
+                "media_produced": True,
+                "output_artifact_id": output_artifact_id,
+                "output_sha256": result.output_sha256,
+                "output_size_bytes": result.output_size_bytes,
+                "metadata": {
+                    "preparation_only": False,
+                    "real_renderer_executed": True,
+                    "validated_by_ffprobe": True,
+                },
+            }
+        )
+    else:
+        updates["dry_run_result"] = result
+    return manifest.model_copy(update=updates)
+
+
+def ready_to_render_manifest(
+    manifest: RenderExecutionManifest,
+    *,
+    now: datetime,
+) -> RenderExecutionManifest:
+    return manifest.model_copy(
+        update={"status": RenderManifestStatus.READY_TO_RENDER, "updated_at": now}
+    )
+
+
+def rendering_manifest(
+    manifest: RenderExecutionManifest,
+    *,
+    now: datetime,
+) -> RenderExecutionManifest:
+    return manifest.model_copy(update={"status": RenderManifestStatus.RENDERING, "updated_at": now})
+
+
+def failed_manifest(
+    manifest: RenderExecutionManifest,
+    *,
+    now: datetime,
+    code: str,
+) -> RenderExecutionManifest:
+    return manifest.model_copy(
+        update={
+            "status": RenderManifestStatus.FAILED,
+            "updated_at": now,
+            "metadata": {
+                **manifest.metadata,
+                "failure_code": code,
+                "media_produced": False,
+            },
+        }
+    )
+
+
+def cancelled_manifest(
+    manifest: RenderExecutionManifest,
+    *,
     now: datetime,
 ) -> RenderExecutionManifest:
     return manifest.model_copy(
         update={
-            "status": RenderManifestStatus.VALIDATED,
-            "dry_run_result": result,
+            "status": RenderManifestStatus.CANCELLED,
             "updated_at": now,
+            "metadata": {
+                **manifest.metadata,
+                "failure_code": "cancelled",
+                "media_produced": False,
+            },
         }
     )
 

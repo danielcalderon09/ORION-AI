@@ -1,5 +1,16 @@
 # Runtime local de Production Pipeline
 
+## RENDERING_LONG_FORM controlled FFmpeg (Fase 5H.4)
+
+El mismo handler durable selecciona explicitamente `dry_run` o `ffmpeg`.
+FFmpeg/FFprobe se resuelven localmente, el execution plan usa argumentos
+allowlisted sin shell, cada input se revalida, y FFmpeg escribe solamente el
+partial confinado. FFprobe debe validar antes de promocion atomica y registro
+READY de `LONG_FORM_RENDER`. Recovery reutiliza output validado y preserva
+conflictos. `VALIDATING_RENDER` conserva su placeholder downstream.
+
+Detalles en `PRODUCTION_LOCAL_FFMPEG_RENDERER.md`.
+
 ## RENDERING_LONG_FORM preparation-only (Fase 5H.3)
 
 Despues de BUILDING_TIMELINE y antes de VALIDATING_RENDER, el runtime inyecta

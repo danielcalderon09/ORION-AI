@@ -12,8 +12,9 @@ from backend.src.production.media_composition.domain.models import (
     MediaCompositionPlan,
 )
 from backend.src.production.rendering.models import (
-    DryRunRenderResult,
+    FFmpegExecutionPlan,
     LocalRenderRequest,
+    LocalRenderResult,
     RendererCapabilities,
     RendererKind,
     RenderExecutionManifest,
@@ -67,6 +68,19 @@ class LocalRenderStore(Protocol):
         request: LocalRenderRequest,
     ) -> tuple[str, int, str]: ...
 
+    async def read_execution_plan(
+        self,
+        *,
+        context: RenderStageContext,
+    ) -> FFmpegExecutionPlan | None: ...
+
+    async def write_execution_plan(
+        self,
+        *,
+        context: RenderStageContext,
+        plan: FFmpegExecutionPlan,
+    ) -> tuple[str, int, str]: ...
+
     async def read_manifest(
         self,
         *,
@@ -90,6 +104,8 @@ class LocalRenderStore(Protocol):
 
     async def output_exists(self, *, relative_path: str) -> bool: ...
 
+    async def output_identity(self, *, relative_path: str) -> tuple[int, str]: ...
+
 
 class LocalRenderer(Protocol):
     @property
@@ -101,7 +117,8 @@ class LocalRenderer(Protocol):
     async def prepare_or_validate(
         self,
         request: LocalRenderRequest,
-    ) -> DryRunRenderResult: ...
+        execution_plan: FFmpegExecutionPlan | None = None,
+    ) -> LocalRenderResult: ...
 
     async def close(self) -> None: ...
 

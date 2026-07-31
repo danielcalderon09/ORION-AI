@@ -1,5 +1,11 @@
 # ORION local render execution contract
 
+> Phase 5H.4 preserves this dry-run contract and adds the controlled real
+> adapter in
+> [PRODUCTION_LOCAL_FFMPEG_RENDERER.md](PRODUCTION_LOCAL_FFMPEG_RENDERER.md).
+> Schema `1.0.0` dry-run files remain readable and writable; FFmpeg state uses
+> `1.1.0`.
+
 ## Scope
 
 Phase 5H.3 introduces the smallest renderer-neutral boundary needed by ORION's

@@ -172,13 +172,35 @@ class Settings(BaseSettings):
     ORION_MEDIA_COMPOSITION_MAX_SOURCE_MANIFEST_BYTES: int = 4_000_000
     ORION_MEDIA_COMPOSITION_MAX_PLAN_BYTES: int = 4_000_000
     ORION_MEDIA_COMPOSITION_MAX_MANIFEST_BYTES: int = 4_000_000
-    ORION_RENDERER: Literal["dry_run"] = "dry_run"
+    ORION_RENDERER: Literal["dry_run", "ffmpeg"] = "dry_run"
+    ORION_FFMPEG_PATH: str | None = None
+    ORION_FFPROBE_PATH: str | None = None
     ORION_RENDER_OUTPUT_CONTAINER: Literal["mp4"] = "mp4"
     ORION_RENDER_VIDEO_CODEC: Literal["h264"] = "h264"
     ORION_RENDER_AUDIO_CODEC: Literal["aac"] = "aac"
     ORION_RENDER_PIXEL_FORMAT: Literal["yuv420p"] = "yuv420p"
+    ORION_RENDER_VIDEO_PRESET: Literal[
+        "ultrafast",
+        "superfast",
+        "veryfast",
+        "faster",
+        "fast",
+        "medium",
+        "slow",
+        "slower",
+        "veryslow",
+    ] = "medium"
+    ORION_RENDER_VIDEO_CRF: int = 20
+    ORION_RENDER_AUDIO_BITRATE: Literal["96k", "128k", "160k", "192k", "256k", "320k"] = "192k"
+    ORION_RENDER_PROCESS_TIMEOUT_SECONDS: int = 1800
+    ORION_RENDER_PROBE_TIMEOUT_SECONDS: int = 30
+    ORION_RENDER_MAX_STDERR_BYTES: int = 1_000_000
+    ORION_RENDER_MAX_OUTPUT_BYTES: int = 2_000_000_000
+    ORION_RENDER_DURATION_TOLERANCE_MS: int = 500
+    ORION_RENDER_FRAME_RATE_TOLERANCE: float = 0.01
     ORION_RENDER_MAX_REQUEST_BYTES: int = 4_000_000
     ORION_RENDER_MAX_MANIFEST_BYTES: int = 4_000_000
+    ORION_RENDER_MAX_EXECUTION_PLAN_BYTES: int = 4_000_000
     ORION_OPENROUTER_HTTP_REFERER: str | None = None
     ORION_OPENROUTER_APP_TITLE: str | None = None
 

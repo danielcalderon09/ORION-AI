@@ -17,17 +17,21 @@ from backend.src.production.rendering.exceptions import (
     RenderingCorruptError,
 )
 from backend.src.production.rendering.models import (
+    FFmpegExecutionPlan,
     LocalRenderRequest,
     RenderExecutionManifest,
 )
 from backend.src.production.rendering.paths import (
+    ffmpeg_execution_plan_relative_path,
     local_render_request_relative_path,
     render_execution_manifest_relative_path,
 )
 from backend.src.production.rendering.ports import RenderStageContext
 from backend.src.production.rendering.serialization import (
+    deserialize_ffmpeg_execution_plan,
     deserialize_local_render_request,
     deserialize_render_execution_manifest,
+    serialize_ffmpeg_execution_plan,
     serialize_local_render_request,
     serialize_render_execution_manifest,
 )
@@ -40,10 +44,12 @@ class LocalRenderPreparationStore:
         *,
         max_request_bytes: int,
         max_manifest_bytes: int,
+        max_execution_plan_bytes: int = 4_000_000,
     ) -> None:
         self._confinement = WorkspaceConfinement(workspace_root)
         self._max_request_bytes = max_request_bytes
         self._max_manifest_bytes = max_manifest_bytes
+        self._max_execution_plan_bytes = max_execution_plan_bytes
 
     async def read_request(
         self,
@@ -66,6 +72,21 @@ class LocalRenderPreparationStore:
         context: RenderStageContext,
     ) -> RenderExecutionManifest | None:
         return await asyncio.to_thread(self._read_manifest_sync, context)
+
+    async def read_execution_plan(
+        self,
+        *,
+        context: RenderStageContext,
+    ) -> FFmpegExecutionPlan | None:
+        return await asyncio.to_thread(self._read_execution_plan_sync, context)
+
+    async def write_execution_plan(
+        self,
+        *,
+        context: RenderStageContext,
+        plan: FFmpegExecutionPlan,
+    ) -> tuple[str, int, str]:
+        return await asyncio.to_thread(self._write_execution_plan_sync, context, plan)
 
     async def create_manifest(
         self,
@@ -91,6 +112,9 @@ class LocalRenderPreparationStore:
 
     async def output_exists(self, *, relative_path: str) -> bool:
         return await asyncio.to_thread(self._output_exists_sync, relative_path)
+
+    async def output_identity(self, *, relative_path: str) -> tuple[int, str]:
+        return await asyncio.to_thread(self._output_identity_sync, relative_path)
 
     def _read_request_sync(
         self,
@@ -131,6 +155,37 @@ class LocalRenderPreparationStore:
         return deserialize_render_execution_manifest(
             self._read_limited(target, self._max_manifest_bytes)
         )
+
+    def _read_execution_plan_sync(
+        self,
+        context: RenderStageContext,
+    ) -> FFmpegExecutionPlan | None:
+        target = self._target(ffmpeg_execution_plan_relative_path(context))
+        if not target.exists():
+            return None
+        return deserialize_ffmpeg_execution_plan(
+            self._read_limited(target, self._max_execution_plan_bytes)
+        )
+
+    def _write_execution_plan_sync(
+        self,
+        context: RenderStageContext,
+        plan: FFmpegExecutionPlan,
+    ) -> tuple[str, int, str]:
+        relative_path = ffmpeg_execution_plan_relative_path(context)
+        target = self._target(relative_path)
+        content = serialize_ffmpeg_execution_plan(plan)
+        self._check_size(content, self._max_execution_plan_bytes, "execution plan")
+        self._prepare_parent(target)
+        with self._lock(target):
+            if target.exists():
+                existing = self._read_limited(target, self._max_execution_plan_bytes)
+                if existing != content:
+                    raise RenderingConflictError("existing FFmpeg execution plan differs")
+                deserialize_ffmpeg_execution_plan(existing)
+            else:
+                self._replace(target, content)
+        return relative_path, len(content), hashlib.sha256(content).hexdigest()
 
     def _create_manifest_sync(
         self,
@@ -175,6 +230,19 @@ class LocalRenderPreparationStore:
         except BinaryAssetError as exc:
             raise RenderingCorruptError("future render output path is unsafe") from exc
         return True
+
+    def _output_identity_sync(self, relative_path: str) -> tuple[int, str]:
+        target = self._target(relative_path)
+        try:
+            self._confinement.reject_unsafe_file(target)
+            size = target.stat().st_size
+            digest = hashlib.sha256()
+            with target.open("rb") as stream:
+                while chunk := stream.read(1_048_576):
+                    digest.update(chunk)
+        except (BinaryAssetError, OSError) as exc:
+            raise RenderingCorruptError("render output cannot be verified") from exc
+        return size, digest.hexdigest()
 
     def _target(self, relative_path: str) -> Path:
         try:
@@ -270,11 +338,7 @@ def _validate_manifest_checkpoint(
         "request_fingerprint",
         "requested_output",
         "capabilities_fingerprint",
-        "output_artifact_id",
         "output_relative_path",
-        "output_sha256",
-        "output_size_bytes",
-        "media_produced",
         "created_at",
     )
     if any(getattr(previous, name) != getattr(current, name) for name in immutable):
@@ -286,6 +350,18 @@ def _validate_manifest_checkpoint(
         ("validating", "validated"),
         ("validating", "invalid"),
         ("validating", "failed"),
+        ("prepared", "ready_to_render"),
+        ("ready_to_render", "rendering"),
+        ("rendering", "probing"),
+        ("rendering", "validated"),
+        ("probing", "validated"),
+        ("ready_to_render", "failed"),
+        ("rendering", "failed"),
+        ("probing", "failed"),
+        ("ready_to_render", "cancelled"),
+        ("rendering", "cancelled"),
+        ("probing", "cancelled"),
+        ("cancelled", "ready_to_render"),
     }
     if (
         previous.status != current.status

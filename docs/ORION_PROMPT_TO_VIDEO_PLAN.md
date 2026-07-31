@@ -1,5 +1,18 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 5H.4
+
+RENDERING_LONG_FORM admite activacion explicita de FFmpeg local. Persiste un
+execution plan determinista, revalida cada asset, renderiza a un MP4 parcial
+confinado, valida streams/duracion/resolucion/frame rate/codecs con FFprobe y
+solo entonces promueve atomicamente y registra `LONG_FORM_RENDER`. `dry_run`
+sigue compatible y DaVinci sigue deshabilitado. La prueba de integracion
+produjo un MP4 real con fixtures locales, sin red ni cloud.
+
+VALIDATING_RENDER conserva su placeholder downstream y posicion serializada;
+no reemplaza el gate FFprobe requerido antes del artifact READY. Detalles en
+`PRODUCTION_LOCAL_FFMPEG_RENDERER.md`.
+
 ## Estado posterior a Fase 5H.3
 
 RENDERING_LONG_FORM conserva su valor serializado y posicion entre

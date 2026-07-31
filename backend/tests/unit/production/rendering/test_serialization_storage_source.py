@@ -166,7 +166,11 @@ def test_manifest_serialization_rejects_unsupported_schema() -> None:
     )
     content = serialize_render_execution_manifest(manifest)
     assert deserialize_render_execution_manifest(content) == manifest
-    unsupported = content.replace(b'"schema_version":"1.0.0"', b'"schema_version":"2.0.0"', 1)
+    unsupported = content.replace(
+        f'"schema_version":"{manifest.schema_version}"'.encode(),
+        b'"schema_version":"2.0.0"',
+        1,
+    )
     with pytest.raises(RenderingCorruptError, match="unsupported"):
         deserialize_render_execution_manifest(unsupported)
     false_media = content.replace(

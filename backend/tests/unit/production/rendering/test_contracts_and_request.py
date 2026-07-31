@@ -69,7 +69,10 @@ def test_capabilities_are_stable_and_conservative() -> None:
     assert capabilities_fingerprint(first[0].capabilities) == capabilities_fingerprint(
         second[0].capabilities
     )
-    assert all(not item.capabilities.supports_video_tracks for item in first[1:])
+    assert first[1].renderer_kind is RendererKind.FFMPEG
+    assert first[1].capabilities.produces_media is True
+    assert first[1].activation_state.value == "disabled"
+    assert first[2].capabilities.supports_video_tracks is False
 
 
 def test_request_is_deterministic_safe_and_attempt_independent() -> None:

@@ -42,11 +42,17 @@ def _capabilities(
     )
 
 
-def renderer_descriptions() -> tuple[RendererDescription, ...]:
+def renderer_descriptions(
+    active_renderer: RendererKind = RendererKind.DRY_RUN,
+) -> tuple[RendererDescription, ...]:
     return (
         RendererDescription(
             renderer_kind=RendererKind.DRY_RUN,
-            activation_state=RendererActivationState.ACTIVE,
+            activation_state=(
+                RendererActivationState.ACTIVE
+                if active_renderer is RendererKind.DRY_RUN
+                else RendererActivationState.DISABLED
+            ),
             readiness=RendererReadiness.READY,
             capabilities=_capabilities(
                 RendererKind.DRY_RUN,
@@ -55,11 +61,37 @@ def renderer_descriptions() -> tuple[RendererDescription, ...]:
         ),
         RendererDescription(
             renderer_kind=RendererKind.FFMPEG,
-            activation_state=RendererActivationState.DISABLED,
-            readiness=RendererReadiness.NOT_CONFIGURED,
-            capabilities=_capabilities(
-                RendererKind.FFMPEG,
-                validates_planning_features=False,
+            activation_state=(
+                RendererActivationState.ACTIVE
+                if active_renderer is RendererKind.FFMPEG
+                else RendererActivationState.DISABLED
+            ),
+            readiness=(
+                RendererReadiness.READY
+                if active_renderer is RendererKind.FFMPEG
+                else RendererReadiness.NOT_CONFIGURED
+            ),
+            capabilities=RendererCapabilities(
+                renderer_kind=RendererKind.FFMPEG,
+                renderer_version="1.0.0",
+                produces_media=True,
+                supported_container_formats=("mp4",),
+                supported_video_codecs=("h264",),
+                supported_audio_codecs=("aac",),
+                supports_video_tracks=True,
+                supports_narration=True,
+                supports_music=True,
+                supports_sound_effects=True,
+                supports_subtitles=True,
+                supports_transitions=True,
+                supports_volume_envelopes=True,
+                supports_ducking=True,
+                supports_fades=True,
+                supports_vertical_video=True,
+                max_width=16_384,
+                max_height=16_384,
+                max_frame_rate=120,
+                deterministic_preparation=True,
             ),
         ),
         RendererDescription(
@@ -86,7 +118,10 @@ class DryRunRenderer:
     async def prepare_or_validate(
         self,
         request: LocalRenderRequest,
+        execution_plan: object | None = None,
     ) -> DryRunRenderResult:
+        if execution_plan is not None:
+            raise RenderingValidationError("dry-run renderer received an execution plan")
         if request.renderer_kind is not self.renderer_kind or not request.dry_run:
             raise RenderingValidationError("dry-run renderer received another renderer request")
         if render_request_fingerprint(request) != request.request_fingerprint:

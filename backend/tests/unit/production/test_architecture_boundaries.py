@@ -477,20 +477,26 @@ def test_rendering_core_is_runtime_and_infrastructure_independent() -> None:
     assert _violations(files, forbidden) == []
 
 
-def test_rendering_has_no_executable_or_transport_adapter() -> None:
+def test_rendering_subprocess_is_confined_to_controlled_runner() -> None:
     files = tuple((PRODUCTION_ROOT / "rendering").rglob("*.py"))
     forbidden = (
         "httpx",
         "requests",
         "aiohttp",
         "socket",
-        "subprocess",
         "moviepy",
         "opentimelineio",
         "blender",
         "sqlalchemy",
     )
     assert _violations(files, forbidden) == []
+    process_users = tuple(
+        path.relative_to(PRODUCTION_ROOT / "rendering").as_posix()
+        for path in files
+        if "create_subprocess" in path.read_text(encoding="utf-8").lower()
+    )
+    assert process_users == ("process_runner.py",)
+    assert all("shell=true" not in path.read_text(encoding="utf-8").lower() for path in files)
 
 
 def test_upstream_contexts_do_not_reverse_depend_on_rendering() -> None:

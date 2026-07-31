@@ -4,9 +4,12 @@ import json
 from typing import Any
 
 from backend.src.production.rendering.exceptions import RenderingCorruptError
+from backend.src.production.rendering.execution_plan import execution_plan_fingerprint
 from backend.src.production.rendering.fingerprints import canonical_json_bytes
 from backend.src.production.rendering.models import (
-    LOCAL_RENDER_SCHEMA_VERSION,
+    FFMPEG_EXECUTION_PLAN_SCHEMA_VERSION,
+    SUPPORTED_LOCAL_RENDER_VERSIONS,
+    FFmpegExecutionPlan,
     LocalRenderRequest,
     RenderExecutionManifest,
 )
@@ -34,7 +37,7 @@ def deserialize_local_render_request(content: bytes) -> LocalRenderRequest:
 def serialize_render_execution_manifest(
     manifest: RenderExecutionManifest,
 ) -> bytes:
-    if manifest.schema_version != LOCAL_RENDER_SCHEMA_VERSION:
+    if manifest.schema_version not in SUPPORTED_LOCAL_RENDER_VERSIONS:
         raise RenderingCorruptError("render execution manifest schema is unsupported")
     return canonical_json_bytes(manifest.model_dump(mode="json"))
 
@@ -43,9 +46,12 @@ def deserialize_render_execution_manifest(
     content: bytes,
 ) -> RenderExecutionManifest:
     try:
-        manifest = RenderExecutionManifest.model_validate(_deserialize(content))
-        if manifest.schema_version != LOCAL_RENDER_SCHEMA_VERSION:
+        payload = _deserialize(content)
+        if not isinstance(payload, dict) or payload.get("schema_version") not in (
+            SUPPORTED_LOCAL_RENDER_VERSIONS
+        ):
             raise RenderingCorruptError("render execution manifest schema is unsupported")
+        manifest = RenderExecutionManifest.model_validate(payload)
         return manifest
     except RenderingCorruptError:
         raise
@@ -54,10 +60,33 @@ def deserialize_render_execution_manifest(
 
 
 def _validate_request(request: LocalRenderRequest) -> None:
-    if request.schema_version != LOCAL_RENDER_SCHEMA_VERSION:
+    if request.schema_version not in SUPPORTED_LOCAL_RENDER_VERSIONS:
         raise RenderingCorruptError("local render request schema is unsupported")
     if render_request_fingerprint(request) != request.request_fingerprint:
         raise RenderingCorruptError("local render request fingerprint differs")
+
+
+def serialize_ffmpeg_execution_plan(plan: FFmpegExecutionPlan) -> bytes:
+    _validate_execution_plan(plan)
+    return canonical_json_bytes(plan.model_dump(mode="json"))
+
+
+def deserialize_ffmpeg_execution_plan(content: bytes) -> FFmpegExecutionPlan:
+    try:
+        plan = FFmpegExecutionPlan.model_validate(_deserialize(content))
+        _validate_execution_plan(plan)
+        return plan
+    except RenderingCorruptError:
+        raise
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise RenderingCorruptError("FFmpeg execution plan is invalid") from exc
+
+
+def _validate_execution_plan(plan: FFmpegExecutionPlan) -> None:
+    if plan.schema_version != FFMPEG_EXECUTION_PLAN_SCHEMA_VERSION:
+        raise RenderingCorruptError("FFmpeg execution-plan schema is unsupported")
+    if execution_plan_fingerprint(plan) != plan.argument_fingerprint:
+        raise RenderingCorruptError("FFmpeg execution-plan fingerprint differs")
 
 
 def _deserialize(content: bytes) -> Any:
