@@ -1,5 +1,6 @@
 """Pure, versioned construction of scripting Structured Output prompts."""
 
+import hashlib
 import json
 from typing import cast
 
@@ -19,7 +20,19 @@ class ScriptingPrompt(ContractModel):
 
 
 class ScriptingPromptBuilder:
-    scripting_prompt_version = "1.0.0"
+    scripting_prompt_version = "2.0.0"
+    structured_output_mode = "json_schema"
+    system_instruction = (
+        "Create a production-ready voice-over script from the supplied durable production "
+        "plan. Return only one JSON object matching production_script; do not use Markdown "
+        "or provider commentary. Write in the requested language and preserve one ordered "
+        "script scene per source scene, including source_scene_number and exact planned "
+        "durations. Narration must be clear, non-empty, subtitle-compatible, naturally paced, "
+        "and suitable for voice-over. Do not reference unavailable assets, imitate copyrighted "
+        "characters, present uncertain facts as certain, reveal hidden reasoning, or include "
+        "credentials, system details, executable content, shell commands, filesystem paths, "
+        "HTML, or fields outside the schema."
+    )
 
     def __init__(self, *, max_plan_bytes: int) -> None:
         if max_plan_bytes < 1:
@@ -44,20 +57,36 @@ class ScriptingPromptBuilder:
         )
         if len(user.encode("utf-8")) > self._max_plan_bytes:
             raise ValueError("production plan exceeds scripting prompt limit")
-        system = (
-            "Write a production-ready narration script from the supplied production plan. "
-            "Return exclusively one JSON object matching production_script. Preserve one "
-            "ordered script scene per source scene and its source_scene_number, language, "
-            "and exact scene durations. Narration must be useful and non-empty. Do not emit "
-            "markdown, executable HTML, shell commands, filesystem instructions, paths, "
-            "credentials, or commentary outside JSON."
-        )
-        schema = PlanningPromptBuilder._strict_schema(ProductionScript.model_json_schema())
+        schema = self._response_schema()
         if not isinstance(schema, dict):
             raise TypeError("production script schema must be an object")
         return ScriptingPrompt(
             version=self.scripting_prompt_version,
-            system=system,
+            system=self.system_instruction,
             user=user,
-            response_schema=cast(dict[str, object], schema),
+            response_schema=schema,
         )
+
+    @classmethod
+    def template_fingerprint(cls) -> str:
+        payload = {
+            "version": cls.scripting_prompt_version,
+            "structured_output_mode": cls.structured_output_mode,
+            "system_instruction": cls.system_instruction,
+            "response_schema": cls._response_schema(),
+        }
+        encoded = json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _response_schema() -> dict[str, object]:
+        schema = PlanningPromptBuilder._strict_schema(ProductionScript.model_json_schema())
+        if not isinstance(schema, dict):
+            raise TypeError("production script schema must be an object")
+        return cast(dict[str, object], schema)

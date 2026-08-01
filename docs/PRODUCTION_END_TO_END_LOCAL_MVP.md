@@ -7,6 +7,11 @@ hasta un MP4 validado. ORION sigue siendo una herramienta personal para Windows:
 no es SaaS, no expone un API público, no usa workers remotos y no incorpora
 frontend, autenticación, pagos ni cloud.
 
+Desde Fase 6C, solo SCRIPTING puede configurarse explícitamente con OpenRouter.
+El default continúa siendo `simulated`; una key sola no autoriza gasto y el
+modo local conserva imagen, video, narración, música y SFX simulados. La
+activación controlada está documentada en `PRODUCTION_OPENROUTER_SCRIPTING.md`.
+
 `local_simulated_e2e` usa contenido creativo simulado y determinista para probar
 la integración técnica. Ese contenido no representa calidad final de IA.
 

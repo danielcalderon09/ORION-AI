@@ -77,6 +77,10 @@ class ScriptingProviderUnavailableError(ScriptingProviderError):
     pass
 
 
+class ScriptingProviderUncertainError(ScriptingProviderError):
+    """A possibly billable submission cannot be safely repeated automatically."""
+
+
 class ScriptingProviderResponseError(ScriptingProviderError):
     pass
 

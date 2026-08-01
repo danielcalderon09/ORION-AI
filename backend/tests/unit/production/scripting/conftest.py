@@ -1,5 +1,6 @@
 """Shared deterministic scripting fixtures."""
 
+import hashlib
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -64,6 +65,7 @@ def scripting_command_context():
         command_id=COMMAND_ID,
         stage=ProductionStage.SCRIPTING,
         attempt_number=1,
+        job_prompt="Explain a solar eclipse",
         job_configuration=command.configuration_snapshot,
         input_artifact_ids=command.input_artifact_ids,
         workspace_relative_path=f"production/{JOB_ID}/scripting/attempt-1",
@@ -79,6 +81,9 @@ def scripting_request(production_plan) -> ScriptingProviderRequest:
         command_id=COMMAND_ID,
         correlation_id=JOB_ID,
         attempt_number=1,
+        source_prompt_sha256=hashlib.sha256(b"Explain a solar eclipse").hexdigest(),
+        source_plan_artifact_id=PLAN_ARTIFACT_ID,
+        source_plan_sha256="a" * 64,
         plan=production_plan,
         configuration=ScriptingConfiguration(tone="calm"),
         language="en",

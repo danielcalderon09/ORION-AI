@@ -1,5 +1,18 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 6C
+
+SCRIPTING conserva su stage y su contrato `ProductionScript 1.0.0`, pero ahora
+puede seleccionar explícitamente un adaptador OpenRouter controlado. `simulated`
+sigue siendo el default; no hay key, modelo permanente ni autorización
+facturable comprometidos. El adapter usa JSON Schema estricto, fingerprint
+determinista, checkpoint `prepared`/`submitting` previo al transporte y bloquea
+para siempre el reenvío automático de una entrega `uncertain`.
+
+Toda prueba usa transports falsos. No se hizo request real ni cobro, y los
+providers de imagen, video, voz, música y SFX siguen simulados. Detalles en
+`PRODUCTION_OPENROUTER_SCRIPTING.md`.
+
 ## Estado posterior a Fase 6A
 
 ORION dispone de un MVP local end-to-end explícito. `local_simulated_e2e` crea

@@ -1,5 +1,6 @@
 """Durable, provider-driven SCRIPTING stage handler."""
 
+import hashlib
 from collections.abc import Callable
 from datetime import datetime
 from uuid import UUID
@@ -41,6 +42,7 @@ from backend.src.production.scripting.exceptions import (
     ScriptingProviderResponseError,
     ScriptingProviderTimeoutError,
     ScriptingProviderUnavailableError,
+    ScriptingProviderUncertainError,
 )
 from backend.src.production.scripting.models import validate_script_against_plan
 from backend.src.production.scripting.ports import (
@@ -81,15 +83,18 @@ class ScriptingHandler:
         started_at = self._aware_now()
         try:
             source = await self._reader.read_for_scripting(context=context)
-            configuration = scripting_configuration_from_snapshot(
-                command.configuration_snapshot
-            )
+            configuration = scripting_configuration_from_snapshot(command.configuration_snapshot)
             response = await self._provider.generate_script(
                 ScriptingProviderRequest(
                     job_id=command.job_id,
                     command_id=command.command_id,
                     correlation_id=context.correlation_id,
                     attempt_number=command.attempt_number,
+                    source_prompt_sha256=hashlib.sha256(
+                        context.job_prompt.encode("utf-8")
+                    ).hexdigest(),
+                    source_plan_artifact_id=source.artifact_id,
+                    source_plan_sha256=source.sha256,
                     plan=source.plan,
                     configuration=configuration,
                     language=source.plan.language,
@@ -119,6 +124,7 @@ class ScriptingHandler:
             ProductionPlanVersionError,
             ScriptingProviderConfigurationError,
             ScriptingProviderAuthenticationError,
+            ScriptingProviderUncertainError,
             ValidationError,
         ) as exc:
             return self._failure(
@@ -163,6 +169,9 @@ class ScriptingHandler:
             "input_tokens": response.input_tokens,
             "output_tokens": response.output_tokens,
             "total_tokens": response.total_tokens,
+            "reported_cost_usd": (
+                str(response.reported_cost_usd) if response.reported_cost_usd is not None else None
+            ),
             "latency_ms": response.latency_ms,
             "scene_count": len(script.scenes),
         }
@@ -244,6 +253,7 @@ class ScriptingHandler:
             (ScriptingProviderRateLimitError, "scripting_provider_rate_limit"),
             (ScriptingProviderUnavailableError, "scripting_provider_unavailable"),
             (ScriptingProviderAuthenticationError, "scripting_provider_authentication"),
+            (ScriptingProviderUncertainError, "scripting_provider_uncertain"),
             (ScriptingProviderConfigurationError, "scripting_provider_configuration"),
             (ScriptingProviderContractError, "scripting_provider_contract"),
             (ScriptingProviderResponseError, "scripting_provider_response"),

@@ -53,6 +53,11 @@ La configuración de ejecución reutiliza `local_mvp_settings()` del CLI. Todos
 los providers continúan simulados y el renderer continúa siendo FFmpeg, sin
 duplicar esa política en la UI.
 
+Fase 6C permite que la configuración tipada del backend seleccione OpenRouter
+solo para SCRIPTING. La UI no cambia: no solicita ni guarda credenciales en
+QSettings y arranca sin key en el modo `simulated` predeterminado. Una
+configuración OpenRouter incompleta falla cerrada con un mensaje backend seguro.
+
 ## Ventana principal
 
 La ventana `ORION AI` incluye:

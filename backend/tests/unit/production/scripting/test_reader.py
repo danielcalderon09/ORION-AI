@@ -41,8 +41,7 @@ def candidate(content: bytes, *, path: str | None = None, **updates):
     values = {
         "artifact_id": PLAN_ARTIFACT_ID,
         "job_id": JOB_ID,
-        "relative_path": path
-        or f"production/{JOB_ID}/planning/attempt-1/production-plan.json",
+        "relative_path": path or f"production/{JOB_ID}/planning/attempt-1/production-plan.json",
         "size_bytes": len(content),
         "sha256": hashlib.sha256(content).hexdigest(),
         "provider": "orion-simulated",

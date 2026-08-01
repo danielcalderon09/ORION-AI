@@ -37,9 +37,7 @@ async def test_valid_script_is_canonical_and_maps_every_plan_scene(scripting_req
         ("heading", "C:\\private\\script.txt"),
     ],
 )
-async def test_scene_rejects_empty_or_executable_content(
-    scripting_request, field, value
-) -> None:
+async def test_scene_rejects_empty_or_executable_content(scripting_request, field, value) -> None:
     script = (await SimulatedScriptingProvider().generate_script(scripting_request)).script
     payload = script.scenes[0].model_dump()
     payload[field] = value
@@ -80,7 +78,7 @@ def test_prompt_is_deterministic_strict_and_excludes_internal_metadata(
     builder = ScriptingPromptBuilder(max_plan_bytes=100_000)
     first = builder.build(scripting_request)
     assert first == builder.build(scripting_request)
-    assert first.version == "1.0.0"
+    assert first.version == "2.0.0"
     assert first.response_schema["additionalProperties"] is False
     assert "metadata" not in json.loads(first.user)["source_plan"]
     with pytest.raises(ValueError, match="prompt limit"):

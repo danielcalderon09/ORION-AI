@@ -1,5 +1,6 @@
 """Composition root for Production HTTP use cases and simulated runtime."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -258,6 +259,16 @@ from backend.src.production.scripting.artifact_writer import LocalScriptingArtif
 from backend.src.production.scripting.exceptions import (
     ScriptingProviderConfigurationError,
 )
+from backend.src.production.scripting.openrouter_billable_gate import (
+    OpenRouterScriptingBillablePolicy,
+)
+from backend.src.production.scripting.openrouter_reconciliation import (
+    OpenRouterScriptingRequestReconciler,
+)
+from backend.src.production.scripting.openrouter_request_store import (
+    LocalOpenRouterScriptingRequestStore,
+    OpenRouterScriptingRequestStore,
+)
 from backend.src.production.scripting.ports import ScriptingProvider
 from backend.src.production.scripting.prompt_builder import ScriptingPromptBuilder
 from backend.src.production.scripting.providers import SimulatedScriptingProvider
@@ -382,6 +393,8 @@ class ProductionContainer:
     worker: ProductionWorker
     planning_provider: PlanningProvider
     scripting_provider: ScriptingProvider
+    openrouter_scripting_request_store: OpenRouterScriptingRequestStore | None
+    openrouter_scripting_reconciler: OpenRouterScriptingRequestReconciler | None
     scene_planning_provider: ScenePlanningProvider
     visual_asset_planning_provider: VisualAssetPlanningProvider
     image_acquisition_provider: ImageAcquisitionProvider
@@ -457,9 +470,19 @@ def build_production_container(settings: Settings) -> ProductionContainer:
     persister = ThreadedRuntimeDecisionPersister(store)
     try:
         planning_provider = _build_planning_provider(settings)
+        openrouter_scripting_request_store = (
+            LocalOpenRouterScriptingRequestStore(
+                settings.PROJECTS_DIR,
+                max_bytes=settings.ORION_SCRIPTING_MAX_REQUEST_RECORD_BYTES,
+            )
+            if scripting_factory is not None
+            else None
+        )
         scripting_provider = _build_scripting_provider(
             settings,
             openrouter_factory=scripting_factory,
+            request_store=openrouter_scripting_request_store,
+            clock=clock,
         )
         scene_planning_provider = _build_scene_planning_provider(
             settings,
@@ -1058,6 +1081,12 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         worker=worker,
         planning_provider=planning_provider,
         scripting_provider=scripting_provider,
+        openrouter_scripting_request_store=openrouter_scripting_request_store,
+        openrouter_scripting_reconciler=(
+            OpenRouterScriptingRequestReconciler(openrouter_scripting_request_store)
+            if openrouter_scripting_request_store is not None
+            else None
+        ),
         scene_planning_provider=scene_planning_provider,
         visual_asset_planning_provider=visual_asset_planning_provider,
         image_acquisition_provider=image_acquisition_provider,
@@ -1157,11 +1186,32 @@ def _resolve_scripting_provider_factory(
         raise ScriptingProviderConfigurationError("scripting provider credential is missing")
     if not settings.ORION_SCRIPTING_MODEL.strip():
         raise ScriptingProviderConfigurationError("scripting model is missing")
+    if not settings.ORION_SCRIPTING_ALLOW_BILLABLE_REQUESTS:
+        raise ScriptingProviderConfigurationError(
+            "OpenRouter scripting requires explicit billable authorization"
+        )
+    if settings.ORION_SCRIPTING_ESTIMATED_COST_USD is None:
+        raise ScriptingProviderConfigurationError("OpenRouter scripting cost estimate is missing")
+    if settings.ORION_SCRIPTING_MAX_ESTIMATED_COST_USD is None:
+        raise ScriptingProviderConfigurationError(
+            "OpenRouter scripting cost authorization is missing"
+        )
     _validate_https_provider_url(
         settings.ORION_SCRIPTING_BASE_URL,
         error_type=ScriptingProviderConfigurationError,
         message="scripting base URL is invalid",
     )
+    parsed_url = urlsplit(settings.ORION_SCRIPTING_BASE_URL)
+    if (
+        (parsed_url.hostname or "").lower() != "openrouter.ai"
+        or parsed_url.port is not None
+        or parsed_url.path.rstrip("/") != "/api/v1"
+        or parsed_url.query
+        or parsed_url.fragment
+    ):
+        raise ScriptingProviderConfigurationError(
+            "scripting base URL must be the controlled OpenRouter endpoint"
+        )
     return load_openrouter_scripting_provider()
 
 
@@ -1169,16 +1219,26 @@ def _build_scripting_provider(
     settings: Settings,
     *,
     openrouter_factory: ScriptingProviderFactory | None,
+    request_store: OpenRouterScriptingRequestStore | None,
+    clock: Callable[[], datetime],
 ) -> ScriptingProvider:
     if openrouter_factory is None:
         return SimulatedScriptingProvider()
     if settings.ORION_SCRIPTING_API_KEY is None:
         raise ScriptingProviderConfigurationError("scripting provider credential is missing")
+    if request_store is None:
+        raise ScriptingProviderConfigurationError("OpenRouter scripting request store is missing")
     return openrouter_factory(
         api_key=settings.ORION_SCRIPTING_API_KEY.get_secret_value(),
         model=settings.ORION_SCRIPTING_MODEL,
         prompt_builder=ScriptingPromptBuilder(
             max_plan_bytes=settings.ORION_SCRIPTING_MAX_PLAN_BYTES
+        ),
+        request_store=request_store,
+        billable_policy=OpenRouterScriptingBillablePolicy(
+            allow_billable_requests=settings.ORION_SCRIPTING_ALLOW_BILLABLE_REQUESTS,
+            estimated_cost_usd=settings.ORION_SCRIPTING_ESTIMATED_COST_USD,
+            maximum_authorized_cost_usd=(settings.ORION_SCRIPTING_MAX_ESTIMATED_COST_USD),
         ),
         base_url=settings.ORION_SCRIPTING_BASE_URL,
         timeout_seconds=settings.ORION_SCRIPTING_TIMEOUT_SECONDS,
@@ -1186,8 +1246,10 @@ def _build_scripting_provider(
         retry_base_delay_seconds=settings.ORION_SCRIPTING_RETRY_BASE_DELAY_SECONDS,
         max_output_tokens=settings.ORION_SCRIPTING_MAX_OUTPUT_TOKENS,
         temperature=settings.ORION_SCRIPTING_TEMPERATURE,
+        max_response_bytes=settings.ORION_SCRIPTING_MAX_RESPONSE_BYTES,
         http_referer=settings.ORION_OPENROUTER_HTTP_REFERER,
         app_title=settings.ORION_OPENROUTER_APP_TITLE,
+        clock=clock,
     )
 
 

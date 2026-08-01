@@ -178,6 +178,14 @@ PySide6. Muestra trabajos durables, progreso real por etapa, resume y el MP4
 validado sin ejecutar FFmpeg ni modificar manifests desde la interfaz. Consulta
 [`docs/ORION_DESKTOP_UI.md`](docs/ORION_DESKTOP_UI.md).
 
+SCRIPTING admite ahora el provider cerrado `openrouter` como opt-in controlado,
+manteniendo `simulated` como default. La integración usa salida JSON Schema
+estricta, checkpoint durable previo a cualquier solicitud, coste Decimal y una
+regla `uncertain` que impide reenvíos automáticos. La configuración comprometida
+no contiene key, modelo ni autorización de gasto; esta fase se verificó
+exclusivamente con transports falsos. Consulta
+[`docs/PRODUCTION_OPENROUTER_SCRIPTING.md`](docs/PRODUCTION_OPENROUTER_SCRIPTING.md).
+
 ```text
 pip install -e ".[desktop]"
 python -m backend.src.desktop

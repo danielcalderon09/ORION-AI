@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
@@ -68,6 +69,9 @@ class ScriptingProviderRequest(ContractModel):
     command_id: UUID
     correlation_id: UUID
     attempt_number: int = Field(ge=1)
+    source_prompt_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source_plan_artifact_id: UUID
+    source_plan_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     plan: ProductionPlan
     configuration: ScriptingConfiguration
     language: str = Field(min_length=2, max_length=16)
@@ -84,9 +88,22 @@ class ScriptingProviderResponse(ContractModel):
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
     total_tokens: int | None = Field(default=None, ge=0)
+    reported_cost_usd: Decimal | None = Field(
+        default=None,
+        ge=0,
+        max_digits=24,
+        decimal_places=9,
+    )
     latency_ms: float = Field(ge=0)
     finish_reason: str | None = Field(default=None, max_length=100)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("reported_cost_usd", mode="before")
+    @classmethod
+    def reject_float_money(cls, value: Any) -> Any:
+        if isinstance(value, float):
+            raise ValueError("reported scripting cost must not use float")
+        return value
 
     @field_validator("metadata")
     @classmethod

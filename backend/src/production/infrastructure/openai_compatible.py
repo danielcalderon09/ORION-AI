@@ -3,6 +3,7 @@
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -143,6 +144,7 @@ class OpenAICompatibleResponsesClient:
                         body = json.loads(
                             content.decode("utf-8", errors="strict"),
                             parse_constant=_reject_constant,
+                            parse_float=Decimal,
                             object_pairs_hook=_reject_duplicate_keys,
                         )
                     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:

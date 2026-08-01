@@ -44,15 +44,20 @@ class Settings(BaseSettings):
     ORION_PLANNING_ORPHAN_MIN_AGE_SECONDS: float = 300.0
     ORION_PLANNING_ORPHAN_ACTION: Literal["delete", "quarantine"] = "quarantine"
     ORION_PLANNING_QUARANTINE_DIR: str = "production-quarantine"
-    ORION_SCRIPTING_PROVIDER: str = "simulated"
-    ORION_SCRIPTING_MODEL: str = "openai/gpt-4.1-mini"
+    ORION_SCRIPTING_PROVIDER: Literal["simulated", "openrouter"] = "simulated"
+    ORION_SCRIPTING_MODEL: str = ""
     ORION_SCRIPTING_API_KEY: SecretStr | None = None
     ORION_SCRIPTING_BASE_URL: str = "https://openrouter.ai/api/v1"
-    ORION_SCRIPTING_TIMEOUT_SECONDS: float = 30.0
-    ORION_SCRIPTING_MAX_TRANSPORT_ATTEMPTS: int = 2
+    ORION_SCRIPTING_ALLOW_BILLABLE_REQUESTS: bool = False
+    ORION_SCRIPTING_ESTIMATED_COST_USD: Decimal | None = None
+    ORION_SCRIPTING_MAX_ESTIMATED_COST_USD: Decimal | None = None
+    ORION_SCRIPTING_TIMEOUT_SECONDS: float = 120.0
+    ORION_SCRIPTING_MAX_TRANSPORT_ATTEMPTS: Literal[1] = 1
     ORION_SCRIPTING_RETRY_BASE_DELAY_SECONDS: float = 0.25
     ORION_SCRIPTING_MAX_OUTPUT_TOKENS: int = 8192
     ORION_SCRIPTING_TEMPERATURE: float = 0.2
+    ORION_SCRIPTING_MAX_RESPONSE_BYTES: int = 2_000_000
+    ORION_SCRIPTING_MAX_REQUEST_RECORD_BYTES: int = 2_000_000
     ORION_SCRIPTING_MAX_PLAN_BYTES: int = 1_000_000
     ORION_SCRIPTING_MAX_SCRIPT_BYTES: int = 2_000_000
     ORION_SCENE_PLANNING_PROVIDER: str = "simulated"
@@ -276,6 +281,29 @@ class Settings(BaseSettings):
         return value
 
     @field_validator(
+        "ORION_SCRIPTING_API_KEY",
+        "ORION_SCRIPTING_ESTIMATED_COST_USD",
+        "ORION_SCRIPTING_MAX_ESTIMATED_COST_USD",
+        mode="before",
+    )
+    @classmethod
+    def empty_scripting_secret_or_cost_is_unset(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator(
+        "ORION_SCRIPTING_ESTIMATED_COST_USD",
+        "ORION_SCRIPTING_MAX_ESTIMATED_COST_USD",
+        mode="before",
+    )
+    @classmethod
+    def reject_float_scripting_cost(cls, value: Any) -> Any:
+        if isinstance(value, float):
+            raise ValueError("OpenRouter scripting cost must not use float")
+        return value
+
+    @field_validator(
         "ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD",
         mode="before",
     )
@@ -347,12 +375,25 @@ class Settings(BaseSettings):
             raise ValueError("ORION_PLANNING_MAX_OUTPUT_TOKENS is outside safe limits")
         if not 0 <= self.ORION_PLANNING_TEMPERATURE <= 2:
             raise ValueError("ORION_PLANNING_TEMPERATURE must be between 0 and 2")
-        if not 1 <= self.ORION_SCRIPTING_MAX_TRANSPORT_ATTEMPTS <= 5:
-            raise ValueError("ORION_SCRIPTING_MAX_TRANSPORT_ATTEMPTS must be between 1 and 5")
+        if self.ORION_SCRIPTING_MAX_TRANSPORT_ATTEMPTS != 1:
+            raise ValueError("OpenRouter scripting does not permit automatic retries")
         if not 1 <= self.ORION_SCRIPTING_MAX_OUTPUT_TOKENS <= 100_000:
             raise ValueError("ORION_SCRIPTING_MAX_OUTPUT_TOKENS is outside safe limits")
         if not 0 <= self.ORION_SCRIPTING_TEMPERATURE <= 2:
             raise ValueError("ORION_SCRIPTING_TEMPERATURE must be between 0 and 2")
+        for scripting_cost in (
+            self.ORION_SCRIPTING_ESTIMATED_COST_USD,
+            self.ORION_SCRIPTING_MAX_ESTIMATED_COST_USD,
+        ):
+            if scripting_cost is not None and scripting_cost <= 0:
+                raise ValueError("OpenRouter scripting costs must be positive")
+        if (
+            self.ORION_SCRIPTING_ESTIMATED_COST_USD is not None
+            and self.ORION_SCRIPTING_MAX_ESTIMATED_COST_USD is not None
+            and self.ORION_SCRIPTING_ESTIMATED_COST_USD
+            > self.ORION_SCRIPTING_MAX_ESTIMATED_COST_USD
+        ):
+            raise ValueError("OpenRouter scripting estimate exceeds authorization")
         if not 1 <= self.ORION_SCENE_PLANNING_MAX_TRANSPORT_ATTEMPTS <= 5:
             raise ValueError("ORION_SCENE_PLANNING_MAX_TRANSPORT_ATTEMPTS must be between 1 and 5")
         if not 1 <= self.ORION_SCENE_PLANNING_MAX_OUTPUT_TOKENS <= 100_000:
@@ -370,6 +411,8 @@ class Settings(BaseSettings):
         for name, value in {
             "ORION_SCRIPTING_MAX_PLAN_BYTES": self.ORION_SCRIPTING_MAX_PLAN_BYTES,
             "ORION_SCRIPTING_MAX_SCRIPT_BYTES": self.ORION_SCRIPTING_MAX_SCRIPT_BYTES,
+            "ORION_SCRIPTING_MAX_RESPONSE_BYTES": self.ORION_SCRIPTING_MAX_RESPONSE_BYTES,
+            "ORION_SCRIPTING_MAX_REQUEST_RECORD_BYTES": self.ORION_SCRIPTING_MAX_REQUEST_RECORD_BYTES,
             "ORION_SCENE_PLANNING_MAX_SCRIPT_BYTES": self.ORION_SCENE_PLANNING_MAX_SCRIPT_BYTES,
             "ORION_SCENE_PLANNING_MAX_PLAN_BYTES": self.ORION_SCENE_PLANNING_MAX_PLAN_BYTES,
             "ORION_VISUAL_ASSET_PLANNING_MAX_SCENE_PLAN_BYTES": self.ORION_VISUAL_ASSET_PLANNING_MAX_SCENE_PLAN_BYTES,

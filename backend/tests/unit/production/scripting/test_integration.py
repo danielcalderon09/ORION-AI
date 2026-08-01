@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -44,7 +45,7 @@ def fake_plan_payload():
             {
                 "scene_number": index,
                 "title": f"Scene {index}",
-                "narration": f"Narration {index}",
+                "narration": f"Useful narration explains eclipse scene number {index} clearly.",
                 "visual_description": f"Visual {index}",
                 "image_prompt": f"Image {index}",
                 "motion_instruction": "Slow zoom",
@@ -229,6 +230,14 @@ async def test_fake_real_provider_combinations_complete_without_network(
         ORION_PLANNING_API_KEY="fake-only" if planning_name == "openrouter" else None,
         ORION_SCRIPTING_PROVIDER=scripting_name,
         ORION_SCRIPTING_API_KEY="fake-only" if scripting_name == "openrouter" else None,
+        ORION_SCRIPTING_MODEL="fake/scripting" if scripting_name == "openrouter" else "",
+        ORION_SCRIPTING_ALLOW_BILLABLE_REQUESTS=scripting_name == "openrouter",
+        ORION_SCRIPTING_ESTIMATED_COST_USD=(
+            Decimal("0.01") if scripting_name == "openrouter" else None
+        ),
+        ORION_SCRIPTING_MAX_ESTIMATED_COST_USD=(
+            Decimal("0.10") if scripting_name == "openrouter" else None
+        ),
     )
     container = build_production_container(settings)
     ProductionBase.metadata.create_all(container.engine)
