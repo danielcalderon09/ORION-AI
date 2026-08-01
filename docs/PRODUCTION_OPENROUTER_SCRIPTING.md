@@ -36,6 +36,25 @@ explicit model, billable authorization, positive Decimal estimate, and Decimal
 cost ceiling are all valid. The estimate may not exceed the ceiling. An API
 key by itself never authorizes spending. There is no fallback to simulated.
 
+### Local runtime readiness (Phase 6C.2)
+
+The canonical environment variable for the scripting credential is
+`ORION_SCRIPTING_API_KEY`; ORION does not introduce a second secret alias. A
+local readiness check receives only whether that setting is configured. It
+does not extract, print, serialize, hash, validate remotely, or send the secret.
+
+When `ORION_SCRIPTING_PROVIDER=simulated`, the existing simulated provider is
+selected without requiring a key or model. When it is explicitly set to
+`openrouter`, the local check reports a clear error if
+`ORION_SCRIPTING_API_KEY` is absent or `ORION_SCRIPTING_MODEL` is empty. Passing
+this readiness check does not contact OpenRouter and does not authorize a
+billable operation: the existing explicit billable flag, Decimal estimate,
+cost ceiling, durable checkpoint, and transport gate remain additional
+requirements.
+
+Phase 6C.2 made no HTTP request, performed no connection or balance test, and
+did not read or modify the owner's `.env`. It consumed no free or paid credit.
+
 No model is committed. Phase 6C.1 proposes Gemini 2.5 Flash Lite as the
 economical controlled-test candidate and GPT-4.1 Mini as the quality fallback,
 but ADR-020 remains `PROPOSED` because Spanish quality is untested. See

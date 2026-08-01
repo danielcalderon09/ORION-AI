@@ -276,6 +276,9 @@ from backend.src.production.scripting.providers.availability import (
     ScriptingProviderFactory,
     load_openrouter_scripting_provider,
 )
+from backend.src.production.scripting.runtime_readiness import (
+    require_scripting_runtime_readiness,
+)
 from backend.src.production.speech_generation.audio_store import (
     FilesystemSpeechAudioStore,
 )
@@ -1175,17 +1178,13 @@ def _build_planning_provider(settings: Settings) -> PlanningProvider:
 def _resolve_scripting_provider_factory(
     settings: Settings,
 ) -> ScriptingProviderFactory | None:
-    provider_name = settings.ORION_SCRIPTING_PROVIDER.strip().lower()
-    if provider_name == "simulated":
+    readiness = require_scripting_runtime_readiness(
+        provider=settings.ORION_SCRIPTING_PROVIDER,
+        api_key_configured=settings.ORION_SCRIPTING_API_KEY is not None,
+        model=settings.ORION_SCRIPTING_MODEL,
+    )
+    if readiness.configured_provider == "simulated":
         return None
-    if provider_name != "openrouter":
-        raise ScriptingProviderConfigurationError(
-            f"unsupported scripting provider: {provider_name!r}"
-        )
-    if settings.ORION_SCRIPTING_API_KEY is None:
-        raise ScriptingProviderConfigurationError("scripting provider credential is missing")
-    if not settings.ORION_SCRIPTING_MODEL.strip():
-        raise ScriptingProviderConfigurationError("scripting model is missing")
     if not settings.ORION_SCRIPTING_ALLOW_BILLABLE_REQUESTS:
         raise ScriptingProviderConfigurationError(
             "OpenRouter scripting requires explicit billable authorization"
