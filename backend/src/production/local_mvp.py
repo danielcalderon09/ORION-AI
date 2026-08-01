@@ -47,7 +47,7 @@ class LocalMvpRequest(ContractModel):
     mode: Literal["local_simulated_e2e"] = LOCAL_MVP_MODE
     prompt: str | None = Field(default=None, max_length=10_000)
     title: str | None = Field(default=None, min_length=1, max_length=300)
-    target_duration_seconds: int = Field(default=8, ge=4, le=30)
+    target_duration_seconds: int = Field(default=8, ge=4, le=60)
     aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
     project_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
     resume_job_id: UUID | None = None
@@ -426,8 +426,8 @@ def local_mvp_profile(
     target_duration_seconds: int = 8,
     aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16",
 ) -> dict[str, object]:
-    if not 4 <= target_duration_seconds <= 30:
-        raise ValueError("target duration must be between 4 and 30 seconds")
+    if not 4 <= target_duration_seconds <= 60:
+        raise ValueError("target duration must be between 4 and 60 seconds")
     dimensions = {
         "9:16": (360, 640),
         "16:9": (640, 360),

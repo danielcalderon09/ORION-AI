@@ -34,7 +34,7 @@ def _parser() -> argparse.ArgumentParser:
         "--target-duration",
         type=int,
         default=8,
-        help="Target duration in seconds (4-30; default: 8)",
+        help="Target duration in seconds (4-60; default: 8)",
     )
     parser.add_argument(
         "--aspect-ratio",
@@ -52,7 +52,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _mvp_settings() -> Settings:
+def local_mvp_settings() -> Settings:
     discovered = Settings()
     database_url = sqlite_url_from_path(discovered.ORION_HOME / "orion.db")
     return Settings(
@@ -84,7 +84,7 @@ def _print_progress(item: LocalMvpProgress) -> None:
 
 
 async def _run(args: argparse.Namespace) -> int:
-    settings = _mvp_settings()
+    settings = local_mvp_settings()
     container = build_production_container(settings)
     try:
         await ensure_production_schema(settings, container.engine)
@@ -170,4 +170,4 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["main"]
+__all__ = ["local_mvp_settings", "main"]

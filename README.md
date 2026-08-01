@@ -173,6 +173,16 @@ final. Consulta
 python -m backend.src.production.cli.generate_video --prompt "Explica en un video corto tres curiosidades sobre Marte." --mode local_simulated_e2e
 ```
 
+El primer cliente gráfico nativo reutiliza exactamente ese backend mediante
+PySide6. Muestra trabajos durables, progreso real por etapa, resume y el MP4
+validado sin ejecutar FFmpeg ni modificar manifests desde la interfaz. Consulta
+[`docs/ORION_DESKTOP_UI.md`](docs/ORION_DESKTOP_UI.md).
+
+```text
+pip install -e ".[desktop]"
+python -m backend.src.desktop
+```
+
 La infraestructura de publicacion segura es un bounded context independiente y desactivado por
 defecto. Publica temporalmente solo bytes ya verificados, con manifiesto durable, expiracion,
 recovery, cleanup y reconciliacion de solo lectura. Incluye adaptadores `null` y filesystem de
