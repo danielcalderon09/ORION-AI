@@ -1,5 +1,15 @@
 # Plan maestro de ORION: Prompt a video y Video a clips
 
+## Estado posterior a Fase 6C.1
+
+La evaluación oficial pública de 336 modelos OpenRouter propone Gemini 2.5
+Flash Lite como candidato económico, GPT-4.1 Mini como fallback de calidad y
+Gemma 4 26B A4B `:free` solo para experimentación. ADR-020 permanece
+`PROPOSED`: no se probó calidad española, no se activó modelo, no se leyó key y
+no se consumieron créditos. El snapshot Decimal reproducible se revisa antes
+del 2026-09-01. Detalles en
+`PRODUCTION_OPENROUTER_SCRIPTING_MODEL_SELECTION.md`.
+
 ## Estado posterior a Fase 6C
 
 SCRIPTING conserva su stage y su contrato `ProductionScript 1.0.0`, pero ahora

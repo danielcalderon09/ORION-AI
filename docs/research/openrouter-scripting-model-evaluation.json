@@ -1,0 +1,1286 @@
+{
+  "cost_estimates": [
+    {
+      "currency": "USD",
+      "durations": {
+        "15": {
+          "high": "0.0006600",
+          "low": "0.0003100"
+        },
+        "30": {
+          "high": "0.0007800",
+          "low": "0.0003500"
+        },
+        "60": {
+          "high": "0.0010200",
+          "low": "0.0004500"
+        }
+      },
+      "model_id": "google/gemini-2.5-flash-lite",
+      "one_hundred_30_second": {
+        "high": "0.0780000",
+        "low": "0.0350000"
+      },
+      "one_thousand_30_second": {
+        "high": "0.7800000",
+        "low": "0.3500000"
+      }
+    },
+    {
+      "currency": "USD",
+      "durations": {
+        "15": {
+          "high": "0.0026400",
+          "low": "0.0012400"
+        },
+        "30": {
+          "high": "0.0031200",
+          "low": "0.0014000"
+        },
+        "60": {
+          "high": "0.0040800",
+          "low": "0.0018000"
+        }
+      },
+      "model_id": "openai/gpt-4.1-mini",
+      "one_hundred_30_second": {
+        "high": "0.3120000",
+        "low": "0.1400000"
+      },
+      "one_thousand_30_second": {
+        "high": "3.1200000",
+        "low": "1.4000000"
+      }
+    },
+    {
+      "currency": "USD",
+      "durations": {
+        "15": {
+          "high": "0.00031797000",
+          "low": "0.00014933250"
+        },
+        "30": {
+          "high": "0.00037588500",
+          "low": "0.00016863750"
+        },
+        "60": {
+          "high": "0.00049171500",
+          "low": "0.00021690000"
+        }
+      },
+      "model_id": "qwen/qwen3-30b-a3b-instruct-2507",
+      "one_hundred_30_second": {
+        "high": "0.03758850000",
+        "low": "0.01686375000"
+      },
+      "one_thousand_30_second": {
+        "high": "0.37588500000",
+        "low": "0.16863750000"
+      }
+    },
+    {
+      "currency": "USD",
+      "durations": {
+        "15": {
+          "high": "0.000455000",
+          "low": "0.000217500"
+        },
+        "30": {
+          "high": "0.000515000",
+          "low": "0.000237500"
+        },
+        "60": {
+          "high": "0.000635000",
+          "low": "0.000287500"
+        }
+      },
+      "model_id": "mistralai/mistral-small-3.2-24b-instruct",
+      "one_hundred_30_second": {
+        "high": "0.051500000",
+        "low": "0.023750000"
+      },
+      "one_thousand_30_second": {
+        "high": "0.515000000",
+        "low": "0.237500000"
+      }
+    },
+    {
+      "currency": "USD",
+      "durations": {
+        "15": {
+          "high": "0",
+          "low": "0"
+        },
+        "30": {
+          "high": "0",
+          "low": "0"
+        },
+        "60": {
+          "high": "0",
+          "low": "0"
+        }
+      },
+      "model_id": "google/gemma-4-26b-a4b-it:free",
+      "one_hundred_30_second": {
+        "high": "0",
+        "low": "0"
+      },
+      "one_thousand_30_second": {
+        "high": "0",
+        "low": "0"
+      }
+    },
+    {
+      "currency": "USD",
+      "durations": {
+        "15": {
+          "high": "0",
+          "low": "0"
+        },
+        "30": {
+          "high": "0",
+          "low": "0"
+        },
+        "60": {
+          "high": "0",
+          "low": "0"
+        }
+      },
+      "model_id": "openai/gpt-oss-20b:free",
+      "one_hundred_30_second": {
+        "high": "0",
+        "low": "0"
+      },
+      "one_thousand_30_second": {
+        "high": "0",
+        "low": "0"
+      }
+    }
+  ],
+  "discovered_model_count": 336,
+  "eligibility_rules": [
+    "Public current OpenRouter model identifier",
+    "Text input and text output",
+    "response_format or structured_outputs in public metadata",
+    "At least 16000 context tokens",
+    "Public Decimal-safe token pricing, including explicit zero for free variants",
+    "No expiration or deprecation date",
+    "No account-exclusive or monthly-commitment requirement"
+  ],
+  "eligible_model_count": 283,
+  "excluded_models": [
+    {
+      "model_id": "openrouter/free",
+      "reason": "Random model selection conflicts with deterministic fingerprints, reproducibility, and stable recovery."
+    },
+    {
+      "model_id": "openai/gpt-5-mini",
+      "reason": "Mandatory reasoning and higher output price add cost for capabilities ORION does not need."
+    },
+    {
+      "model_id": "openai/gpt-5.1",
+      "reason": "Frontier reasoning price and capability are disproportionate to short scripting."
+    },
+    {
+      "model_id": "google/gemini-3.5-flash-lite",
+      "reason": "Mandatory reasoning and higher price provide no evidenced advantage for this use case over 2.5 Flash Lite."
+    },
+    {
+      "model_id": "mistralai/mistral-small-3.1-24b-instruct",
+      "reason": "Public catalog did not expose response_format or structured_outputs and a newer 3.2 release exists."
+    },
+    {
+      "model_id": "nvidia/nemotron-3-super-120b-a12b:free",
+      "reason": "Agentic/reasoning focus, free-tier fragility, and no Spanish evidence make it a weaker experiment candidate."
+    }
+  ],
+  "recommendation": {
+    "free_test_model_id": "google/gemma-4-26b-a4b-it:free",
+    "primary_economical_model_id": "google/gemini-2.5-flash-lite",
+    "quality_fallback_model_id": "openai/gpt-4.1-mini",
+    "rationale": "Gemini leads after confidence adjustment because it combines low cost, non-mandatory reasoning, five endpoint records, and current provider-specific structured-output observations. GPT-4.1 Mini is the quality fallback because its structured-output evidence is strongest but it costs more. Gemma is experimentation-only.",
+    "status": "proposed"
+  },
+  "researched_at": "2026-08-01T01:29:48Z",
+  "review_after": "2026-09-01",
+  "safe_metadata": {
+    "authenticated_endpoint_used": false,
+    "generation_endpoint_used": false,
+    "public_catalog_processed_in_memory": true,
+    "raw_catalog_persisted": false,
+    "selection_is_active": false
+  },
+  "schema_version": "1.0.0",
+  "scores": [
+    {
+      "categories": {
+        "availability_routing": {
+          "confidence": "0.9",
+          "confidence_adjustment": "0.095",
+          "evidence_source_ids": [
+            "S04",
+            "S09",
+            "S15"
+          ],
+          "final_weighted_contribution": "0.855",
+          "judgment": "Five endpoint records provide routing choice and all expose the required parameter.",
+          "penalty": "0",
+          "raw_score": "9.5",
+          "uncertainty": "ZDR and data-policy filters can narrow the route set.",
+          "weighted_contribution": "0.95"
+        },
+        "context_fit": {
+          "confidence": "1",
+          "confidence_adjustment": "0.0",
+          "evidence_source_ids": [
+            "S01",
+            "S09"
+          ],
+          "final_weighted_contribution": "0.5",
+          "judgment": "The context window greatly exceeds ORION's bounded prompt without affecting selection beyond full credit.",
+          "penalty": "0",
+          "raw_score": "10",
+          "uncertainty": "No additional credit is awarded for surplus context.",
+          "weighted_contribution": "0.5"
+        },
+        "cost": {
+          "confidence": "1",
+          "confidence_adjustment": "0.0",
+          "evidence_source_ids": [
+            "S01",
+            "S05",
+            "S09"
+          ],
+          "final_weighted_contribution": "1.8",
+          "judgment": "Public list prices are very low for the short schema-heavy request.",
+          "penalty": "0",
+          "raw_score": "9.0",
+          "uncertainty": "Future price changes and platform funding fees are outside the per-request estimate.",
+          "weighted_contribution": "1.8"
+        },
+        "latency_efficiency": {
+          "confidence": "0.9",
+          "confidence_adjustment": "0.095",
+          "evidence_source_ids": [
+            "S09"
+          ],
+          "final_weighted_contribution": "0.855",
+          "judgment": "Official page positions the model for ultra-low latency and publishes current provider observations; reasoning is optional.",
+          "penalty": "0",
+          "raw_score": "9.5",
+          "uncertainty": "Published rolling observations are not an ORION benchmark.",
+          "weighted_contribution": "0.95"
+        },
+        "spanish_scripting": {
+          "confidence": "0.55",
+          "confidence_adjustment": "0.73125",
+          "evidence_source_ids": [
+            "S01",
+            "S09"
+          ],
+          "final_weighted_contribution": "0.84375",
+          "judgment": "General instruction-following potential is credible, but no consulted OpenRouter evidence isolates Latin American Spanish creative writing.",
+          "penalty": "0.05",
+          "raw_score": "6.5",
+          "uncertainty": "Subjective Spanish hooks, idiom, pacing, and tone are untested.",
+          "weighted_contribution": "1.625"
+        },
+        "structured_output": {
+          "confidence": "0.95",
+          "confidence_adjustment": "0.1425",
+          "evidence_source_ids": [
+            "S01",
+            "S03",
+            "S09",
+            "S15"
+          ],
+          "final_weighted_contribution": "2.7075",
+          "judgment": "Explicit schema support across five endpoint records plus current provider-specific error observations is the strongest economical evidence.",
+          "penalty": "0",
+          "raw_score": "9.5",
+          "uncertainty": "Error rates vary by provider and were not measured with ORION's schema.",
+          "weighted_contribution": "2.85"
+        }
+      },
+      "confidence_adjustment": "1.06375",
+      "final_result": "7.56125",
+      "model_id": "google/gemini-2.5-flash-lite",
+      "raw_score": "9.0",
+      "risk_penalty": "0.05",
+      "weighted_score": "8.675"
+    },
+    {
+      "categories": {
+        "availability_routing": {
+          "confidence": "0.9",
+          "confidence_adjustment": "0.085",
+          "evidence_source_ids": [
+            "S04",
+            "S10",
+            "S16"
+          ],
+          "final_weighted_contribution": "0.765",
+          "judgment": "Three endpoint records across two provider organizations offer useful fallback diversity.",
+          "penalty": "0",
+          "raw_score": "8.5",
+          "uncertainty": "ZDR may remove first-party routes and leave fewer choices.",
+          "weighted_contribution": "0.85"
+        },
+        "context_fit": {
+          "confidence": "1",
+          "confidence_adjustment": "0.0",
+          "evidence_source_ids": [
+            "S01",
+            "S10"
+          ],
+          "final_weighted_contribution": "0.5",
+          "judgment": "Context is far beyond ORION's requirement and receives capped full credit.",
+          "penalty": "0",
+          "raw_score": "10",
+          "uncertainty": "Surplus context has no extra value.",
+          "weighted_contribution": "0.5"
+        },
+        "cost": {
+          "confidence": "1",
+          "confidence_adjustment": "0.0",
+          "evidence_source_ids": [
+            "S01",
+            "S05",
+            "S10"
+          ],
+          "final_weighted_contribution": "1.4",
+          "judgment": "Absolute script cost remains small but is several times the economical candidates.",
+          "penalty": "0.1",
+          "raw_score": "7.5",
+          "uncertainty": "Prices are dated list-price snapshots.",
+          "weighted_contribution": "1.5"
+        },
+        "latency_efficiency": {
+          "confidence": "0.9",
+          "confidence_adjustment": "0.085",
+          "evidence_source_ids": [
+            "S10"
+          ],
+          "final_weighted_contribution": "0.765",
+          "judgment": "Official page publishes low-latency positioning and current provider observations without mandatory reasoning.",
+          "penalty": "0",
+          "raw_score": "8.5",
+          "uncertainty": "No ORION latency test occurred.",
+          "weighted_contribution": "0.85"
+        },
+        "spanish_scripting": {
+          "confidence": "0.6",
+          "confidence_adjustment": "0.700",
+          "evidence_source_ids": [
+            "S01",
+            "S10"
+          ],
+          "final_weighted_contribution": "1.000",
+          "judgment": "Strong official instruction-following positioning supports quality-fallback potential.",
+          "penalty": "0.05",
+          "raw_score": "7",
+          "uncertainty": "No live Spanish or Latin American creative-writing evidence was collected.",
+          "weighted_contribution": "1.75"
+        },
+        "structured_output": {
+          "confidence": "0.98",
+          "confidence_adjustment": "0.0588",
+          "evidence_source_ids": [
+            "S01",
+            "S03",
+            "S10",
+            "S16"
+          ],
+          "final_weighted_contribution": "2.8812",
+          "judgment": "All three endpoint records expose structured outputs and the official page reports a low observed error rate.",
+          "penalty": "0",
+          "raw_score": "9.8",
+          "uncertainty": "The published error observation does not cover every route or ORION's exact schema.",
+          "weighted_contribution": "2.94"
+        }
+      },
+      "confidence_adjustment": "0.9288",
+      "final_result": "7.3112",
+      "model_id": "openai/gpt-4.1-mini",
+      "raw_score": "8.55",
+      "risk_penalty": "0.15",
+      "weighted_score": "8.39"
+    },
+    {
+      "categories": {
+        "availability_routing": {
+          "confidence": "0.9",
+          "confidence_adjustment": "0.09",
+          "evidence_source_ids": [
+            "S04",
+            "S17"
+          ],
+          "final_weighted_contribution": "0.81",
+          "judgment": "Five distinct provider organizations expose the required parameter.",
+          "penalty": "0",
+          "raw_score": "9",
+          "uncertainty": "Provider-level quality and privacy policies differ.",
+          "weighted_contribution": "0.9"
+        },
+        "context_fit": {
+          "confidence": "1",
+          "confidence_adjustment": "0.0",
+          "evidence_source_ids": [
+            "S01",
+            "S11"
+          ],
+          "final_weighted_contribution": "0.5",
+          "judgment": "The available context comfortably fits ORION and is capped at full credit.",
+          "penalty": "0",
+          "raw_score": "10",
+          "uncertainty": "No extra value is assigned to unused context.",
+          "weighted_contribution": "0.5"
+        },
+        "cost": {
+          "confidence": "1",
+          "confidence_adjustment": "0.00",
+          "evidence_source_ids": [
+            "S01",
+            "S05",
+            "S11"
+          ],
+          "final_weighted_contribution": "1.96",
+          "judgment": "This is the least expensive paid shortlist model at the captured list price.",
+          "penalty": "0",
+          "raw_score": "9.8",
+          "uncertainty": "The displayed discount and provider price can change.",
+          "weighted_contribution": "1.96"
+        },
+        "latency_efficiency": {
+          "confidence": "0.6",
+          "confidence_adjustment": "0.32",
+          "evidence_source_ids": [
+            "S11"
+          ],
+          "final_weighted_contribution": "0.48",
+          "judgment": "Only 3.3B parameters activate per inference and non-thinking mode avoids reasoning overhead.",
+          "penalty": "0",
+          "raw_score": "8",
+          "uncertainty": "Architectural potential is not measured latency.",
+          "weighted_contribution": "0.8"
+        },
+        "spanish_scripting": {
+          "confidence": "0.8",
+          "confidence_adjustment": "0.4250",
+          "evidence_source_ids": [
+            "S11"
+          ],
+          "final_weighted_contribution": "1.7000",
+          "judgment": "Official page explicitly positions the non-thinking instruct model for multilingual understanding, instruction following, and WritingBench tasks.",
+          "penalty": "0",
+          "raw_score": "8.5",
+          "uncertainty": "Multilingual evidence is not a Spanish quality test.",
+          "weighted_contribution": "2.125"
+        },
+        "structured_output": {
+          "confidence": "0.75",
+          "confidence_adjustment": "0.6150",
+          "evidence_source_ids": [
+            "S01",
+            "S03",
+            "S17"
+          ],
+          "final_weighted_contribution": "1.7950",
+          "judgment": "The model and all five endpoint records expose structured output parameters.",
+          "penalty": "0.05",
+          "raw_score": "8.2",
+          "uncertainty": "No current official structured-output error observation was found.",
+          "weighted_contribution": "2.46"
+        }
+      },
+      "confidence_adjustment": "1.4500",
+      "final_result": "7.2450",
+      "model_id": "qwen/qwen3-30b-a3b-instruct-2507",
+      "raw_score": "8.916666666666666666666666667",
+      "risk_penalty": "0.05",
+      "weighted_score": "8.745"
+    },
+    {
+      "categories": {
+        "availability_routing": {
+          "confidence": "0.85",
+          "confidence_adjustment": "0.1125",
+          "evidence_source_ids": [
+            "S04",
+            "S18"
+          ],
+          "final_weighted_contribution": "0.5875",
+          "judgment": "Three independent provider organizations expose required parameters.",
+          "penalty": "0.05",
+          "raw_score": "7.5",
+          "uncertainty": "The route set is narrower than the leading economical candidates.",
+          "weighted_contribution": "0.75"
+        },
+        "context_fit": {
+          "confidence": "1",
+          "confidence_adjustment": "0.0",
+          "evidence_source_ids": [
+            "S01",
+            "S12"
+          ],
+          "final_weighted_contribution": "0.5",
+          "judgment": "The context window is ample and receives capped full credit.",
+          "penalty": "0",
+          "raw_score": "10",
+          "uncertainty": "Surplus context is not rewarded.",
+          "weighted_contribution": "0.5"
+        },
+        "cost": {
+          "confidence": "1",
+          "confidence_adjustment": "0.0",
+          "evidence_source_ids": [
+            "S01",
+            "S05",
+            "S12"
+          ],
+          "final_weighted_contribution": "1.9",
+          "judgment": "List pricing is extremely low for ORION's bounded requests.",
+          "penalty": "0",
+          "raw_score": "9.5",
+          "uncertainty": "Provider-weighted effective price can differ.",
+          "weighted_contribution": "1.9"
+        },
+        "latency_efficiency": {
+          "confidence": "0.55",
+          "confidence_adjustment": "0.3375",
+          "evidence_source_ids": [
+            "S12"
+          ],
+          "final_weighted_contribution": "0.4125",
+          "judgment": "A 24B non-reasoning instruction model is a plausible efficient fit.",
+          "penalty": "0",
+          "raw_score": "7.5",
+          "uncertainty": "No ORION or stable official latency measurement was used.",
+          "weighted_contribution": "0.75"
+        },
+        "spanish_scripting": {
+          "confidence": "0.5",
+          "confidence_adjustment": "0.8125",
+          "evidence_source_ids": [
+            "S01",
+            "S12"
+          ],
+          "final_weighted_contribution": "0.7625",
+          "judgment": "Instruction-following improvements support general potential.",
+          "penalty": "0.05",
+          "raw_score": "6.5",
+          "uncertainty": "The consulted OpenRouter evidence did not explicitly establish Spanish suitability.",
+          "weighted_contribution": "1.625"
+        },
+        "structured_output": {
+          "confidence": "0.82",
+          "confidence_adjustment": "0.4698",
+          "evidence_source_ids": [
+            "S01",
+            "S03",
+            "S12",
+            "S18"
+          ],
+          "final_weighted_contribution": "2.1402",
+          "judgment": "Official metadata and all three endpoints support structured outputs; the page claims specific structured-task gains.",
+          "penalty": "0",
+          "raw_score": "8.7",
+          "uncertainty": "No provider-specific error observation was captured.",
+          "weighted_contribution": "2.61"
+        }
+      },
+      "confidence_adjustment": "1.7323",
+      "final_result": "6.3027",
+      "model_id": "mistralai/mistral-small-3.2-24b-instruct",
+      "raw_score": "8.283333333333333333333333333",
+      "risk_penalty": "0.10",
+      "weighted_score": "8.135"
+    },
+    {
+      "categories": {
+        "availability_routing": {
+          "confidence": "0.7",
+          "confidence_adjustment": "0.15",
+          "evidence_source_ids": [
+            "S06",
+            "S07",
+            "S13"
+          ],
+          "final_weighted_contribution": "0.10",
+          "judgment": "A named variant is more reproducible than openrouter/free, but only two free endpoints were listed.",
+          "penalty": "0.25",
+          "raw_score": "5",
+          "uncertainty": "Free availability, quotas, and endpoint selection can change without notice.",
+          "weighted_contribution": "0.5"
+        },
+        "context_fit": {
+          "confidence": "1",
+          "confidence_adjustment": "0.0",
+          "evidence_source_ids": [
+            "S01",
+            "S13"
+          ],
+          "final_weighted_contribution": "0.5",
+          "judgment": "Context is ample and capped at full credit.",
+          "penalty": "0",
+          "raw_score": "10",
+          "uncertainty": "Surplus context has no extra value.",
+          "weighted_contribution": "0.5"
+        },
+        "cost": {
+          "confidence": "1",
+          "confidence_adjustment": "0",
+          "evidence_source_ids": [
+            "S01",
+            "S07",
+            "S13"
+          ],
+          "final_weighted_contribution": "2",
+          "judgment": "The named variant was listed at zero token price.",
+          "penalty": "0",
+          "raw_score": "10",
+          "uncertainty": "Free access has operational constraints and no permanence guarantee.",
+          "weighted_contribution": "2"
+        },
+        "latency_efficiency": {
+          "confidence": "0.55",
+          "confidence_adjustment": "0.2925",
+          "evidence_source_ids": [
+            "S13"
+          ],
+          "final_weighted_contribution": "0.3075",
+          "judgment": "Sparse activation is efficient on paper, but free endpoints are slower than leading paid options.",
+          "penalty": "0.05",
+          "raw_score": "6.5",
+          "uncertainty": "Published observations are rolling and route-dependent.",
+          "weighted_contribution": "0.65"
+        },
+        "spanish_scripting": {
+          "confidence": "0.45",
+          "confidence_adjustment": "0.825",
+          "evidence_source_ids": [
+            "S01",
+            "S13"
+          ],
+          "final_weighted_contribution": "0.625",
+          "judgment": "Instruction tuning gives experimentation potential.",
+          "penalty": "0.05",
+          "raw_score": "6",
+          "uncertainty": "No official Spanish-specific evidence or live test exists.",
+          "weighted_contribution": "1.5"
+        },
+        "structured_output": {
+          "confidence": "0.75",
+          "confidence_adjustment": "0.600",
+          "evidence_source_ids": [
+            "S01",
+            "S03",
+            "S13"
+          ],
+          "final_weighted_contribution": "1.750",
+          "judgment": "The named free variant explicitly exposes structured output support.",
+          "penalty": "0.05",
+          "raw_score": "8",
+          "uncertainty": "No ORION schema test or current error rate exists.",
+          "weighted_contribution": "2.4"
+        }
+      },
+      "confidence_adjustment": "1.8675",
+      "final_result": "5.2825",
+      "model_id": "google/gemma-4-26b-a4b-it:free",
+      "raw_score": "7.583333333333333333333333333",
+      "risk_penalty": "0.40",
+      "weighted_score": "7.55"
+    },
+    {
+      "categories": {
+        "availability_routing": {
+          "confidence": "0.6",
+          "confidence_adjustment": "0.180",
+          "evidence_source_ids": [
+            "S06",
+            "S07",
+            "S14"
+          ],
+          "final_weighted_contribution": "0.020",
+          "judgment": "A named variant preserves model identity, but official free uptime and limits are weaker.",
+          "penalty": "0.25",
+          "raw_score": "4.5",
+          "uncertainty": "Free provider count and permanent availability were not established.",
+          "weighted_contribution": "0.45"
+        },
+        "context_fit": {
+          "confidence": "1",
+          "confidence_adjustment": "0.0",
+          "evidence_source_ids": [
+            "S01",
+            "S14"
+          ],
+          "final_weighted_contribution": "0.5",
+          "judgment": "Context is sufficient and capped at full credit.",
+          "penalty": "0",
+          "raw_score": "10",
+          "uncertainty": "Surplus context has no extra value.",
+          "weighted_contribution": "0.5"
+        },
+        "cost": {
+          "confidence": "1",
+          "confidence_adjustment": "0",
+          "evidence_source_ids": [
+            "S01",
+            "S07",
+            "S14"
+          ],
+          "final_weighted_contribution": "2",
+          "judgment": "The named free variant was listed at zero token price.",
+          "penalty": "0",
+          "raw_score": "10",
+          "uncertainty": "Free access has strict operational limits.",
+          "weighted_contribution": "2"
+        },
+        "latency_efficiency": {
+          "confidence": "0.7",
+          "confidence_adjustment": "0.21",
+          "evidence_source_ids": [
+            "S14"
+          ],
+          "final_weighted_contribution": "0.39",
+          "judgment": "Sparse activation supports speed potential.",
+          "penalty": "0.1",
+          "raw_score": "7",
+          "uncertainty": "Mandatory reasoning is unnecessary and free-route performance is not stable.",
+          "weighted_contribution": "0.7"
+        },
+        "spanish_scripting": {
+          "confidence": "0.4",
+          "confidence_adjustment": "0.8250",
+          "evidence_source_ids": [
+            "S01",
+            "S14"
+          ],
+          "final_weighted_contribution": "0.5000",
+          "judgment": "General instruction tuning gives limited experimentation potential.",
+          "penalty": "0.05",
+          "raw_score": "5.5",
+          "uncertainty": "No official Spanish positioning or live evidence was found.",
+          "weighted_contribution": "1.375"
+        },
+        "structured_output": {
+          "confidence": "0.75",
+          "confidence_adjustment": "0.600",
+          "evidence_source_ids": [
+            "S01",
+            "S03",
+            "S14"
+          ],
+          "final_weighted_contribution": "1.750",
+          "judgment": "Catalog and official model page expose structured outputs.",
+          "penalty": "0.05",
+          "raw_score": "8",
+          "uncertainty": "No ORION schema test or free-route error rate exists.",
+          "weighted_contribution": "2.4"
+        }
+      },
+      "confidence_adjustment": "1.8150",
+      "final_result": "5.1600",
+      "model_id": "openai/gpt-oss-20b:free",
+      "raw_score": "7.5",
+      "risk_penalty": "0.45",
+      "weighted_score": "7.425"
+    }
+  ],
+  "scoring_weights": {
+    "availability_routing": "10",
+    "context_fit": "5",
+    "cost": "20",
+    "latency_efficiency": "10",
+    "spanish_scripting": "25",
+    "structured_output": "30"
+  },
+  "shortlisted_models": [
+    {
+      "availability": "paid",
+      "availability_metadata": "Five public endpoint records across Google and Google AI Studio; thinking is not mandatory and is described as disabled by default.",
+      "confidence": "medium_high",
+      "context_length": 1048576,
+      "display_name": "Google: Gemini 2.5 Flash Lite",
+      "free_variant": false,
+      "input_modalities": [
+        "text",
+        "image",
+        "file",
+        "audio",
+        "video"
+      ],
+      "input_price_usd_per_token": "0.0000001",
+      "model_id": "google/gemini-2.5-flash-lite",
+      "output_modalities": [
+        "text"
+      ],
+      "output_price_usd_per_token": "0.0000004",
+      "pricing_date": "2026-08-01",
+      "provider_author": "Google",
+      "provider_count": 5,
+      "request_price_usd": null,
+      "risks": [
+        "Latin American Spanish quality is not proven",
+        "Structured-output reliability varies by routed provider",
+        "Price and endpoint availability can change"
+      ],
+      "role_eligibility": {
+        "free_test": false,
+        "primary_economical": true,
+        "quality_fallback": false
+      },
+      "score": "7.56125",
+      "source_ids": [
+        "S01",
+        "S03",
+        "S09",
+        "S15"
+      ],
+      "structured_output_status": "Catalog and all five public endpoint records expose response-format support; official model page publishes provider-specific structured-output error observations.",
+      "supported_parameters": [
+        "max_tokens",
+        "reasoning",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "top_p"
+      ]
+    },
+    {
+      "availability": "paid",
+      "availability_metadata": "Three endpoint records across OpenAI and Azure; official page positions the model for instruction following, low latency, and lower cost than larger models.",
+      "confidence": "medium_high",
+      "context_length": 1047576,
+      "display_name": "OpenAI: GPT-4.1 Mini",
+      "free_variant": false,
+      "input_modalities": [
+        "text",
+        "image",
+        "file"
+      ],
+      "input_price_usd_per_token": "0.0000004",
+      "model_id": "openai/gpt-4.1-mini",
+      "output_modalities": [
+        "text"
+      ],
+      "output_price_usd_per_token": "0.0000016",
+      "pricing_date": "2026-08-01",
+      "provider_author": "OpenAI",
+      "provider_count": 3,
+      "request_price_usd": null,
+      "risks": [
+        "Latin American Spanish creative quality is not proven",
+        "Output price is materially above the economical candidates",
+        "Exact routed provider affects observed reliability"
+      ],
+      "role_eligibility": {
+        "free_test": false,
+        "primary_economical": false,
+        "quality_fallback": true
+      },
+      "score": "7.3112",
+      "source_ids": [
+        "S01",
+        "S03",
+        "S10",
+        "S16"
+      ],
+      "structured_output_status": "Catalog and three public endpoint records expose structured outputs; official model page reports a low observed structured-output error rate for one provider.",
+      "supported_parameters": [
+        "max_tokens",
+        "response_format",
+        "seed",
+        "structured_outputs",
+        "temperature",
+        "top_p"
+      ]
+    },
+    {
+      "availability": "paid",
+      "availability_metadata": "Five provider organizations; official description explicitly states non-thinking mode, multilingual understanding, instruction following, and WritingBench evidence.",
+      "confidence": "medium",
+      "context_length": 262144,
+      "display_name": "Qwen: Qwen3 30B A3B Instruct 2507",
+      "free_variant": false,
+      "input_modalities": [
+        "text"
+      ],
+      "input_price_usd_per_token": "0.00000004815",
+      "model_id": "qwen/qwen3-30b-a3b-instruct-2507",
+      "output_modalities": [
+        "text"
+      ],
+      "output_price_usd_per_token": "0.00000019305",
+      "pricing_date": "2026-08-01",
+      "provider_author": "Qwen",
+      "provider_count": 5,
+      "request_price_usd": null,
+      "risks": [
+        "Strict-schema reliability is metadata-based rather than measured",
+        "Spanish is covered only by broad multilingual positioning",
+        "Latency was not measured for ORION"
+      ],
+      "role_eligibility": {
+        "free_test": false,
+        "primary_economical": true,
+        "quality_fallback": false
+      },
+      "score": "7.2450",
+      "source_ids": [
+        "S01",
+        "S03",
+        "S11",
+        "S17"
+      ],
+      "structured_output_status": "Catalog and five public endpoint records expose response-format support; no official provider-specific structured-output error measurement was found.",
+      "supported_parameters": [
+        "max_tokens",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "top_p"
+      ]
+    },
+    {
+      "availability": "paid",
+      "availability_metadata": "Three provider organizations; inexpensive 24B instruction model without mandatory reasoning.",
+      "confidence": "medium",
+      "context_length": 256000,
+      "display_name": "Mistral: Mistral Small 3.2 24B",
+      "free_variant": false,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "input_price_usd_per_token": "0.000000075",
+      "model_id": "mistralai/mistral-small-3.2-24b-instruct",
+      "output_modalities": [
+        "text"
+      ],
+      "output_price_usd_per_token": "0.0000002",
+      "pricing_date": "2026-08-01",
+      "provider_author": "Mistral AI",
+      "provider_count": 3,
+      "request_price_usd": null,
+      "risks": [
+        "No explicit Spanish claim was found in the consulted OpenRouter evidence",
+        "No ORION latency or schema test exists",
+        "Only three public endpoint records"
+      ],
+      "role_eligibility": {
+        "free_test": false,
+        "primary_economical": true,
+        "quality_fallback": false
+      },
+      "score": "6.3027",
+      "source_ids": [
+        "S01",
+        "S03",
+        "S12",
+        "S18"
+      ],
+      "structured_output_status": "Catalog and three endpoint records expose structured outputs; official model page claims gains on structured-output tasks.",
+      "supported_parameters": [
+        "max_tokens",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "top_p"
+      ]
+    },
+    {
+      "availability": "free",
+      "availability_metadata": "Official free model page listed two free endpoints at access time; free capacity, rate limits, and model availability are not guaranteed.",
+      "confidence": "medium_low",
+      "context_length": 262144,
+      "display_name": "Google: Gemma 4 26B A4B IT (free)",
+      "free_variant": true,
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "input_price_usd_per_token": "0",
+      "model_id": "google/gemma-4-26b-a4b-it:free",
+      "output_modalities": [
+        "text"
+      ],
+      "output_price_usd_per_token": "0",
+      "pricing_date": "2026-08-01",
+      "provider_author": "Google DeepMind",
+      "provider_count": 2,
+      "request_price_usd": null,
+      "risks": [
+        "Free-tier availability and rate limits are fragile",
+        "Spanish quality and schema reliability are untested",
+        "Free endpoint routing can change"
+      ],
+      "role_eligibility": {
+        "free_test": true,
+        "primary_economical": false,
+        "quality_fallback": false
+      },
+      "score": "5.2825",
+      "source_ids": [
+        "S01",
+        "S06",
+        "S07",
+        "S13"
+      ],
+      "structured_output_status": "Named free variant with structured-output support in catalog metadata and official model page.",
+      "supported_parameters": [
+        "max_tokens",
+        "reasoning",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "top_p"
+      ]
+    },
+    {
+      "availability": "free",
+      "availability_metadata": "Official free page reported lower free-tier uptime at access time; mandatory reasoning is unnecessary for ORION and may add variability.",
+      "confidence": "low",
+      "context_length": 131072,
+      "display_name": "OpenAI: gpt-oss-20b (free)",
+      "free_variant": true,
+      "input_modalities": [
+        "text"
+      ],
+      "input_price_usd_per_token": "0",
+      "model_id": "openai/gpt-oss-20b:free",
+      "output_modalities": [
+        "text"
+      ],
+      "output_price_usd_per_token": "0",
+      "pricing_date": "2026-08-01",
+      "provider_author": "OpenAI",
+      "provider_count": null,
+      "request_price_usd": null,
+      "risks": [
+        "Mandatory reasoning is unnecessary",
+        "Free-tier uptime and rate limits are weaker",
+        "Spanish quality and strict schema reliability are untested"
+      ],
+      "role_eligibility": {
+        "free_test": true,
+        "primary_economical": false,
+        "quality_fallback": false
+      },
+      "score": "5.1600",
+      "source_ids": [
+        "S01",
+        "S06",
+        "S07",
+        "S14"
+      ],
+      "structured_output_status": "Named free variant with structured-output support in the public catalog and official model page.",
+      "supported_parameters": [
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "top_p"
+      ]
+    }
+  ],
+  "source_access_date": "2026-08-01",
+  "sources": [
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S01",
+      "title": "Public models catalog snapshot",
+      "url": "https://openrouter.ai/api/v1/models"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S02",
+      "title": "Models API reference",
+      "url": "https://openrouter.ai/docs/api/api-reference/models/get-models"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S03",
+      "title": "Structured outputs",
+      "url": "https://openrouter.ai/docs/guides/features/structured-outputs"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S04",
+      "title": "Provider routing",
+      "url": "https://openrouter.ai/docs/guides/routing/provider-selection"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S05",
+      "title": "Public pricing",
+      "url": "https://openrouter.ai/pricing"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S06",
+      "title": "Free models router",
+      "url": "https://openrouter.ai/docs/guides/routing/routers/free-router"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S07",
+      "title": "Free model variant",
+      "url": "https://openrouter.ai/docs/guides/routing/model-variants/free"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S08",
+      "title": "Zero data retention",
+      "url": "https://openrouter.ai/docs/guides/features/zdr"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S09",
+      "title": "Gemini 2.5 Flash Lite model page",
+      "url": "https://openrouter.ai/google/gemini-2.5-flash-lite"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S10",
+      "title": "GPT-4.1 Mini model page",
+      "url": "https://openrouter.ai/openai/gpt-4.1-mini/pricing"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S11",
+      "title": "Qwen3 30B A3B Instruct model page",
+      "url": "https://openrouter.ai/qwen/qwen3-30b-a3b-instruct-2507/pricing"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S12",
+      "title": "Mistral Small 3.2 model page",
+      "url": "https://openrouter.ai/mistralai/mistral-small-3.2-24b-instruct-2506/pricing"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S13",
+      "title": "Gemma 4 26B A4B free model page",
+      "url": "https://openrouter.ai/google/gemma-4-26b-a4b-it%3Afree/api"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S14",
+      "title": "gpt-oss-20b free model page",
+      "url": "https://openrouter.ai/openai/gpt-oss-20b%3Afree/providers"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S15",
+      "title": "Gemini public endpoint metadata",
+      "url": "https://openrouter.ai/api/v1/models/google/gemini-2.5-flash-lite/endpoints"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S16",
+      "title": "GPT-4.1 Mini public endpoint metadata",
+      "url": "https://openrouter.ai/api/v1/models/openai/gpt-4.1-mini-2025-04-14/endpoints"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S17",
+      "title": "Qwen public endpoint metadata",
+      "url": "https://openrouter.ai/api/v1/models/qwen/qwen3-30b-a3b-instruct-2507/endpoints"
+    },
+    {
+      "accessed_on": "2026-08-01",
+      "official": true,
+      "source_id": "S18",
+      "title": "Mistral public endpoint metadata",
+      "url": "https://openrouter.ai/api/v1/models/mistralai/mistral-small-3.2-24b-instruct-2506/endpoints"
+    }
+  ],
+  "token_assumptions": {
+    "input_tokens": {
+      "high": 5000,
+      "low": 2500
+    },
+    "output_tokens": {
+      "15": {
+        "high": 400,
+        "low": 150
+      },
+      "30": {
+        "high": 700,
+        "low": 250
+      },
+      "60": {
+        "high": 1300,
+        "low": 500
+      }
+    },
+    "rationale": "The versioned system instruction and JSON Schema dominate input size; outputs cover concise scripts plus scene metadata.",
+    "request_fee_assumption": "A null request price in the public catalog is treated as zero only for these estimates; it is not recorded as a quoted fee."
+  },
+  "uncertainty": [
+    "No model generated Spanish text during this phase.",
+    "Latin American Spanish hook quality, pacing, factual tone, and scene coherence remain unproven.",
+    "Published provider error and latency observations are rolling snapshots, not ORION measurements.",
+    "ZDR filtering may reduce the available endpoint set.",
+    "Prices, free variants, routing, and model aliases can change before activation."
+  ],
+  "use_case": {
+    "durations_seconds": [
+      15,
+      30,
+      60
+    ],
+    "input": "text planning artifact and strict production-script schema",
+    "language": "es-419",
+    "output": "concise narrated short-video script with visual direction",
+    "required_capabilities": [
+      "text_input",
+      "text_output",
+      "strict_json_schema",
+      "instruction_following"
+    ],
+    "scene_count_range": [
+      1,
+      8
+    ],
+    "unneeded_capabilities": [
+      "advanced_reasoning",
+      "browsing",
+      "image_input",
+      "tool_use"
+    ]
+  }
+}

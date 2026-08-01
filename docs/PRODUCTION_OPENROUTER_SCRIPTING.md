@@ -36,9 +36,10 @@ explicit model, billable authorization, positive Decimal estimate, and Decimal
 cost ceiling are all valid. The estimate may not exceed the ceiling. An API
 key by itself never authorizes spending. There is no fallback to simulated.
 
-No model is committed because Spanish quality, structured-output reliability,
-context, latency, cost, availability, and commercial suitability still need a
-separately authorized evaluation.
+No model is committed. Phase 6C.1 proposes Gemini 2.5 Flash Lite as the
+economical controlled-test candidate and GPT-4.1 Mini as the quality fallback,
+but ADR-020 remains `PROPOSED` because Spanish quality is untested. See
+`PRODUCTION_OPENROUTER_SCRIPTING_MODEL_SELECTION.md`.
 
 ## Secrets and desktop behavior
 

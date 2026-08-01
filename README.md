@@ -186,6 +186,14 @@ no contiene key, modelo ni autorización de gasto; esta fase se verificó
 exclusivamente con transports falsos. Consulta
 [`docs/PRODUCTION_OPENROUTER_SCRIPTING.md`](docs/PRODUCTION_OPENROUTER_SCRIPTING.md).
 
+La evaluación pública y fechada de modelos de scripting propone, sin activar,
+`google/gemini-2.5-flash-lite` como candidato económico y
+`openai/gpt-4.1-mini` como fallback de calidad. `simulated` continúa activo, el
+modelo default permanece vacío y no se usaron key, cuenta, generación ni
+créditos. Consulta
+[`docs/PRODUCTION_OPENROUTER_SCRIPTING_MODEL_SELECTION.md`](docs/PRODUCTION_OPENROUTER_SCRIPTING_MODEL_SELECTION.md)
+y [`ADR-020`](docs/adrs/020-openrouter-scripting-model-selection.md).
+
 ```text
 pip install -e ".[desktop]"
 python -m backend.src.desktop
