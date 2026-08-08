@@ -88,7 +88,7 @@ def build_ffmpeg_execution_plan(
             video_filters.append(
                 f"[{input_index}:v]trim={trim},setpts=PTS-STARTPTS,"
                 f"scale={request.output_width}:{request.output_height}:"
-                "force_original_aspect_ratio=decrease,"
+                "force_original_aspect_ratio=decrease:out_range=tv,"
                 f"pad={request.output_width}:{request.output_height}:(ow-iw)/2:(oh-ih)/2,"
                 f"setsar=1,fps={request.frame_rate_numerator}/"
                 f"{request.frame_rate_denominator},format=yuv420p[{label}]"

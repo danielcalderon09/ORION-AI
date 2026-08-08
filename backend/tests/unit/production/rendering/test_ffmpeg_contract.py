@@ -56,11 +56,15 @@ class FakeControlledRunner:
         ffmpeg_return_code: int = 0,
         wrong_width: bool = False,
         output_duration_seconds: float = 4.0,
+        output_width: int = 1280,
+        output_height: int = 720,
     ) -> None:
         self.calls: list[tuple[str, tuple[str, ...]]] = []
         self.ffmpeg_return_code = ffmpeg_return_code
         self.wrong_width = wrong_width
         self.output_duration_seconds = output_duration_seconds
+        self.output_width = output_width
+        self.output_height = output_height
 
     async def run(
         self,
@@ -84,8 +88,8 @@ class FakeControlledRunner:
                     "codec_type": "video",
                     "codec_name": "h264",
                     "pix_fmt": "yuv420p",
-                    "width": 640 if self.wrong_width else 1280,
-                    "height": 720,
+                    "width": 640 if self.wrong_width else self.output_width,
+                    "height": self.output_height,
                     "avg_frame_rate": "24/1",
                     "duration": f"{self.output_duration_seconds:.6f}",
                     "disposition": {"attached_pic": 0},
@@ -147,6 +151,45 @@ def _fifteen_second_looping_source() -> MediaCompositionSource:
                 source.shots[0].model_copy(update={"shot_start_ms": 0, "shot_end_ms": 7_500}),
                 source.shots[1].model_copy(update={"shot_start_ms": 7_500, "shot_end_ms": 15_000}),
             ),
+            "narration": (
+                source.narration[0].model_copy(
+                    update={"timeline_start_ms": 0, "duration_ms": 15_000}
+                ),
+            ),
+            "music": None,
+            "sound_effects": (),
+        }
+    )
+
+
+def _real_jpeg_single_scene_source() -> MediaCompositionSource:
+    source = make_source()
+    video = next(item for item in source.assets if item.kind is CompositionAssetKind.VIDEO)
+    narration = next(
+        item for item in source.assets if item.kind is CompositionAssetKind.NARRATION
+    )
+    video = video.model_copy(
+        update={
+            "duration_ms": 4_000,
+            "frame_count": 96,
+            "width": 768,
+            "height": 1376,
+        }
+    )
+    narration = narration.model_copy(
+        update={"duration_ms": 15_000, "frame_count": 360_000}
+    )
+    asset_ids = {video.asset_id, narration.asset_id}
+    shot = source.shots[0].model_copy(
+        update={"shot_start_ms": 0, "shot_end_ms": 15_000}
+    )
+    return source.model_copy(
+        update={
+            "assets": tuple(sorted((video, narration), key=lambda item: item.asset_id)),
+            "asset_validation": tuple(
+                item for item in source.asset_validation if item.asset_id in asset_ids
+            ),
+            "shots": (shot,),
             "narration": (
                 source.narration[0].model_copy(
                     update={"timeline_start_ms": 0, "duration_ms": 15_000}
@@ -305,6 +348,56 @@ async def test_fake_ffmpeg_preparation_accepts_fifteen_second_looped_video(
         "ffmpeg",
         "ffprobe",
     ]
+
+
+@pytest.mark.asyncio
+async def test_real_jpeg_vertical_clip_normalizes_range_for_render(
+    tmp_path: Path,
+) -> None:
+    composition_source = _real_asset_source(
+        tmp_path,
+        _real_jpeg_single_scene_source(),
+    )
+    source = make_verified_source(composition_source=composition_source)
+    command, context = make_render_command_context()
+    configuration = RenderingConfiguration(renderer=RendererKind.FFMPEG)
+    runner = FakeControlledRunner(
+        output_duration_seconds=15.0,
+        output_width=768,
+        output_height=1376,
+    )
+    store = LocalRenderPreparationStore(
+        tmp_path,
+        max_request_bytes=configuration.max_request_bytes,
+        max_manifest_bytes=configuration.max_manifest_bytes,
+        max_execution_plan_bytes=configuration.max_execution_plan_bytes,
+    )
+
+    output = await LocalRenderPreparationHandler(
+        source_reader=StaticVerifiedSourceReader(source),
+        store=store,
+        renderer=LocalFFmpegRenderer(
+            workspace_root=tmp_path,
+            runner=runner,  # type: ignore[arg-type]
+        ),
+        configuration=configuration,
+        clock=lambda: NOW,
+    ).execute(command, context)
+
+    assert output.result.outcome is StageOutcome.SUCCEEDED
+    assert source.plan.output.expected_duration_ms == 15_000
+    assert source.plan.output.expected_duration_frames == 360
+    assert source.plan.output.width == 768
+    assert source.plan.output.height == 1376
+    ffmpeg_arguments = next(
+        arguments
+        for identity, arguments in runner.calls
+        if identity == "ffmpeg" and "-filter_complex" in arguments
+    )
+    filters = ffmpeg_arguments[ffmpeg_arguments.index("-filter_complex") + 1]
+    assert "trim=start=0:duration=15" in filters
+    assert "scale=768:1376:force_original_aspect_ratio=decrease:out_range=tv" in filters
+    assert "format=yuv420p" in filters
 
 
 @pytest.mark.asyncio
