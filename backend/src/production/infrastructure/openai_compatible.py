@@ -3,7 +3,9 @@
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any
 
 import httpx
@@ -31,10 +33,34 @@ class OpenAICompatibleUnavailableError(OpenAICompatibleError):
     pass
 
 
+class OpenAICompatibleProtocolErrorCode(StrEnum):
+    RESPONSE_TOO_LARGE = "response_too_large"
+    RESPONSE_JSON = "response_json"
+    RESPONSE_ENVELOPE = "response_envelope"
+    OUTPUT_TEXT = "output_text"
+    HTTP_STATUS = "http_status"
+
+
 class OpenAICompatibleProtocolError(OpenAICompatibleError):
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostic_code: OpenAICompatibleProtocolErrorCode,
+        status_code: int | None = None,
+        request_id: str | None = None,
+    ) -> None:
         super().__init__(message)
+        self.diagnostic_code = diagnostic_code
         self.status_code = status_code
+        self.request_id = request_id
+
+
+@dataclass(frozen=True, slots=True)
+class OpenAICompatibleResponse:
+    body: dict[str, Any]
+    request_id: str | None
+    http_status: int
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -122,6 +148,13 @@ class OpenAICompatibleResponsesClient:
             self._headers["X-Title"] = _validate_header_value("X-Title", app_title, maximum=200)
 
     async def post(self, payload: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+        response = await self.post_with_metadata(payload)
+        return response.body, response.request_id
+
+    async def post_with_metadata(
+        self,
+        payload: dict[str, Any],
+    ) -> OpenAICompatibleResponse:
         if self._closed:
             raise OpenAICompatibleError("provider transport is closed")
         last_error: OpenAICompatibleError | None = None
@@ -136,6 +169,7 @@ class OpenAICompatibleResponsesClient:
                     follow_redirects=False,
                 ) as response:
                     self._raise_for_status(response.status_code)
+                    header_request_id = self.safe_string(response.headers.get("x-request-id"))
                     try:
                         content = await _read_bounded_response(
                             response,
@@ -147,16 +181,35 @@ class OpenAICompatibleResponsesClient:
                             parse_float=Decimal,
                             object_pairs_hook=_reject_duplicate_keys,
                         )
+                    except OpenAICompatibleProtocolError as exc:
+                        raise OpenAICompatibleProtocolError(
+                            str(exc),
+                            diagnostic_code=exc.diagnostic_code,
+                            status_code=response.status_code,
+                            request_id=header_request_id,
+                        ) from exc
                     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
                         raise OpenAICompatibleProtocolError(
-                            "provider returned invalid JSON"
+                            "provider returned invalid JSON",
+                            diagnostic_code=OpenAICompatibleProtocolErrorCode.RESPONSE_JSON,
+                            status_code=response.status_code,
+                            request_id=header_request_id,
                         ) from exc
                     if not isinstance(body, dict):
-                        raise OpenAICompatibleProtocolError("provider response must be an object")
-                    request_id = response.headers.get("x-request-id") or self.safe_string(
-                        body.get("id")
+                        raise OpenAICompatibleProtocolError(
+                            "provider response must be an object",
+                            diagnostic_code=(
+                                OpenAICompatibleProtocolErrorCode.RESPONSE_ENVELOPE
+                            ),
+                            status_code=response.status_code,
+                            request_id=header_request_id,
+                        )
+                    request_id = header_request_id or self.safe_string(body.get("id"))
+                    return OpenAICompatibleResponse(
+                        body=body,
+                        request_id=request_id,
+                        http_status=response.status_code,
                     )
-                    return body, request_id
             except asyncio.CancelledError:
                 raise
             except (
@@ -188,6 +241,7 @@ class OpenAICompatibleResponsesClient:
             raise OpenAICompatibleUnavailableError("provider is unavailable")
         raise OpenAICompatibleProtocolError(
             f"provider returned unsupported status {status}",
+            diagnostic_code=OpenAICompatibleProtocolErrorCode.HTTP_STATUS,
             status_code=status,
         )
 
@@ -195,18 +249,33 @@ class OpenAICompatibleResponsesClient:
     def extract_single_output_text(body: dict[str, Any]) -> str:
         choices = body.get("choices")
         if not isinstance(choices, list) or len(choices) != 1:
-            raise OpenAICompatibleProtocolError("response must contain exactly one choice")
+            raise OpenAICompatibleProtocolError(
+                "response must contain exactly one choice",
+                diagnostic_code=OpenAICompatibleProtocolErrorCode.OUTPUT_TEXT,
+            )
         choice = choices[0]
         if not isinstance(choice, dict):
-            raise OpenAICompatibleProtocolError("provider choice is invalid")
+            raise OpenAICompatibleProtocolError(
+                "provider choice is invalid",
+                diagnostic_code=OpenAICompatibleProtocolErrorCode.OUTPUT_TEXT,
+            )
         message = choice.get("message")
         if not isinstance(message, dict):
-            raise OpenAICompatibleProtocolError("provider message content is missing")
+            raise OpenAICompatibleProtocolError(
+                "provider message content is missing",
+                diagnostic_code=OpenAICompatibleProtocolErrorCode.OUTPUT_TEXT,
+            )
         content = message.get("content")
         if not isinstance(content, str):
-            raise OpenAICompatibleProtocolError("provider message content is missing")
+            raise OpenAICompatibleProtocolError(
+                "provider message content is missing",
+                diagnostic_code=OpenAICompatibleProtocolErrorCode.OUTPUT_TEXT,
+            )
         if not content.strip():
-            raise OpenAICompatibleProtocolError("provider message content is empty")
+            raise OpenAICompatibleProtocolError(
+                "provider message content is empty",
+                diagnostic_code=OpenAICompatibleProtocolErrorCode.OUTPUT_TEXT,
+            )
         return content
 
     @staticmethod
@@ -256,5 +325,8 @@ async def _read_bounded_response(
     async for chunk in response.aiter_bytes():
         result.extend(chunk)
         if len(result) > maximum:
-            raise OpenAICompatibleProtocolError("provider response exceeded the safe size limit")
+            raise OpenAICompatibleProtocolError(
+                "provider response exceeded the safe size limit",
+                diagnostic_code=OpenAICompatibleProtocolErrorCode.RESPONSE_TOO_LARGE,
+            )
     return bytes(result)

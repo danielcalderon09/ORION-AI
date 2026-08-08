@@ -21,6 +21,7 @@ from backend.src.production.scripting.openrouter_request import (
     OpenRouterScriptingFingerprintInput,
     OpenRouterScriptingRequestRecord,
     OpenRouterScriptingRequestStatus,
+    OpenRouterScriptingValidationErrorCode,
     openrouter_scripting_request_fingerprint,
     openrouter_scripting_request_relative_path,
 )
@@ -257,3 +258,66 @@ def test_money_rejects_float_and_serializes_as_decimal_string() -> None:
     assert b'"estimated_cost_usd":"0.01"' in content
     assert b"api_key" not in content
     assert hashlib.sha256(content).hexdigest()
+
+
+def test_legacy_request_record_without_diagnostics_remains_readable() -> None:
+    historical = prepared_record().model_copy(
+        update={
+            "status": OpenRouterScriptingRequestStatus.FAILED,
+            "submission_started_at": NOW,
+            "terminal_at": NOW,
+            "fresh_submission_permitted": False,
+            "safe_error_code": "invalid_structured_output",
+        }
+    ).model_dump(mode="python")
+    for field in (
+        "validation_error_code",
+        "validation_error_path",
+        "validation_error_message",
+        "http_status",
+        "requested_model",
+    ):
+        historical.pop(field)
+    restored = OpenRouterScriptingRequestRecord.model_validate(historical)
+    assert restored.schema_version == "1.0.0"
+    assert restored.status is OpenRouterScriptingRequestStatus.FAILED
+    assert restored.safe_error_code == "invalid_structured_output"
+    assert restored.validation_error_code is None
+    assert restored.validation_error_path is None
+    assert restored.validation_error_message is None
+    assert restored.http_status is None
+    assert restored.requested_model is None
+
+
+def test_validation_diagnostics_are_closed_bounded_and_failed_only() -> None:
+    failed = prepared_record().model_copy(
+        update={
+            "status": OpenRouterScriptingRequestStatus.FAILED,
+            "submission_started_at": NOW,
+            "terminal_at": NOW,
+            "fresh_submission_permitted": False,
+            "safe_error_code": "invalid_structured_output",
+            "validation_error_code": (
+                OpenRouterScriptingValidationErrorCode.PRODUCTION_SCRIPT_SCHEMA
+            ),
+            "validation_error_path": "scenes[1].narration",
+            "validation_error_message": "field required",
+        }
+    )
+    assert failed.validation_error_code is (
+        OpenRouterScriptingValidationErrorCode.PRODUCTION_SCRIPT_SCHEMA
+    )
+    with pytest.raises(ValidationError):
+        OpenRouterScriptingRequestRecord.model_validate(
+            {
+                **failed.model_dump(mode="python"),
+                "validation_error_message": "x" * 241,
+            }
+        )
+    with pytest.raises(ValidationError, match="requires failed status"):
+        OpenRouterScriptingRequestRecord.model_validate(
+            {
+                **prepared_record().model_dump(mode="python"),
+                "validation_error_code": "production_script_schema",
+            }
+        )

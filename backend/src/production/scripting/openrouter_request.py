@@ -28,6 +28,21 @@ class OpenRouterScriptingRequestStatus(StrEnum):
     UNCERTAIN = "uncertain"
 
 
+class OpenRouterScriptingValidationErrorCode(StrEnum):
+    PROVIDER_BODY_ERROR = "provider_body_error"
+    PROVIDER_ENVELOPE_PROTOCOL = "provider_envelope_protocol"
+    OUTPUT_TEXT_PROTOCOL = "output_text_protocol"
+    INNER_JSON_PARSE = "inner_json_parse"
+    DUPLICATE_JSON_KEY = "duplicate_json_key"
+    PRODUCTION_SCRIPT_SCHEMA = "production_script_schema"
+    PRODUCTION_SCRIPT_CONTRACT = "production_script_contract"
+    PLAN_CONTRACT = "plan_contract"
+    SCENE_COUNT_POLICY = "scene_count_policy"
+    DURATION_POLICY = "duration_policy"
+    UNSUPPORTED_FIELD = "unsupported_field"
+    UNKNOWN_STRUCTURED_OUTPUT_ERROR = "unknown_structured_output_error"
+
+
 class OpenRouterScriptingFingerprintInput(ContractModel):
     schema_version: str = "1.0.0"
     provider: Literal["openrouter"] = "openrouter"
@@ -95,6 +110,16 @@ class OpenRouterScriptingRequestRecord(ContractModel):
     terminal_at: datetime | None = None
     fresh_submission_permitted: bool
     safe_error_code: str | None = Field(default=None, pattern=r"^[a-z0-9_]{1,100}$")
+    validation_error_code: OpenRouterScriptingValidationErrorCode | None = None
+    validation_error_path: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=300,
+        pattern=r"^[A-Za-z0-9_.\[\]-]+$",
+    )
+    validation_error_message: str | None = Field(default=None, min_length=1, max_length=240)
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    requested_model: str | None = Field(default=None, min_length=1, max_length=300)
     provider_request_id: str | None = Field(default=None, min_length=1, max_length=200)
     reported_model: str | None = Field(default=None, min_length=1, max_length=300)
     input_tokens: int | None = Field(default=None, ge=0)
@@ -140,6 +165,13 @@ class OpenRouterScriptingRequestRecord(ContractModel):
             raise ValueError("OpenRouter scripting request identity is unsafe")
         return value
 
+    @field_validator("validation_error_message")
+    @classmethod
+    def safe_validation_message(cls, value: str | None) -> str | None:
+        if value is not None and any(ord(character) < 32 for character in value):
+            raise ValueError("OpenRouter scripting validation message is unsafe")
+        return value
+
     @field_validator("metadata")
     @classmethod
     def safe_metadata(
@@ -162,6 +194,22 @@ class OpenRouterScriptingRequestRecord(ContractModel):
             raise ValueError("OpenRouter scripting request fingerprint differs")
         if self.estimated_cost_usd > self.maximum_authorized_cost_usd:
             raise ValueError("OpenRouter scripting estimate exceeds authorization")
+        if (
+            self.requested_model is not None
+            and self.requested_model != self.fingerprint_input.model
+        ):
+            raise ValueError("OpenRouter scripting requested model differs")
+        summary_values = (
+            self.validation_error_path,
+            self.validation_error_message,
+        )
+        if any(value is not None for value in summary_values) and self.validation_error_code is None:
+            raise ValueError("OpenRouter scripting validation summary has no code")
+        if (
+            self.validation_error_code is not None
+            and self.status is not OpenRouterScriptingRequestStatus.FAILED
+        ):
+            raise ValueError("OpenRouter scripting validation diagnosis requires failed status")
         if self.status is OpenRouterScriptingRequestStatus.PREPARED:
             if (
                 self.submission_started_at is not None
@@ -222,6 +270,7 @@ def validate_openrouter_scripting_request_transition(
         or previous.prepared_at != current.prepared_at
         or previous.estimated_cost_usd != current.estimated_cost_usd
         or previous.maximum_authorized_cost_usd != current.maximum_authorized_cost_usd
+        or previous.requested_model != current.requested_model
     ):
         raise ValueError("OpenRouter scripting request identity changed")
     if current.status not in _ALLOWED_TRANSITIONS.get(previous.status, set()):
@@ -241,6 +290,7 @@ __all__ = [
     "OpenRouterScriptingFingerprintInput",
     "OpenRouterScriptingRequestRecord",
     "OpenRouterScriptingRequestStatus",
+    "OpenRouterScriptingValidationErrorCode",
     "openrouter_scripting_request_fingerprint",
     "openrouter_scripting_request_relative_path",
     "scripting_configuration_fingerprint",
