@@ -6,18 +6,24 @@ import binascii
 import io
 import json
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from decimal import Decimal, InvalidOperation
 from time import monotonic
-from typing import Any
+from typing import Any, TypedDict
 
 import httpx
 from PIL import Image, UnidentifiedImageError
+from pydantic import ValidationError
 
+from backend.src.production.image_acquisition.diagnostics import (
+    ImageDiagnosticMetadata,
+    ImageDiagnosticSubtype,
+)
 from backend.src.production.image_acquisition.exceptions import (
     ImageAcquisitionProviderAuthenticationException,
     ImageAcquisitionProviderConfigurationException,
     ImageAcquisitionProviderContractException,
+    ImageAcquisitionProviderError,
     ImageAcquisitionProviderModelException,
     ImageAcquisitionProviderPolicyException,
     ImageAcquisitionProviderRateLimitException,
@@ -35,6 +41,31 @@ from backend.src.production.image_acquisition.prompt_builder import (
 )
 
 Sleeper = Callable[[float], Awaitable[None]]
+
+
+class _ResponseContext(TypedDict):
+    http_status: int
+    provider_request_id: str | None
+    requested_model: str
+    reported_model: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    cost_usd: Decimal | None
+    latency_ms: float
+    finish_reason: str | None
+
+
+class _HttpErrorContext(TypedDict):
+    provider_request_id: str | None
+    reported_model: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    cost_usd: Decimal | None
+    finish_reason: str | None
+
+
 _BASE64 = re.compile(r"^[A-Za-z0-9+/]*={0,2}$")
 _MIME_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
 _TRANSIENT_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
@@ -148,40 +179,79 @@ class OpenRouterImageAcquisitionProvider:
             "provider": provider,
         }
         started = self._monotonic()
-        body, request_id, http_status = await self._post_once(payload)
+        try:
+            body, request_id, http_status = await self._post_once(payload)
+        except ImageAcquisitionProviderError as exc:
+            exc.requested_model = self._model
+            exc.latency_ms = max(0.0, (self._monotonic() - started) * 1000)
+            if exc.diagnostic_subtype is None:
+                exc.diagnostic_subtype = _subtype_for_provider_exception(exc)
+            raise
         latency_ms = max(0.0, (self._monotonic() - started) * 1000)
+        usage_value = body.get("usage")
+        usage = usage_value if isinstance(usage_value, dict) else {}
+        response_context: _ResponseContext = {
+            "http_status": http_status,
+            "provider_request_id": request_id,
+            "requested_model": self._model,
+            "reported_model": _safe_bounded_string(body.get("model"), 300),
+            "input_tokens": _safe_int(usage.get("prompt_tokens", usage.get("input_tokens"))),
+            "output_tokens": _safe_int(usage.get("completion_tokens", usage.get("output_tokens"))),
+            "total_tokens": _safe_int(usage.get("total_tokens")),
+            "cost_usd": _safe_decimal(usage.get("cost")),
+            "latency_ms": latency_ms,
+            "finish_reason": _safe_bounded_string(body.get("finish_reason"), 100),
+        }
+        if isinstance(body.get("error"), dict):
+            raise ImageAcquisitionProviderResponseException(
+                "image provider returned an error object in a successful response",
+                diagnostic_subtype=ImageDiagnosticSubtype.PROVIDER_BODY_ERROR,
+                **response_context,
+            )
         try:
             images = self._decode_images(
                 body,
                 expected_width=asset.width,
                 expected_height=asset.height,
+                requested_output_format=request.configuration.output_format,
             )
         except ImageAcquisitionProviderResponseException as exc:
-            exc.http_status = http_status
-            exc.provider_request_id = request_id
+            _attach_response_context(exc, response_context)
             raise
-        usage_value = body.get("usage")
-        usage = usage_value if isinstance(usage_value, dict) else {}
-        return ImageAcquisitionProviderResponse(
-            images=images,
-            provider="openrouter",
-            requested_model=self._model,
-            reported_model=_safe_string(body.get("model")),
-            request_id=request_id,
-            input_tokens=_safe_int(usage.get("prompt_tokens", usage.get("input_tokens"))),
-            output_tokens=_safe_int(usage.get("completion_tokens", usage.get("output_tokens"))),
-            total_tokens=_safe_int(usage.get("total_tokens")),
-            cost_usd=_safe_decimal(usage.get("cost")),
-            http_status=http_status,
-            latency_ms=latency_ms,
-            finish_reason=_safe_string(body.get("finish_reason")),
-            metadata={
-                "prompt_version": prompt.version,
-                "prompt_bytes": prompt.size_bytes,
-                "prompt_sha256": prompt.sha256,
-                "simulated": False,
-            },
-        )
+        try:
+            return ImageAcquisitionProviderResponse(
+                images=images,
+                provider="openrouter",
+                requested_model=self._model,
+                reported_model=_safe_string(body.get("model")),
+                request_id=request_id,
+                input_tokens=response_context["input_tokens"],
+                output_tokens=response_context["output_tokens"],
+                total_tokens=response_context["total_tokens"],
+                cost_usd=response_context["cost_usd"],
+                http_status=http_status,
+                latency_ms=latency_ms,
+                finish_reason=_safe_string(body.get("finish_reason")),
+                metadata={
+                    "prompt_version": prompt.version,
+                    "prompt_bytes": prompt.size_bytes,
+                    "prompt_sha256": prompt.sha256,
+                    "simulated": False,
+                },
+            )
+        except ValidationError as exc:
+            code, path, message = _sanitized_validation_error(exc)
+            raise ImageAcquisitionProviderContractException(
+                "image provider response metadata failed local validation",
+                diagnostic_subtype=ImageDiagnosticSubtype.RESPONSE_MODEL_VALIDATION,
+                diagnostic_metadata=ImageDiagnosticMetadata.model_validate(
+                    images[0].provider_metadata.get("diagnostic", {})
+                ),
+                validation_error_code=code,
+                validation_error_path=path,
+                validation_error_message=message,
+                **response_context,
+            ) from exc
 
     async def _post_once(
         self,
@@ -196,8 +266,14 @@ class OpenRouterImageAcquisitionProvider:
                 timeout=self._timeout,
                 follow_redirects=False,
             ) as response:
-                content = await _read_bounded(response, self._max_response_bytes)
                 request_id = _safe_remote_id(response.headers.get("x-request-id"))
+                try:
+                    content = await _read_bounded(response, self._max_response_bytes)
+                except ImageAcquisitionProviderResponseException as exc:
+                    exc.http_status = response.status_code
+                    exc.provider_request_id = request_id
+                    exc.diagnostic_subtype = ImageDiagnosticSubtype.PROVIDER_ENVELOPE
+                    raise
                 if response.status_code not in range(200, 300):
                     self._raise_http_error(response.status_code, content, request_id)
                 try:
@@ -205,6 +281,7 @@ class OpenRouterImageAcquisitionProvider:
                 except ImageAcquisitionProviderResponseException as exc:
                     exc.http_status = response.status_code
                     exc.provider_request_id = request_id
+                    exc.diagnostic_subtype = ImageDiagnosticSubtype.PROVIDER_ENVELOPE
                     raise
                 request_id = request_id or _safe_remote_id(body.get("id"))
                 return body, request_id, response.status_code
@@ -212,18 +289,30 @@ class OpenRouterImageAcquisitionProvider:
             raise
         except httpx.TimeoutException as exc:
             raise ImageAcquisitionProviderUncertainException(
-                "image provider submission outcome is uncertain"
+                "image provider submission outcome is uncertain",
+                diagnostic_subtype=ImageDiagnosticSubtype.UNCERTAIN_TRANSPORT,
             ) from exc
         except httpx.RequestError as exc:
             raise ImageAcquisitionProviderUncertainException(
-                "image provider submission outcome is uncertain"
+                "image provider submission outcome is uncertain",
+                diagnostic_subtype=ImageDiagnosticSubtype.UNCERTAIN_TRANSPORT,
             ) from exc
 
     @staticmethod
-    def _raise_http_error(
-        status: int, content: bytes, request_id: str | None
-    ) -> None:
-        error_type = _safe_error_type(content)
+    def _raise_http_error(status: int, content: bytes, request_id: str | None) -> None:
+        body = _safe_optional_object(content)
+        error_type = _safe_error_type(body)
+        usage_value = body.get("usage")
+        usage = usage_value if isinstance(usage_value, dict) else {}
+        context: _HttpErrorContext = {
+            "provider_request_id": request_id or _safe_remote_id(body.get("id")),
+            "reported_model": _safe_bounded_string(body.get("model"), 300),
+            "input_tokens": _safe_int(usage.get("prompt_tokens", usage.get("input_tokens"))),
+            "output_tokens": _safe_int(usage.get("completion_tokens", usage.get("output_tokens"))),
+            "total_tokens": _safe_int(usage.get("total_tokens")),
+            "cost_usd": _safe_decimal(usage.get("cost")),
+            "finish_reason": _safe_bounded_string(body.get("finish_reason"), 100),
+        }
         if status in {401, 402, 403} or error_type in {
             "authentication",
             "permission_denied",
@@ -232,13 +321,15 @@ class OpenRouterImageAcquisitionProvider:
             raise ImageAcquisitionProviderAuthenticationException(
                 "image provider rejected authentication or billing authorization",
                 http_status=status,
-                provider_request_id=request_id,
+                diagnostic_subtype=ImageDiagnosticSubtype.PROVIDER_AUTHENTICATION,
+                **context,
             )
         if status == 429 or error_type == "rate_limit_exceeded":
             raise ImageAcquisitionProviderRateLimitException(
                 "image provider rate limit reached",
                 http_status=status,
-                provider_request_id=request_id,
+                diagnostic_subtype=ImageDiagnosticSubtype.PROVIDER_RATE_LIMIT,
+                **context,
             )
         if status in _TRANSIENT_STATUS or error_type in {
             "provider_overloaded",
@@ -250,24 +341,28 @@ class OpenRouterImageAcquisitionProvider:
             raise ImageAcquisitionProviderUnavailableException(
                 "image provider is temporarily unavailable",
                 http_status=status,
-                provider_request_id=request_id,
+                diagnostic_subtype=ImageDiagnosticSubtype.PROVIDER_UNAVAILABLE,
+                **context,
             )
         if error_type in {"content_policy_violation", "refusal"}:
             raise ImageAcquisitionProviderPolicyException(
                 "image request was rejected by content policy",
                 http_status=status,
-                provider_request_id=request_id,
+                diagnostic_subtype=ImageDiagnosticSubtype.PROVIDER_POLICY,
+                **context,
             )
         if status == 404 or error_type in {"not_found", "model_not_found"}:
             raise ImageAcquisitionProviderModelException(
                 "configured image model is unavailable or incompatible",
                 http_status=status,
-                provider_request_id=request_id,
+                diagnostic_subtype=ImageDiagnosticSubtype.PROVIDER_MODEL,
+                **context,
             )
         raise ImageAcquisitionProviderContractException(
             "image provider rejected the request contract",
             http_status=status,
-            provider_request_id=request_id,
+            diagnostic_subtype=ImageDiagnosticSubtype.PROVIDER_HTTP_ERROR,
+            **context,
         )
 
     def _decode_images(
@@ -276,57 +371,116 @@ class OpenRouterImageAcquisitionProvider:
         *,
         expected_width: int,
         expected_height: int,
+        requested_output_format: str,
     ) -> tuple[GeneratedImagePayload, ...]:
+        diagnostic = ImageDiagnosticMetadata(
+            expected_width=expected_width,
+            expected_height=expected_height,
+            expected_aspect_ratio=expected_width / expected_height,
+            requested_output_format=requested_output_format,
+        )
         data = body.get("data")
-        if not isinstance(data, list) or len(data) != 1:
-            raise ImageAcquisitionProviderResponseException(
-                "image provider response must contain exactly one image"
+        if not isinstance(data, list):
+            raise _image_response_error(
+                "image provider response contains no image list",
+                ImageDiagnosticSubtype.MISSING_IMAGE,
+                diagnostic,
+            )
+        if not data:
+            raise _image_response_error(
+                "image provider response contains no image",
+                ImageDiagnosticSubtype.MISSING_IMAGE,
+                diagnostic,
+            )
+        if len(data) != 1:
+            raise _image_response_error(
+                "image provider response contains multiple images",
+                ImageDiagnosticSubtype.MULTIPLE_IMAGES,
+                diagnostic,
             )
         item = data[0]
         if not isinstance(item, dict) or "url" in item:
-            raise ImageAcquisitionProviderResponseException(
-                "image provider must return embedded bytes, not a URL"
+            raise _image_response_error(
+                "image provider image item has an invalid envelope",
+                ImageDiagnosticSubtype.PROVIDER_ENVELOPE,
+                diagnostic,
             )
+        media_type = item.get("media_type")
+        diagnostic = diagnostic.model_copy(
+            update={
+                "declared_media_type": media_type
+                if isinstance(media_type, str) and len(media_type) <= 100
+                else None,
+            }
+        )
         encoded = item.get("b64_json")
         if not isinstance(encoded, str) or not encoded:
-            raise ImageAcquisitionProviderResponseException(
-                "image provider response contains no image bytes"
+            raise _image_response_error(
+                "image provider response contains no image bytes",
+                ImageDiagnosticSubtype.MISSING_IMAGE,
+                diagnostic,
+            )
+        if len(encoded) > ((self._max_decoded_bytes + 2) // 3) * 4:
+            raise _image_response_error(
+                "encoded image exceeds the configured limit",
+                ImageDiagnosticSubtype.DECODED_IMAGE_TOO_LARGE,
+                diagnostic,
             )
         if (
             encoded.startswith("data:")
             or any(char.isspace() for char in encoded)
             or not _BASE64.fullmatch(encoded)
-            or len(encoded) > ((self._max_decoded_bytes + 2) // 3) * 4
         ):
-            raise ImageAcquisitionProviderResponseException(
-                "image provider returned invalid or oversized base64"
+            raise _image_response_error(
+                "image provider returned invalid base64",
+                ImageDiagnosticSubtype.INVALID_BASE64,
+                diagnostic,
             )
         try:
             content = base64.b64decode(encoded, validate=True)
         except (binascii.Error, ValueError) as exc:
-            raise ImageAcquisitionProviderResponseException(
-                "image provider returned invalid base64"
+            raise _image_response_error(
+                "image provider returned invalid base64",
+                ImageDiagnosticSubtype.INVALID_BASE64,
+                diagnostic,
             ) from exc
         if not content or len(content) > self._max_decoded_bytes:
-            raise ImageAcquisitionProviderResponseException(
-                "decoded image exceeds the configured limit"
+            raise _image_response_error(
+                "decoded image exceeds the configured limit",
+                ImageDiagnosticSubtype.DECODED_IMAGE_TOO_LARGE,
+                diagnostic,
             )
-        media_type = item.get("media_type")
+        diagnostic = diagnostic.model_copy(
+            update={
+                "decoded_size_bytes": len(content),
+            }
+        )
         if media_type is not None and media_type not in _MIME_TYPES:
-            raise ImageAcquisitionProviderResponseException(
-                "image provider returned an unsupported media type"
+            raise _image_response_error(
+                "image provider returned an unsupported media type",
+                ImageDiagnosticSubtype.UNSUPPORTED_IMAGE_FORMAT,
+                diagnostic,
             )
         lowered_prefix = content[:256].lstrip().lower()
         if lowered_prefix.startswith((b"<svg", b"<?xml", b"<html", b"<!doctype")):
-            raise ImageAcquisitionProviderResponseException(
-                "image provider returned active or vector content"
+            raise _image_response_error(
+                "image provider returned active or vector content",
+                ImageDiagnosticSubtype.UNSUPPORTED_IMAGE_FORMAT,
+                diagnostic,
             )
         actual_media_type = _detect_image_mime(content)
-        if actual_media_type is None or (
-            media_type is not None and media_type != actual_media_type
-        ):
-            raise ImageAcquisitionProviderResponseException(
-                "image provider media signature is invalid"
+        diagnostic = diagnostic.model_copy(update={"detected_media_type": actual_media_type})
+        if actual_media_type is None:
+            raise _image_response_error(
+                "image provider media signature is invalid",
+                ImageDiagnosticSubtype.INVALID_IMAGE_SIGNATURE,
+                diagnostic,
+            )
+        if media_type is not None and media_type != actual_media_type:
+            raise _image_response_error(
+                "declared image MIME differs from detected signature",
+                ImageDiagnosticSubtype.MIME_MISMATCH,
+                diagnostic,
             )
         try:
             with Image.open(io.BytesIO(content)) as decoded:
@@ -335,34 +489,59 @@ class OpenRouterImageAcquisitionProvider:
                 width, height = decoded.size
                 decoded_format = (decoded.format or "").upper()
         except (Image.DecompressionBombError, OSError, UnidentifiedImageError) as exc:
-            raise ImageAcquisitionProviderResponseException(
-                "image provider returned an undecodable image"
+            raise _image_response_error(
+                "image provider returned an undecodable image",
+                ImageDiagnosticSubtype.UNDECODABLE_IMAGE,
+                diagnostic,
             ) from exc
+        diagnostic = diagnostic.model_copy(
+            update={
+                "decoded_width": width if width > 0 else None,
+                "decoded_height": height if height > 0 else None,
+                "decoded_format": decoded_format[:20] or None,
+                "actual_aspect_ratio": width / height if width > 0 and height > 0 else None,
+            }
+        )
         expected_format = {
             "image/png": "PNG",
             "image/jpeg": "JPEG",
             "image/webp": "WEBP",
         }[actual_media_type]
         if decoded_format != expected_format or width <= 0 or height <= 0:
-            raise ImageAcquisitionProviderResponseException(
-                "image provider image dimensions or format are invalid"
+            subtype = (
+                ImageDiagnosticSubtype.INVALID_DIMENSIONS
+                if width <= 0 or height <= 0
+                else ImageDiagnosticSubtype.UNSUPPORTED_IMAGE_FORMAT
+            )
+            raise _image_response_error(
+                "image provider image dimensions or format are invalid",
+                subtype,
+                diagnostic,
             )
         if width * height > 40_000_000:
-            raise ImageAcquisitionProviderResponseException(
-                "image provider image dimensions exceed the configured limit"
+            raise _image_response_error(
+                "image provider image dimensions exceed the configured limit",
+                ImageDiagnosticSubtype.DECODED_IMAGE_TOO_LARGE,
+                diagnostic,
             )
         expected_ratio = expected_width / expected_height
         actual_ratio = width / height
         if abs(actual_ratio - expected_ratio) / expected_ratio > 0.03:
-            raise ImageAcquisitionProviderResponseException(
-                "image provider image aspect ratio is outside tolerance"
+            raise _image_response_error(
+                "image provider image aspect ratio is outside tolerance",
+                ImageDiagnosticSubtype.ASPECT_RATIO_MISMATCH,
+                diagnostic,
             )
         return (
             GeneratedImagePayload(
                 content=content,
                 mime_type=actual_media_type,
                 index=0,
-                provider_metadata={"width": width, "height": height},
+                provider_metadata={
+                    "width": width,
+                    "height": height,
+                    "diagnostic": diagnostic.model_dump(mode="json"),
+                },
             ),
         )
 
@@ -416,13 +595,16 @@ def _load_strict_object(content: bytes) -> dict[str, Any]:
     return value
 
 
-def _safe_error_type(content: bytes) -> str | None:
+def _safe_optional_object(content: bytes) -> dict[str, Any]:
     if len(content) > 64_000:
-        return None
+        return {}
     try:
-        body = _load_strict_object(content)
+        return _load_strict_object(content)
     except ImageAcquisitionProviderResponseException:
-        return None
+        return {}
+
+
+def _safe_error_type(body: dict[str, Any]) -> str | None:
     direct = body.get("error_type")
     if isinstance(direct, str) and len(direct) <= 100:
         return direct
@@ -465,6 +647,68 @@ def _validate_referer(value: str) -> str:
 
 def _safe_string(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _safe_bounded_string(value: Any, maximum: int) -> str | None:
+    return value if isinstance(value, str) and 1 <= len(value) <= maximum else None
+
+
+def _image_response_error(
+    message: str,
+    subtype: ImageDiagnosticSubtype,
+    metadata: ImageDiagnosticMetadata,
+) -> ImageAcquisitionProviderResponseException:
+    return ImageAcquisitionProviderResponseException(
+        message,
+        diagnostic_subtype=subtype,
+        diagnostic_metadata=metadata,
+        validation_error_code=subtype.value,
+        validation_error_path="data[0]",
+        validation_error_message=message[:500],
+    )
+
+
+def _attach_response_context(
+    error: ImageAcquisitionProviderError,
+    context: Mapping[str, Any],
+) -> None:
+    for name, value in context.items():
+        if getattr(error, name, None) is None:
+            setattr(error, name, value)
+
+
+def _subtype_for_provider_exception(
+    error: ImageAcquisitionProviderError,
+) -> ImageDiagnosticSubtype:
+    if isinstance(error, ImageAcquisitionProviderAuthenticationException):
+        return ImageDiagnosticSubtype.PROVIDER_AUTHENTICATION
+    if isinstance(error, ImageAcquisitionProviderRateLimitException):
+        return ImageDiagnosticSubtype.PROVIDER_RATE_LIMIT
+    if isinstance(error, ImageAcquisitionProviderUnavailableException):
+        return ImageDiagnosticSubtype.PROVIDER_UNAVAILABLE
+    if isinstance(error, ImageAcquisitionProviderPolicyException):
+        return ImageDiagnosticSubtype.PROVIDER_POLICY
+    if isinstance(error, ImageAcquisitionProviderModelException):
+        return ImageDiagnosticSubtype.PROVIDER_MODEL
+    if isinstance(error, ImageAcquisitionProviderContractException):
+        return ImageDiagnosticSubtype.PROVIDER_CONTRACT
+    if isinstance(error, ImageAcquisitionProviderUncertainException):
+        return ImageDiagnosticSubtype.UNCERTAIN_TRANSPORT
+    if isinstance(error, ImageAcquisitionProviderResponseException):
+        return ImageDiagnosticSubtype.PROVIDER_ENVELOPE
+    return ImageDiagnosticSubtype.UNKNOWN_IMAGE_ERROR
+
+
+def _sanitized_validation_error(
+    error: ValidationError,
+) -> tuple[str, str, str]:
+    first = error.errors(include_url=False, include_context=False, include_input=False)[0]
+    raw_type = str(first.get("type", "validation_error"))
+    code = re.sub(r"[^a-z0-9_]+", "_", raw_type.lower())[:100] or "validation_error"
+    location = first.get("loc", ())
+    path = ".".join(str(part) for part in location)[:300] or "response"
+    message = " ".join(str(first.get("msg", "response validation failed")).split())[:500]
+    return code, path, message
 
 
 def _safe_remote_id(value: Any) -> str | None:

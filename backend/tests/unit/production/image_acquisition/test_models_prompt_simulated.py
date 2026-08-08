@@ -1,5 +1,6 @@
 """Provider-neutral contracts, prompts, and simulated raster tests."""
 
+import json
 from io import BytesIO
 
 import pytest
@@ -144,6 +145,16 @@ def test_manifest_is_frozen_strict_and_canonical(visual_asset_plan) -> None:
         )
     with pytest.raises(ValidationError):
         value.provider = "changed"  # type: ignore[misc]
+
+
+def test_historical_manifest_without_diagnostics_still_loads(visual_asset_plan) -> None:
+    value = manifest(pending_entry(visual_asset_plan.assets[0]))
+    historical = value.model_dump(mode="json", exclude_none=True)
+
+    loaded = deserialize_image_acquisition_manifest(json.dumps(historical).encode())
+
+    assert loaded.entries[0].diagnostic_subtype is None
+    assert loaded.entries[0].diagnostic_metadata is None
 
 
 def test_manifest_transitions_reject_regression(visual_asset_plan) -> None:

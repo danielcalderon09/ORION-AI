@@ -1,6 +1,13 @@
 """Typed failures for durable image acquisition."""
 # ruff: noqa: N818
 
+from decimal import Decimal
+
+from backend.src.production.image_acquisition.diagnostics import (
+    ImageDiagnosticMetadata,
+    ImageDiagnosticSubtype,
+)
+
 
 class ImageAcquisitionError(RuntimeError):
     """Base image acquisition failure."""
@@ -23,10 +30,36 @@ class ImageAcquisitionProviderError(ImageAcquisitionError):
         *,
         http_status: int | None = None,
         provider_request_id: str | None = None,
+        diagnostic_subtype: ImageDiagnosticSubtype | None = None,
+        diagnostic_metadata: ImageDiagnosticMetadata | None = None,
+        requested_model: str | None = None,
+        reported_model: str | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        total_tokens: int | None = None,
+        cost_usd: Decimal | None = None,
+        latency_ms: float | None = None,
+        finish_reason: str | None = None,
+        validation_error_code: str | None = None,
+        validation_error_path: str | None = None,
+        validation_error_message: str | None = None,
     ) -> None:
         super().__init__(message)
         self.http_status = http_status
         self.provider_request_id = provider_request_id
+        self.diagnostic_subtype = diagnostic_subtype
+        self.diagnostic_metadata = diagnostic_metadata
+        self.requested_model = requested_model
+        self.reported_model = reported_model
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.total_tokens = total_tokens
+        self.cost_usd = cost_usd
+        self.latency_ms = latency_ms
+        self.finish_reason = finish_reason
+        self.validation_error_code = validation_error_code
+        self.validation_error_path = validation_error_path
+        self.validation_error_message = validation_error_message
 
 
 class ImageAcquisitionProviderDependencyException(ImageAcquisitionProviderError):
@@ -97,9 +130,7 @@ class ProductionVisualAssetPlanPathException(ProductionVisualAssetPlanReadError)
     pass
 
 
-class ProductionVisualAssetPlanLinkException(
-    ProductionVisualAssetPlanPathException
-):
+class ProductionVisualAssetPlanLinkException(ProductionVisualAssetPlanPathException):
     pass
 
 

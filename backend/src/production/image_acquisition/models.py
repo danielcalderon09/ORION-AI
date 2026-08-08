@@ -12,6 +12,10 @@ from pydantic import Field, field_validator, model_validator
 from backend.src.production.application.sanitization import validate_safe_json
 from backend.src.production.domain.base import ContractModel
 from backend.src.production.domain.path_rules import validate_relative_path
+from backend.src.production.image_acquisition.diagnostics import (
+    ImageDiagnosticMetadata,
+    ImageDiagnosticSubtype,
+)
 from backend.src.production.visual_asset_planning.models import (
     GenerationMode,
     VisualAssetRole,
@@ -86,6 +90,14 @@ class ProductionImageAcquisitionEntry(ContractModel):
     request_status: OpenRouterImageRequestStatus | None = None
     request_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     fresh_submission_permitted: bool | None = None
+    diagnostic_subtype: ImageDiagnosticSubtype | None = None
+    validation_error_code: str | None = Field(
+        default=None,
+        pattern=r"^[a-z0-9_]{1,100}$",
+    )
+    validation_error_path: str | None = Field(default=None, max_length=300)
+    validation_error_message: str | None = Field(default=None, max_length=500)
+    diagnostic_metadata: ImageDiagnosticMetadata | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("storage_path")
@@ -147,6 +159,15 @@ class ProductionImageAcquisitionEntry(ContractModel):
                 self.request_status is OpenRouterImageRequestStatus.PREPARED
             ) != self.fresh_submission_permitted:
                 raise ValueError("remote image fresh-submission policy is inconsistent")
+        if self.diagnostic_subtype is None and any(
+            value is not None
+            for value in (
+                self.validation_error_code,
+                self.validation_error_path,
+                self.validation_error_message,
+            )
+        ):
+            raise ValueError("image validation summary requires a diagnostic subtype")
         return self
 
 

@@ -6,6 +6,7 @@ import json
 import logging
 from collections.abc import Callable
 from datetime import datetime
+from decimal import Decimal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import ValidationError
@@ -13,8 +14,18 @@ from pydantic import ValidationError
 from backend.src.production.application.commands import StageCommand
 from backend.src.production.application.results import StageOutcome, StageResult
 from backend.src.production.binary_assets.exceptions import (
+    BinaryAssetConfigurationError,
+    BinaryAssetConflictError,
+    BinaryAssetCorruptError,
     BinaryAssetError,
+    BinaryAssetHashError,
+    BinaryAssetIOError,
+    BinaryAssetLinkError,
+    BinaryAssetMetadataError,
+    BinaryAssetMimeError,
     BinaryAssetNotFoundError,
+    BinaryAssetPathError,
+    BinaryAssetSizeError,
 )
 from backend.src.production.binary_assets.models import (
     BinaryAssetRole,
@@ -35,6 +46,10 @@ from backend.src.production.domain.enums import (
 from backend.src.production.image_acquisition.configuration import (
     ImageAcquisitionConfiguration,
     OpenRouterImageBillablePolicy,
+)
+from backend.src.production.image_acquisition.diagnostics import (
+    ImageDiagnosticMetadata,
+    ImageDiagnosticSubtype,
 )
 from backend.src.production.image_acquisition.exceptions import (
     ImageAcquisitionManifestError,
@@ -139,9 +154,7 @@ class ImageAcquisitionHandler:
         context: StageContext,
     ) -> StageExecutionOutput:
         if command.stage is not ProductionStage.ACQUIRING_ASSETS:
-            raise ValueError(
-                "ImageAcquisitionHandler only supports ACQUIRING_ASSETS"
-            )
+            raise ValueError("ImageAcquisitionHandler only supports ACQUIRING_ASSETS")
         started_at = self._aware_now()
         logger.info(
             "image acquisition stage started",
@@ -154,9 +167,7 @@ class ImageAcquisitionHandler:
             },
         )
         try:
-            source = await self._plan_reader.read_for_image_acquisition(
-                context=context
-            )
+            source = await self._plan_reader.read_for_image_acquisition(context=context)
             assets = tuple(
                 sorted(
                     source.visual_asset_plan.assets,
@@ -257,8 +268,7 @@ class ImageAcquisitionHandler:
                 }:
                     outcome = (
                         StageOutcome.FAILED_TRANSIENT
-                        if entry.status
-                        is ImageAcquisitionEntryStatus.FAILED_TRANSIENT
+                        if entry.status is ImageAcquisitionEntryStatus.FAILED_TRANSIENT
                         else StageOutcome.FAILED_PERMANENT
                     )
                     return self._failure(
@@ -354,22 +364,6 @@ class ImageAcquisitionHandler:
                     response = await self._provider.generate_image(
                         self._provider_request(command, context, asset_spec)
                     )
-                    if len(response.images) != 1:
-                        raise ImageAcquisitionProviderContractException(
-                            "image provider must return exactly one image"
-                        )
-                    payload = response.images[0]
-                    expected_mime = _MIME[self._configuration.output_format]
-                    if (
-                        payload.mime_type is not None
-                        and payload.mime_type != expected_mime
-                    ):
-                        raise ImageAcquisitionProviderContractException(
-                            "provider MIME differs from requested output format"
-                        )
-                    prompt = self._prompt_builder.build(
-                        self._provider_request(command, context, asset_spec)
-                    )
                     if self._provider_name == "openrouter":
                         responded = generating.model_copy(
                             update={
@@ -385,6 +379,7 @@ class ImageAcquisitionHandler:
                                 "http_status": response.http_status,
                                 "latency_ms": response.latency_ms,
                                 "finish_reason": response.finish_reason,
+                                "diagnostic_metadata": _response_diagnostic(response),
                             }
                         )
                         current = replace_manifest_entry(manifest, responded)
@@ -393,6 +388,45 @@ class ImageAcquisitionHandler:
                         )
                         manifest = current
                         generating = responded
+                    if len(response.images) != 1:
+                        raise ImageAcquisitionProviderContractException(
+                            "image provider must return exactly one image",
+                            diagnostic_subtype=ImageDiagnosticSubtype.MULTIPLE_IMAGES,
+                            diagnostic_metadata=generating.diagnostic_metadata,
+                        )
+                    payload = response.images[0]
+                    expected_mime = _MIME[self._configuration.output_format]
+                    if payload.mime_type is not None and payload.mime_type != expected_mime:
+                        raise ImageAcquisitionProviderContractException(
+                            "provider MIME differs from requested output format",
+                            diagnostic_subtype=ImageDiagnosticSubtype.MIME_MISMATCH,
+                            diagnostic_metadata=(
+                                generating.diagnostic_metadata.model_copy(
+                                    update={
+                                        "requested_output_format": (
+                                            self._configuration.output_format
+                                        )
+                                    }
+                                )
+                                if generating.diagnostic_metadata is not None
+                                else ImageDiagnosticMetadata(
+                                    declared_media_type=payload.mime_type,
+                                    detected_media_type=payload.mime_type,
+                                    expected_width=asset_spec.width,
+                                    expected_height=asset_spec.height,
+                                    expected_aspect_ratio=(asset_spec.width / asset_spec.height),
+                                    requested_output_format=(self._configuration.output_format),
+                                )
+                            ),
+                            validation_error_code="mime_mismatch",
+                            validation_error_path="data[0].media_type",
+                            validation_error_message=(
+                                "provider MIME differs from requested output format"
+                            ),
+                        )
+                    prompt = self._prompt_builder.build(
+                        self._provider_request(command, context, asset_spec)
+                    )
                     binary = await self._binary_writer.write(
                         request=BinaryAssetWriteRequest(
                             asset_id=_binary_asset_id(asset_spec.asset_id),
@@ -401,20 +435,14 @@ class ImageAcquisitionHandler:
                             shot_id=asset_spec.source_shot_id,
                             asset_role=_ROLE[asset_spec.role],
                             mime_type=expected_mime,
-                            extension=_EXTENSION[
-                                self._configuration.output_format
-                            ],
+                            extension=_EXTENSION[self._configuration.output_format],
                             expected_width=(
-                                _safe_image_dimension(
-                                    payload.provider_metadata.get("width")
-                                )
+                                _safe_image_dimension(payload.provider_metadata.get("width"))
                                 if self._provider_name == "openrouter"
                                 else asset_spec.width
                             ),
                             expected_height=(
-                                _safe_image_dimension(
-                                    payload.provider_metadata.get("height")
-                                )
+                                _safe_image_dimension(payload.provider_metadata.get("height"))
                                 if self._provider_name == "openrouter"
                                 else asset_spec.height
                             ),
@@ -422,13 +450,8 @@ class ImageAcquisitionHandler:
                                 source_visual_asset_id=asset_spec.asset_id,
                                 source_visual_asset_plan_artifact_id=source.artifact_id,
                                 provider=response.provider,
-                                model_version=(
-                                    response.reported_model
-                                    or response.requested_model
-                                ),
-                                deterministic=response.metadata.get(
-                                    "deterministic"
-                                ),
+                                model_version=(response.reported_model or response.requested_model),
+                                deterministic=response.metadata.get("deterministic"),
                                 attributes={
                                     "source_visual_asset_plan_sha256": source.sha256,
                                     "prompt_version": prompt.version,
@@ -454,6 +477,7 @@ class ImageAcquisitionHandler:
                         entry=generating,
                         status=ImageAcquisitionEntryStatus.UNCERTAIN,
                         error_code="external_result_uncertain",
+                        diagnostic_subtype=ImageDiagnosticSubtype.UNCERTAIN_TRANSPORT,
                     )
                     raise
                 except (
@@ -474,13 +498,29 @@ class ImageAcquisitionHandler:
                         StageOutcome.NEEDS_USER_ACTION,
                         "image_acquisition_result_uncertain",
                     )
-                except (
-                    ImageAcquisitionProviderError,
-                    BinaryAssetError,
-                    ValidationError,
-                    TypeError,
-                    ValueError,
-                ) as exc:
+                except BinaryAssetError as exc:
+                    await self._checkpoint_error(
+                        context=context,
+                        manifest=manifest,
+                        entry=generating,
+                        status=ImageAcquisitionEntryStatus.FAILED_PERMANENT,
+                        error_code=self._error_code(exc),
+                        error=exc,
+                        diagnostic_subtype=_binary_diagnostic_subtype(exc),
+                    )
+                    raise
+                except (ValidationError, TypeError, ValueError) as exc:
+                    await self._checkpoint_error(
+                        context=context,
+                        manifest=manifest,
+                        entry=generating,
+                        status=ImageAcquisitionEntryStatus.FAILED_PERMANENT,
+                        error_code=self._error_code(exc),
+                        error=exc,
+                        diagnostic_subtype=(ImageDiagnosticSubtype.BINARY_ASSET_VALIDATION),
+                    )
+                    raise
+                except ImageAcquisitionProviderError as exc:
                     await self._checkpoint_error(
                         context=context,
                         manifest=manifest,
@@ -546,6 +586,7 @@ class ImageAcquisitionHandler:
                 started_at,
                 StageOutcome.FAILED_PERMANENT,
                 self._error_code(exc),
+                diagnostic_subtype=_diagnostic_subtype(exc),
             )
         return self._success(
             command=command,
@@ -640,20 +681,12 @@ class ImageAcquisitionHandler:
             or binary.width != spec.width
             or binary.height != spec.height
             or binary.metadata.source_visual_asset_id != spec.asset_id
-            or binary.metadata.source_visual_asset_plan_artifact_id
-            != source.artifact_id
-            or binary.metadata.attributes.get(
-                "source_visual_asset_plan_sha256"
-            )
-            != source.sha256
-            or binary.metadata.attributes.get(
-                "acquisition_configuration_sha256"
-            )
+            or binary.metadata.source_visual_asset_plan_artifact_id != source.artifact_id
+            or binary.metadata.attributes.get("source_visual_asset_plan_sha256") != source.sha256
+            or binary.metadata.attributes.get("acquisition_configuration_sha256")
             != self._configuration_sha256()
-            or binary.metadata.attributes.get("configured_provider")
-            != self._provider_name
-            or binary.metadata.attributes.get("configured_model")
-            != self._requested_model
+            or binary.metadata.attributes.get("configured_provider") != self._provider_name
+            or binary.metadata.attributes.get("configured_model") != self._requested_model
         ):
             raise ImageAcquisitionValidationError(
                 "binary asset provenance differs from visual asset plan"
@@ -670,9 +703,7 @@ class ImageAcquisitionHandler:
         ).encode("utf-8")
         return hashlib.sha256(content).hexdigest()
 
-    def _remote_fingerprint(
-        self, asset: ProductionVisualAssetSpec, prompt_sha256: str
-    ) -> str:
+    def _remote_fingerprint(self, asset: ProductionVisualAssetSpec, prompt_sha256: str) -> str:
         content = json.dumps(
             {
                 "provider": self._provider_name,
@@ -735,20 +766,26 @@ class ImageAcquisitionHandler:
         status: ImageAcquisitionEntryStatus,
         error_code: str,
         error: Exception | None = None,
+        diagnostic_subtype: ImageDiagnosticSubtype | None = None,
     ) -> None:
         remote_status = None
         fresh_submission = None
         if entry.request_status is not None:
-            remote_status = entry.request_status
-            if entry.request_status is not OpenRouterImageRequestStatus.COMPLETED:
-                remote_status = (
-                    OpenRouterImageRequestStatus.UNCERTAIN
-                    if status is ImageAcquisitionEntryStatus.UNCERTAIN
-                    else OpenRouterImageRequestStatus.FAILED
-                )
+            remote_status = (
+                OpenRouterImageRequestStatus.UNCERTAIN
+                if status is ImageAcquisitionEntryStatus.UNCERTAIN
+                else OpenRouterImageRequestStatus.FAILED
+            )
             fresh_submission = False
         error_http_status = getattr(error, "http_status", None)
         error_request_id = getattr(error, "provider_request_id", None)
+        subtype = (
+            diagnostic_subtype
+            or getattr(error, "diagnostic_subtype", None)
+            or _diagnostic_subtype(error)
+        )
+        validation_code, validation_path, validation_message = _validation_summary(error)
+        diagnostic_metadata = getattr(error, "diagnostic_metadata", None)
         failed = entry.model_copy(
             update={
                 "status": status,
@@ -756,14 +793,56 @@ class ImageAcquisitionHandler:
                 "request_status": remote_status,
                 "fresh_submission_permitted": fresh_submission,
                 "http_status": (
-                    error_http_status
-                    if error_http_status is not None
-                    else entry.http_status
+                    error_http_status if error_http_status is not None else entry.http_status
                 ),
                 "provider_request_id": (
-                    error_request_id
-                    if error_request_id is not None
-                    else entry.provider_request_id
+                    error_request_id if error_request_id is not None else entry.provider_request_id
+                ),
+                "requested_model": (
+                    getattr(error, "requested_model", None)
+                    or entry.requested_model
+                    or self._requested_model
+                ),
+                "reported_model": (getattr(error, "reported_model", None) or entry.reported_model),
+                "input_tokens": (
+                    getattr(error, "input_tokens", None)
+                    if getattr(error, "input_tokens", None) is not None
+                    else entry.input_tokens
+                ),
+                "output_tokens": (
+                    getattr(error, "output_tokens", None)
+                    if getattr(error, "output_tokens", None) is not None
+                    else entry.output_tokens
+                ),
+                "total_tokens": (
+                    getattr(error, "total_tokens", None)
+                    if getattr(error, "total_tokens", None) is not None
+                    else entry.total_tokens
+                ),
+                "cost_usd": _durable_reported_cost(
+                    getattr(error, "cost_usd", None),
+                    entry.cost_usd,
+                ),
+                "latency_ms": (
+                    getattr(error, "latency_ms", None)
+                    if getattr(error, "latency_ms", None) is not None
+                    else entry.latency_ms
+                ),
+                "finish_reason": (getattr(error, "finish_reason", None) or entry.finish_reason),
+                "diagnostic_subtype": subtype,
+                "validation_error_code": (
+                    getattr(error, "validation_error_code", None) or validation_code
+                ),
+                "validation_error_path": (
+                    getattr(error, "validation_error_path", None) or validation_path
+                ),
+                "validation_error_message": (
+                    getattr(error, "validation_error_message", None) or validation_message
+                ),
+                "diagnostic_metadata": (
+                    diagnostic_metadata
+                    if isinstance(diagnostic_metadata, ImageDiagnosticMetadata)
+                    else entry.diagnostic_metadata
                 ),
             }
         )
@@ -830,12 +909,10 @@ class ImageAcquisitionHandler:
         if (
             manifest.source_visual_asset_plan_artifact_id != source.artifact_id
             or manifest.source_visual_asset_plan_sha256 != source.sha256
-            or manifest.source_visual_asset_plan_schema_version
-            != source.schema_version
+            or manifest.source_visual_asset_plan_schema_version != source.schema_version
             or tuple(entry.visual_asset_id for entry in manifest.entries)
             != tuple(asset.asset_id for asset in assets)
-            or manifest.metadata.get("configuration_sha256")
-            != self._configuration_sha256()
+            or manifest.metadata.get("configuration_sha256") != self._configuration_sha256()
         ):
             raise ImageAcquisitionValidationError(
                 "manifest source differs from durable visual asset plan"
@@ -897,41 +974,25 @@ class ImageAcquisitionHandler:
                 "provider": response.provider
                 if response is not None
                 else binary.metadata.provider or "orion-recovery",
-                "requested_model": response.requested_model
-                if response is not None
-                else None,
+                "requested_model": response.requested_model if response is not None else None,
                 "reported_model": response.reported_model
                 if response is not None
                 else binary.metadata.model_version,
-                "provider_request_id": response.request_id
-                if response is not None
-                else None,
-                "input_tokens": response.input_tokens
-                if response is not None
-                else None,
-                "output_tokens": response.output_tokens
-                if response is not None
-                else None,
-                "total_tokens": response.total_tokens
-                if response is not None
-                else None,
+                "provider_request_id": response.request_id if response is not None else None,
+                "input_tokens": response.input_tokens if response is not None else None,
+                "output_tokens": response.output_tokens if response is not None else None,
+                "total_tokens": response.total_tokens if response is not None else None,
                 "cost_usd": response.cost_usd if response is not None else None,
                 "http_status": response.http_status if response is not None else None,
-                "latency_ms": response.latency_ms
-                if response is not None
-                else 0,
-                "finish_reason": response.finish_reason
-                if response is not None
-                else "recovered",
+                "latency_ms": response.latency_ms if response is not None else 0,
+                "finish_reason": response.finish_reason if response is not None else "recovered",
                 "error_code": None,
                 "request_status": (
                     OpenRouterImageRequestStatus.COMPLETED
                     if response is not None and response.provider == "openrouter"
                     else entry.request_status
                 ),
-                "fresh_submission_permitted": (
-                    False if entry.request_status is not None else None
-                ),
+                "fresh_submission_permitted": (False if entry.request_status is not None else None),
                 "metadata": {
                     "recovered": recovered,
                     "simulated": binary.metadata.attributes.get(
@@ -974,9 +1035,7 @@ class ImageAcquisitionHandler:
                     provider=entry.provider,
                     model_version=entry.reported_model or entry.requested_model,
                     metadata={
-                        "source_visual_asset_plan_artifact_id": str(
-                            source.artifact_id
-                        ),
+                        "source_visual_asset_plan_artifact_id": str(source.artifact_id),
                         "source_visual_asset_plan_sha256": source.sha256,
                         "source_visual_asset_id": entry.visual_asset_id,
                         "source_scene_id": entry.source_scene_id,
@@ -985,12 +1044,8 @@ class ImageAcquisitionHandler:
                         "generation_mode": entry.generation_mode.value,
                         "width": binary.width,
                         "height": binary.height,
-                        "prompt_version": binary.metadata.attributes.get(
-                            "prompt_version"
-                        ),
-                        "prompt_sha256": binary.metadata.attributes.get(
-                            "prompt_sha256"
-                        ),
+                        "prompt_version": binary.metadata.attributes.get("prompt_version"),
+                        "prompt_sha256": binary.metadata.attributes.get("prompt_sha256"),
                         "provider": entry.provider,
                         "requested_model": entry.requested_model,
                         "reported_model": entry.reported_model,
@@ -998,9 +1053,7 @@ class ImageAcquisitionHandler:
                         "input_tokens": entry.input_tokens,
                         "output_tokens": entry.output_tokens,
                         "total_tokens": entry.total_tokens,
-                        "cost_usd": str(entry.cost_usd)
-                        if entry.cost_usd is not None
-                        else None,
+                        "cost_usd": str(entry.cost_usd) if entry.cost_usd is not None else None,
                         "latency_ms": entry.latency_ms,
                         "finish_reason": entry.finish_reason,
                         "simulated": entry.metadata.get("simulated", False),
@@ -1028,9 +1081,7 @@ class ImageAcquisitionHandler:
                 model_version=self._requested_model,
                 metadata={
                     "schema_version": manifest.schema_version,
-                    "source_visual_asset_plan_artifact_id": str(
-                        source.artifact_id
-                    ),
+                    "source_visual_asset_plan_artifact_id": str(source.artifact_id),
                     "source_visual_asset_plan_sha256": source.sha256,
                     "entry_count": len(manifest.entries),
                     "stored_count": manifest.summary.stored,
@@ -1081,6 +1132,7 @@ class ImageAcquisitionHandler:
         error_code: str,
         *,
         retry_after_seconds: float | None = None,
+        diagnostic_subtype: ImageDiagnosticSubtype | None = None,
     ) -> StageExecutionOutput:
         logger.warning(
             "image acquisition stage did not complete",
@@ -1107,6 +1159,9 @@ class ImageAcquisitionHandler:
                 metadata={
                     "handler": type(self).__name__,
                     "error_category": error_code,
+                    "diagnostic_subtype": (
+                        diagnostic_subtype.value if diagnostic_subtype is not None else None
+                    ),
                 },
             )
         )
@@ -1158,6 +1213,18 @@ class ImageAcquisitionHandler:
                 ImageAcquisitionProviderResponseException,
                 "image_provider_response",
             ),
+            (
+                ImageAcquisitionProviderContractException,
+                "image_provider_contract",
+            ),
+            (
+                ImageAcquisitionProviderConfigurationException,
+                "image_provider_configuration",
+            ),
+            (ValidationError, "image_response_model_validation"),
+            (TypeError, "image_type_error"),
+            (ValueError, "image_validation_error"),
+            (ImageAcquisitionProviderError, "image_provider_error"),
             (BinaryAssetError, "image_binary_integrity"),
             (ImageAcquisitionManifestError, "image_manifest_invalid"),
         )
@@ -1194,9 +1261,7 @@ class ImageAcquisitionHandler:
                 "width": binary.width,
                 "height": binary.height,
                 "size_bytes": binary.size_bytes,
-                "cost_usd": (
-                    str(entry.cost_usd) if entry.cost_usd is not None else None
-                ),
+                "cost_usd": (str(entry.cost_usd) if entry.cost_usd is not None else None),
                 "recovered": entry.metadata.get("recovered", False),
                 "simulated": entry.metadata.get("simulated", False),
             },
@@ -1207,11 +1272,168 @@ def _entry_for(
     manifest: ProductionImageAcquisitionManifest,
     visual_asset_id: str,
 ) -> ProductionImageAcquisitionEntry:
-    return next(
-        entry
-        for entry in manifest.entries
-        if entry.visual_asset_id == visual_asset_id
+    return next(entry for entry in manifest.entries if entry.visual_asset_id == visual_asset_id)
+
+
+def _response_diagnostic(
+    response: ImageAcquisitionProviderResponse,
+) -> ImageDiagnosticMetadata | None:
+    if not response.images:
+        return None
+    raw = response.images[0].provider_metadata.get("diagnostic")
+    if isinstance(raw, dict):
+        try:
+            return ImageDiagnosticMetadata.model_validate(raw)
+        except ValidationError:
+            return None
+    payload = response.images[0]
+    width = payload.provider_metadata.get("width")
+    height = payload.provider_metadata.get("height")
+    return ImageDiagnosticMetadata(
+        declared_media_type=payload.mime_type,
+        detected_media_type=payload.mime_type,
+        decoded_width=width if isinstance(width, int) and not isinstance(width, bool) else None,
+        decoded_height=(
+            height if isinstance(height, int) and not isinstance(height, bool) else None
+        ),
+        actual_aspect_ratio=(
+            width / height
+            if isinstance(width, int)
+            and not isinstance(width, bool)
+            and isinstance(height, int)
+            and not isinstance(height, bool)
+            and width > 0
+            and height > 0
+            else None
+        ),
     )
+
+
+def _diagnostic_subtype(error: Exception | None) -> ImageDiagnosticSubtype:
+    explicit = getattr(error, "diagnostic_subtype", None)
+    if isinstance(explicit, ImageDiagnosticSubtype):
+        return explicit
+    if isinstance(error, ImageAcquisitionProviderAuthenticationException):
+        return ImageDiagnosticSubtype.PROVIDER_AUTHENTICATION
+    if isinstance(error, ImageAcquisitionProviderRateLimitException):
+        return ImageDiagnosticSubtype.PROVIDER_RATE_LIMIT
+    if isinstance(error, ImageAcquisitionProviderUnavailableException):
+        return ImageDiagnosticSubtype.PROVIDER_UNAVAILABLE
+    if isinstance(error, ImageAcquisitionProviderPolicyException):
+        return ImageDiagnosticSubtype.PROVIDER_POLICY
+    if isinstance(error, ImageAcquisitionProviderModelException):
+        return ImageDiagnosticSubtype.PROVIDER_MODEL
+    if isinstance(error, ImageAcquisitionProviderContractException):
+        return ImageDiagnosticSubtype.PROVIDER_CONTRACT
+    if isinstance(
+        error,
+        (ImageAcquisitionProviderUncertainException, ImageAcquisitionProviderTimeoutException),
+    ):
+        return ImageDiagnosticSubtype.UNCERTAIN_TRANSPORT
+    if isinstance(error, ImageAcquisitionProviderResponseException):
+        return ImageDiagnosticSubtype.PROVIDER_ENVELOPE
+    if isinstance(error, BinaryAssetError):
+        return _binary_diagnostic_subtype(error)
+    if isinstance(error, ImageAcquisitionManifestError):
+        return ImageDiagnosticSubtype.MANIFEST_WRITE
+    if isinstance(error, ValidationError):
+        return ImageDiagnosticSubtype.RESPONSE_MODEL_VALIDATION
+    return ImageDiagnosticSubtype.UNKNOWN_IMAGE_ERROR
+
+
+def _binary_diagnostic_subtype(error: BinaryAssetError) -> ImageDiagnosticSubtype:
+    if isinstance(error, BinaryAssetIOError):
+        return ImageDiagnosticSubtype.BINARY_ASSET_WRITE
+    if isinstance(
+        error,
+        (
+            BinaryAssetConfigurationError,
+            BinaryAssetConflictError,
+            BinaryAssetCorruptError,
+            BinaryAssetHashError,
+            BinaryAssetLinkError,
+            BinaryAssetMetadataError,
+            BinaryAssetMimeError,
+            BinaryAssetPathError,
+            BinaryAssetSizeError,
+        ),
+    ):
+        return ImageDiagnosticSubtype.BINARY_ASSET_VALIDATION
+    return ImageDiagnosticSubtype.BINARY_ASSET_WRITE
+
+
+def _validation_summary(
+    error: Exception | None,
+) -> tuple[str | None, str | None, str | None]:
+    if error is None:
+        return None, None, None
+    if isinstance(error, ValidationError):
+        first = error.errors(include_url=False, include_context=False, include_input=False)[0]
+        code = _safe_error_code(str(first.get("type", "validation_error")))
+        path = ".".join(str(part) for part in first.get("loc", ()))[:300] or "local"
+        message = _bounded_error_message(str(first.get("msg", "local validation failed")))
+        return code, path, message
+    subtype = _diagnostic_subtype(error)
+    return (
+        subtype.value,
+        _diagnostic_path(subtype),
+        _diagnostic_message(error, subtype),
+    )
+
+
+def _diagnostic_path(subtype: ImageDiagnosticSubtype) -> str:
+    if subtype in {
+        ImageDiagnosticSubtype.BINARY_ASSET_VALIDATION,
+        ImageDiagnosticSubtype.BINARY_ASSET_WRITE,
+    }:
+        return "binary_asset"
+    if subtype is ImageDiagnosticSubtype.MANIFEST_WRITE:
+        return "image_acquisition_manifest"
+    if subtype is ImageDiagnosticSubtype.UNCERTAIN_TRANSPORT:
+        return "transport"
+    return "provider_response"
+
+
+def _diagnostic_message(
+    error: Exception,
+    subtype: ImageDiagnosticSubtype,
+) -> str:
+    if isinstance(error, ImageAcquisitionProviderError):
+        return _bounded_error_message(str(error))
+    messages = {
+        ImageDiagnosticSubtype.BINARY_ASSET_VALIDATION: ("binary asset validation failed"),
+        ImageDiagnosticSubtype.BINARY_ASSET_WRITE: "binary asset write failed",
+        ImageDiagnosticSubtype.MANIFEST_WRITE: "manifest checkpoint failed",
+        ImageDiagnosticSubtype.UNCERTAIN_TRANSPORT: ("image submission outcome is uncertain"),
+    }
+    return messages.get(subtype, "image operation failed")
+
+
+def _safe_error_code(value: str) -> str:
+    normalized = "".join(
+        character if character.isascii() and character.isalnum() else "_"
+        for character in value.lower()
+    )
+    return "_".join(filter(None, normalized.split("_")))[:100] or "validation_error"
+
+
+def _bounded_error_message(value: str) -> str:
+    normalized = " ".join(value.split())
+    return normalized[:500] or "image operation failed"
+
+
+def _durable_reported_cost(
+    candidate: object,
+    fallback: Decimal | None,
+) -> Decimal | None:
+    value = candidate if isinstance(candidate, Decimal) else fallback
+    if value is None or not value.is_finite() or value < 0:
+        return fallback
+    exponent = value.as_tuple().exponent
+    digits = len(value.as_tuple().digits)
+    if not isinstance(exponent, int) or exponent < -9 or digits > 18:
+        return fallback
+    return value
 
 
 def _binary_asset_id(visual_asset_id: str) -> str:
