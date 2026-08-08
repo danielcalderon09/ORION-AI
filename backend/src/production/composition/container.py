@@ -95,6 +95,7 @@ from backend.src.production.binary_assets.validators import (
 from backend.src.production.domain.enums import ArtifactType
 from backend.src.production.image_acquisition.configuration import (
     ImageAcquisitionConfiguration,
+    OpenRouterImageBillablePolicy,
 )
 from backend.src.production.image_acquisition.exceptions import (
     ImageAcquisitionProviderConfigurationException,
@@ -300,6 +301,7 @@ from backend.src.production.speech_generation.ports import (
     SpeechGenerationProvider,
 )
 from backend.src.production.speech_generation.providers import (
+    OpenRouterSpeechGenerationProvider,
     SimulatedSpeechGenerationProvider,
 )
 from backend.src.production.speech_generation.reconciliation import (
@@ -593,6 +595,24 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         requested_model=(settings.ORION_IMAGE_ACQUISITION_MODEL.strip() or None),
         prompt_builder=image_prompt_builder,
         clock=clock,
+        billable_policy=(
+            OpenRouterImageBillablePolicy(
+                allow_billable_requests=(
+                    settings.ORION_IMAGE_ACQUISITION_ALLOW_BILLABLE_REQUESTS
+                ),
+                estimated_cost_usd=(
+                    settings.ORION_IMAGE_ACQUISITION_ESTIMATED_COST_USD
+                ),
+                maximum_authorized_cost_usd=(
+                    settings.ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD
+                ),
+                maximum_requests_per_job=(
+                    settings.ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB
+                ),
+            )
+            if settings.ORION_IMAGE_ACQUISITION_PROVIDER == "openrouter"
+            else None
+        ),
     )
     video_clip_configuration = VideoClipGenerationConfiguration(
         provider=settings.ORION_VIDEO_CLIP_GENERATION_PROVIDER,
@@ -686,7 +706,12 @@ def build_production_container(settings: Settings) -> ProductionContainer:
     )
     speech_configuration = SpeechGenerationConfiguration(
         provider=settings.ORION_SPEECH_GENERATION_PROVIDER,
-        voice=settings.ORION_SPEECH_GENERATION_VOICE,
+        voice=(
+            settings.ORION_SPEECH_GENERATION_REMOTE_VOICE
+            if settings.ORION_SPEECH_GENERATION_PROVIDER == "openrouter"
+            and settings.ORION_SPEECH_GENERATION_REMOTE_VOICE is not None
+            else settings.ORION_SPEECH_GENERATION_VOICE
+        ),
         language=settings.ORION_SPEECH_GENERATION_LANGUAGE,
         words_per_minute=settings.ORION_SPEECH_GENERATION_WORDS_PER_MINUTE,
         sample_rate_hz=settings.ORION_SPEECH_GENERATION_SAMPLE_RATE_HZ,
@@ -701,20 +726,51 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             settings.ORION_SPEECH_GENERATION_GENERATING_STALE_AFTER_SECONDS
         ),
     )
-    speech_generation_provider = SimulatedSpeechGenerationProvider()
-    speech_capability_source = StaticSimulatedSpeechCapabilitySource(
-        configuration=speech_configuration,
-        clock=clock,
-    )
     speech_remote_configuration = SpeechRemotePreparationConfiguration(
         allow_billable_requests=(settings.ORION_SPEECH_GENERATION_ALLOW_BILLABLE_REQUESTS),
         remote_provider=settings.ORION_SPEECH_GENERATION_REMOTE_PROVIDER,
         remote_model=settings.ORION_SPEECH_GENERATION_REMOTE_MODEL,
         remote_voice=settings.ORION_SPEECH_GENERATION_REMOTE_VOICE,
+        estimated_cost=settings.ORION_SPEECH_GENERATION_REMOTE_ESTIMATED_COST,
         maximum_estimated_cost=(settings.ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST),
         max_poll_attempts=(settings.ORION_SPEECH_GENERATION_REMOTE_MAX_POLL_ATTEMPTS),
         poll_interval_seconds=(settings.ORION_SPEECH_GENERATION_REMOTE_POLL_INTERVAL_SECONDS),
         remote_job_max_bytes=(settings.ORION_SPEECH_GENERATION_REMOTE_JOB_MAX_BYTES),
+    )
+    remote_speech_job_store = LocalRemoteSpeechJobStore(
+        settings.PROJECTS_DIR,
+        max_bytes=speech_remote_configuration.remote_job_max_bytes,
+    )
+    speech_generation_provider: SpeechGenerationProvider
+    if settings.ORION_SPEECH_GENERATION_PROVIDER == "simulated":
+        speech_generation_provider = SimulatedSpeechGenerationProvider()
+    else:
+        api_key = _openrouter_api_key(settings, settings.ORION_SCRIPTING_API_KEY)
+        if api_key is None:
+            raise ValueError("OpenRouter speech credential is missing")
+        assert speech_remote_configuration.remote_model is not None
+        assert speech_remote_configuration.remote_voice is not None
+        assert speech_remote_configuration.estimated_cost is not None
+        assert speech_remote_configuration.maximum_estimated_cost is not None
+        speech_generation_provider = OpenRouterSpeechGenerationProvider(
+            api_key=api_key,
+            model=speech_remote_configuration.remote_model,
+            voice=speech_remote_configuration.remote_voice,
+            estimated_cost_usd=speech_remote_configuration.estimated_cost,
+            maximum_authorized_cost_usd=(
+                speech_remote_configuration.maximum_estimated_cost
+            ),
+            allow_billable_requests=speech_remote_configuration.allow_billable_requests,
+            remote_job_store=remote_speech_job_store,
+            maximum_requests_per_job=settings.ORION_SPEECH_GENERATION_MAX_REQUESTS_PER_JOB,
+            base_url=settings.ORION_SPEECH_GENERATION_OPENROUTER_BASE_URL,
+            timeout_seconds=settings.ORION_SPEECH_GENERATION_OPENROUTER_TIMEOUT_SECONDS,
+            max_audio_bytes=speech_configuration.max_audio_bytes,
+            clock=clock,
+        )
+    speech_capability_source = StaticSimulatedSpeechCapabilitySource(
+        configuration=SpeechGenerationConfiguration(),
+        clock=clock,
     )
     speech_source_reader = SpeechSourceScriptReaderAdapter(
         DurableProductionScriptReader(
@@ -967,10 +1023,6 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         ),
         max_manifest_bytes=speech_configuration.max_manifest_bytes,
     )
-    remote_speech_job_store = LocalRemoteSpeechJobStore(
-        settings.PROJECTS_DIR,
-        max_bytes=speech_remote_configuration.remote_job_max_bytes,
-    )
     remote_speech_reconciler = RemoteSpeechJobReconciler(
         workspace_root=settings.PROJECTS_DIR,
         audio_store=speech_audio_store,
@@ -1180,7 +1232,9 @@ def _resolve_scripting_provider_factory(
 ) -> ScriptingProviderFactory | None:
     readiness = require_scripting_runtime_readiness(
         provider=settings.ORION_SCRIPTING_PROVIDER,
-        api_key_configured=settings.ORION_SCRIPTING_API_KEY is not None,
+        api_key_configured=(
+            _openrouter_api_key(settings, settings.ORION_SCRIPTING_API_KEY) is not None
+        ),
         model=settings.ORION_SCRIPTING_MODEL,
     )
     if readiness.configured_provider == "simulated":
@@ -1223,12 +1277,13 @@ def _build_scripting_provider(
 ) -> ScriptingProvider:
     if openrouter_factory is None:
         return SimulatedScriptingProvider()
-    if settings.ORION_SCRIPTING_API_KEY is None:
+    api_key = _openrouter_api_key(settings, settings.ORION_SCRIPTING_API_KEY)
+    if api_key is None:
         raise ScriptingProviderConfigurationError("scripting provider credential is missing")
     if request_store is None:
         raise ScriptingProviderConfigurationError("OpenRouter scripting request store is missing")
     return openrouter_factory(
-        api_key=settings.ORION_SCRIPTING_API_KEY.get_secret_value(),
+        api_key=api_key,
         model=settings.ORION_SCRIPTING_MODEL,
         prompt_builder=ScriptingPromptBuilder(
             max_plan_bytes=settings.ORION_SCRIPTING_MAX_PLAN_BYTES
@@ -1368,9 +1423,23 @@ def _resolve_image_acquisition_provider_factory(
         raise ImageAcquisitionProviderConfigurationException(
             f"unsupported image acquisition provider: {provider_name!r}"
         )
-    if settings.ORION_IMAGE_ACQUISITION_API_KEY is None:
+    if _openrouter_api_key(settings, settings.ORION_IMAGE_ACQUISITION_API_KEY) is None:
         raise ImageAcquisitionProviderConfigurationException(
             "image acquisition provider credential is missing"
+        )
+    estimate = settings.ORION_IMAGE_ACQUISITION_ESTIMATED_COST_USD
+    maximum = settings.ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD
+    if not settings.ORION_IMAGE_ACQUISITION_ALLOW_BILLABLE_REQUESTS:
+        raise ImageAcquisitionProviderConfigurationException(
+            "OpenRouter image requires explicit billable authorization"
+        )
+    if estimate is None or maximum is None:
+        raise ImageAcquisitionProviderConfigurationException(
+            "OpenRouter image cost authorization is missing"
+        )
+    if estimate * settings.ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB > maximum:
+        raise ImageAcquisitionProviderConfigurationException(
+            "image job estimate exceeds authorized cost"
         )
     if not settings.ORION_IMAGE_ACQUISITION_MODEL.strip():
         raise ImageAcquisitionProviderConfigurationException("image acquisition model is missing")
@@ -1389,12 +1458,13 @@ def _build_image_acquisition_provider(
 ) -> ImageAcquisitionProvider:
     if openrouter_factory is None:
         return SimulatedImageAcquisitionProvider()
-    if settings.ORION_IMAGE_ACQUISITION_API_KEY is None:
+    api_key = _openrouter_api_key(settings, settings.ORION_IMAGE_ACQUISITION_API_KEY)
+    if api_key is None:
         raise ImageAcquisitionProviderConfigurationException(
             "image acquisition provider credential is missing"
         )
     return openrouter_factory(
-        api_key=settings.ORION_IMAGE_ACQUISITION_API_KEY.get_secret_value(),
+        api_key=api_key,
         model=settings.ORION_IMAGE_ACQUISITION_MODEL,
         prompt_builder=ImageGenerationPromptBuilder(
             max_prompt_bytes=settings.ORION_IMAGE_ACQUISITION_MAX_PLAN_BYTES
@@ -1409,6 +1479,15 @@ def _build_image_acquisition_provider(
         http_referer=settings.ORION_OPENROUTER_HTTP_REFERER,
         app_title=settings.ORION_OPENROUTER_APP_TITLE,
     )
+
+
+def _openrouter_api_key(settings: Settings, legacy: object | None) -> str | None:
+    candidate = settings.ORION_OPENROUTER_API_KEY or legacy or settings.ORION_SCRIPTING_API_KEY
+    if candidate is None:
+        return None
+    getter = getattr(candidate, "get_secret_value", None)
+    value = getter() if callable(getter) else None
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def _build_video_clip_generation_provider(

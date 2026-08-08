@@ -31,9 +31,17 @@ def test_cli_returns_application_exit_code(monkeypatch) -> None:
     assert generate_video.main(["--prompt", "Marte", "--output-summary"]) == 0
 
 
+def test_cli_accepts_one_scene_for_controlled_provider_test() -> None:
+    args = generate_video._parser().parse_args(  # noqa: SLF001 - CLI contract test
+        ["--prompt", "Marte", "--scene-count", "1"]
+    )
+    assert args.scene_count == 1
+
+
 def test_local_mvp_settings_forwards_only_explicit_scripting_environment(
     monkeypatch, tmp_path
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ORION_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("MODELS_DIR", str(tmp_path / "models"))
     monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))

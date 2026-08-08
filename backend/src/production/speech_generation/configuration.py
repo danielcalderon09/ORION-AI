@@ -11,7 +11,7 @@ from backend.src.production.domain.base import ContractModel
 
 
 class SpeechGenerationConfiguration(ContractModel):
-    provider: Literal["simulated"] = "simulated"
+    provider: Literal["simulated", "openrouter"] = "simulated"
     voice: str = Field(default="simulated-neutral-v1", min_length=1, max_length=100)
     language: str = Field(default="es-ES", min_length=2, max_length=16)
     words_per_minute: int = Field(default=150, ge=60, le=360)
@@ -47,13 +47,19 @@ class SpeechGenerationConfiguration(ContractModel):
 
 
 class SpeechRemotePreparationConfiguration(ContractModel):
-    """Fail-closed settings for architecture that has no live adapter."""
+    """Fail-closed settings for a durable remote speech adapter."""
 
     allow_billable_requests: bool = False
-    remote_provider: Literal["disabled"] = "disabled"
+    remote_provider: Literal["disabled", "openrouter"] = "disabled"
     remote_model: str | None = Field(default=None, min_length=1, max_length=300)
     remote_voice: str | None = Field(default=None, min_length=1, max_length=200)
     maximum_estimated_cost: Decimal | None = Field(
+        default=None,
+        gt=0,
+        max_digits=18,
+        decimal_places=9,
+    )
+    estimated_cost: Decimal | None = Field(
         default=None,
         gt=0,
         max_digits=18,
@@ -67,7 +73,7 @@ class SpeechRemotePreparationConfiguration(ContractModel):
         le=4_000_000,
     )
 
-    @field_validator("maximum_estimated_cost", mode="before")
+    @field_validator("maximum_estimated_cost", "estimated_cost", mode="before")
     @classmethod
     def reject_float_cost(cls, value: Any) -> Any:
         if isinstance(value, float):
@@ -76,10 +82,20 @@ class SpeechRemotePreparationConfiguration(ContractModel):
 
     @model_validator(mode="after")
     def fail_closed(self) -> "SpeechRemotePreparationConfiguration":
-        if self.allow_billable_requests:
-            raise ValueError("no billable remote speech provider is available")
-        if self.remote_model is not None or self.remote_voice is not None:
-            raise ValueError("disabled remote speech cannot select a model or voice")
-        if self.maximum_estimated_cost is not None:
-            raise ValueError("disabled remote speech cannot authorize a cost")
+        if self.remote_provider == "disabled":
+            if self.allow_billable_requests:
+                raise ValueError("disabled remote speech cannot authorize billing")
+            if self.remote_model is not None or self.remote_voice is not None:
+                raise ValueError("disabled remote speech cannot select a model or voice")
+            if self.maximum_estimated_cost is not None or self.estimated_cost is not None:
+                raise ValueError("disabled remote speech cannot authorize a cost")
+            return self
+        if not self.allow_billable_requests:
+            raise ValueError("OpenRouter speech requires explicit billable authorization")
+        if self.remote_model is None or self.remote_voice is None:
+            raise ValueError("OpenRouter speech requires an explicit model and voice")
+        if self.maximum_estimated_cost is None or self.estimated_cost is None:
+            raise ValueError("OpenRouter speech requires explicit cost authorization")
+        if self.estimated_cost > self.maximum_estimated_cost:
+            raise ValueError("speech estimate exceeds authorized cost")
         return self

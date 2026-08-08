@@ -42,7 +42,8 @@ async def test_full_pipeline_acquires_durable_images_without_real_network(
             nonlocal calls
             calls += 1
             payload = json.loads(http_request.content)
-            width, height = (int(value) for value in payload["size"].split("x"))
+            assert payload["resolution"] == "1K"
+            width, height = (64, 64)
             stream = BytesIO()
             Image.new("RGB", (width, height), "navy").save(stream, "PNG")
             return httpx.Response(
@@ -87,6 +88,15 @@ async def test_full_pipeline_acquires_durable_images_without_real_network(
         ),
         ORION_IMAGE_ACQUISITION_API_KEY=(
             "fake-test-only" if image_provider_name == "openrouter" else None
+        ),
+        ORION_IMAGE_ACQUISITION_ALLOW_BILLABLE_REQUESTS=(
+            image_provider_name == "openrouter"
+        ),
+        ORION_IMAGE_ACQUISITION_ESTIMATED_COST_USD=(
+            "0.001" if image_provider_name == "openrouter" else None
+        ),
+        ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD=(
+            "0.001" if image_provider_name == "openrouter" else None
         ),
     )
     container = build_production_container(settings)
@@ -149,6 +159,18 @@ async def test_full_pipeline_acquires_durable_images_without_real_network(
             assert hashlib.sha256(target.read_bytes()).hexdigest() == record[2]
         image_target = settings.PROJECTS_DIR.joinpath(*images[0][1].split("/"))
         assert image_target.with_name(f"{image_target.name}.asset.json").is_file()
+        manifest_target = settings.PROJECTS_DIR.joinpath(*manifests[0][1].split("/"))
+        durable_manifest = json.loads(manifest_target.read_text(encoding="utf-8"))
+        serialized_manifest = json.dumps(durable_manifest)
+        if image_provider_name == "openrouter":
+            entry = durable_manifest["entries"][0]
+            assert entry["request_status"] == "completed"
+            assert entry["fresh_submission_permitted"] is False
+            assert len(entry["request_fingerprint"]) == 64
+            assert entry["http_status"] == 200
+        assert "fake-test-only" not in serialized_manifest
+        assert "Authorization" not in serialized_manifest
+        assert "b64_json" not in serialized_manifest
         video_target = settings.PROJECTS_DIR.joinpath(*video_clips[0][1].split("/"))
         assert video_target.with_name(f"{video_target.name}.asset.json").is_file()
         assert video_clips[0][3]["has_audio"] is False

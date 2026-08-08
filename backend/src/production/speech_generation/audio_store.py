@@ -219,8 +219,8 @@ class FilesystemSpeechAudioStore:
                 sample_rate_hz=expected.sample_rate_hz,
                 channel_count=expected.channel_count,
                 sample_width_bytes=expected.sample_width_bytes,
-                frame_count=expected.frame_count,
-                duration_ms=expected.duration_ms,
+                frame_count=None if request.flexible_duration else expected.frame_count,
+                duration_ms=None if request.flexible_duration else expected.duration_ms,
             ),
         )
 

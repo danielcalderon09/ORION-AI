@@ -265,7 +265,7 @@ async def test_reader_failure_prevents_provider_and_writer(
 
 
 @pytest.mark.asyncio
-async def test_provider_timeout_checkpoints_transient_and_writes_no_binary(
+async def test_provider_timeout_checkpoints_uncertain_and_writes_no_binary(
     tmp_path,
     source_visual_plan,
     image_command_context,
@@ -281,10 +281,10 @@ async def test_provider_timeout_checkpoints_transient_and_writes_no_binary(
         manifest_writer=manifest_writer,
         binary_store=store(tmp_path),
     ).execute(command, context)
-    assert output.result.outcome is StageOutcome.FAILED_TRANSIENT
+    assert output.result.outcome is StageOutcome.NEEDS_USER_ACTION
     manifest = await manifest_writer.read_existing(context=context)
     assert manifest is not None
-    assert manifest.entries[0].status is ImageAcquisitionEntryStatus.FAILED_TRANSIENT
+    assert manifest.entries[0].status is ImageAcquisitionEntryStatus.UNCERTAIN
     assert not list(tmp_path.rglob("*.png"))
 
 
@@ -334,7 +334,7 @@ async def test_cancelled_generation_becomes_uncertain_after_restart(
         await acquired.execute(command, context)
     manifest = await manifest_writer.read_existing(context=context)
     assert manifest is not None
-    assert manifest.entries[0].status is ImageAcquisitionEntryStatus.GENERATING
+    assert manifest.entries[0].status is ImageAcquisitionEntryStatus.UNCERTAIN
     restarted = await acquired.execute(command, context)
     assert restarted.result.outcome is StageOutcome.NEEDS_USER_ACTION
     assert provider.calls == ["asset-s001-q001-v001"]

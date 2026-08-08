@@ -89,7 +89,15 @@ def test_profile_defaults_are_small_vertical_and_deterministic() -> None:
     }
     visual = first["visual_asset_planning"]
     assert isinstance(visual, dict)
-    assert (visual["target_width"], visual["target_height"]) == (360, 640)
+    assert (visual["target_width"], visual["target_height"]) == (576, 1024)
+
+
+def test_profile_accepts_one_scene_for_a_bounded_provider_smoke_test() -> None:
+    profile = local_mvp_profile(scene_count_hint=1)
+
+    planning = profile["planning"]
+    assert isinstance(planning, dict)
+    assert planning["scene_count_hint"] == 1
 
 
 @pytest.mark.parametrize("prompt", [None, "", "   \n "])

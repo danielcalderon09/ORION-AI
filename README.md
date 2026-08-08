@@ -106,17 +106,13 @@ segura, pero permanece no ejecutable sin un publisher HTTPS real (no incluido). 
 [`docs/PRODUCTION_OPENROUTER_VIDEO_PROVIDER.md`](docs/PRODUCTION_OPENROUTER_VIDEO_PROVIDER.md).
 
 GENERATING_NARRATION consume el `ProductionScript` durable y crea un WAV PCM
-determinista por escena, con manifest CAS, sidecars, checksum, recovery e
-idempotencia. El audio es un placeholder audible, no una voz humana; el unico
-provider es `simulated`, funciona sin red, FFmpeg, API key o cuenta financiada.
-Consulta
-[`docs/PRODUCTION_SIMULATED_SPEECH_GENERATION.md`](docs/PRODUCTION_SIMULATED_SPEECH_GENERATION.md).
+por escena, con manifest CAS, sidecars, checksum, recovery e idempotencia. El
+default sigue siendo `simulated`; Phase 6D agrega Kokoro sobre OpenRouter como
+provider real opt-in, con coste explícito y un request durable por segmento.
 
-La preparacion para TTS real agrega contratos neutrales de capabilities,
-seleccion exacta de voz, precios Decimal, autorizacion facturable, fingerprints
-y remote jobs durables. Sigue completamente deshabilitada: no existe adapter
-real, API key, URL, discovery, red ni ruta ejecutable. Consulta
-[`docs/PRODUCTION_REAL_TTS_PREPARATION.md`](docs/PRODUCTION_REAL_TTS_PREPARATION.md).
+La implementación de imagen y TTS reales, el mapa fijo de modelos, recovery,
+límites facturables y activación manual están documentados en
+[`docs/PRODUCTION_OPENROUTER_MEDIA_PROVIDERS.md`](docs/PRODUCTION_OPENROUTER_MEDIA_PROVIDERS.md).
 
 La evaluacion oficial y fechada de TTS real no selecciona todavia un provider:
 Azure queda como primer candidato de listening test y Google como segundo,

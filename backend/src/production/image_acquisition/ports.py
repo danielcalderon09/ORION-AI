@@ -119,6 +119,7 @@ class ImageAcquisitionProviderResponse(ContractModel):
     output_tokens: int | None = Field(default=None, ge=0)
     total_tokens: int | None = Field(default=None, ge=0)
     cost_usd: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=9)
+    http_status: int | None = Field(default=None, ge=100, le=599)
     latency_ms: float = Field(ge=0)
     finish_reason: str | None = Field(default=None, max_length=100)
     metadata: dict[str, Any] = Field(default_factory=dict)

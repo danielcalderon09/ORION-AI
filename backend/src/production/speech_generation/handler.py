@@ -28,6 +28,7 @@ from backend.src.production.speech_generation.exceptions import (
     SpeechManifestError,
     SpeechProviderError,
     SpeechProviderResponseError,
+    SpeechProviderUncertainError,
     SpeechSourceScriptError,
 )
 from backend.src.production.speech_generation.manifest_writer import (
@@ -177,8 +178,29 @@ class SpeechGenerationHandler:
                                 self._configuration.generating_stale_after_seconds - age
                             ),
                         )
-                    # The only provider admitted in this phase is a local deterministic
-                    # adapter. No remote operation can still complete after restart.
+                    if self._configuration.provider == "openrouter":
+                        uncertain = entry.model_copy(
+                            update={
+                                "status": SpeechSegmentStatus.UNCERTAIN,
+                                "error_code": "remote_submission_uncertain",
+                                "generation_started_at": None,
+                            }
+                        )
+                        current = replace_speech_entry(
+                            manifest,
+                            uncertain,
+                            status=SpeechGenerationManifestStatus.UNCERTAIN,
+                            updated_at=self._aware_now(),
+                        )
+                        await self._writer.checkpoint(
+                            context=context, previous=manifest, current=current
+                        )
+                        return self._failure(
+                            command,
+                            started_at,
+                            StageOutcome.NEEDS_USER_ACTION,
+                            "speech_submission_uncertain",
+                        )
                     interrupted = entry.model_copy(
                         update={
                             "status": SpeechSegmentStatus.FAILED,
@@ -204,9 +226,12 @@ class SpeechGenerationHandler:
                     manifest = current
                     entry = interrupted
                 elif entry.status is SpeechSegmentStatus.UNCERTAIN:
-                    # Deliberate simulated-only policy: verified local output was
-                    # checked above and this phase has no provider-side operation.
-                    pass
+                    return self._failure(
+                        command,
+                        started_at,
+                        StageOutcome.NEEDS_USER_ACTION,
+                        "speech_submission_uncertain",
+                    )
 
                 generating = entry.model_copy(
                     update={
@@ -233,6 +258,8 @@ class SpeechGenerationHandler:
                         self._provider_request(command, context, segment)
                     )
                     self._validate_response(response, request.expected)
+                    if self._configuration.provider == "openrouter":
+                        request = request.model_copy(update={"expected": response.audio})
                     asset = await self._store.write(
                         request=request,
                         content=response.content,
@@ -258,6 +285,18 @@ class SpeechGenerationHandler:
                     stored_assets[segment.segment_id] = verified.asset
                 except asyncio.CancelledError:
                     raise
+                except SpeechProviderUncertainError:
+                    await self._checkpoint_uncertain(
+                        context=context,
+                        manifest=manifest,
+                        entry=generating,
+                    )
+                    return self._failure(
+                        command,
+                        started_at,
+                        StageOutcome.NEEDS_USER_ACTION,
+                        "speech_submission_uncertain",
+                    )
                 except (SpeechProviderError, SpeechAudioStoreError):
                     await self._checkpoint_failed(
                         context=context,
@@ -355,10 +394,10 @@ class SpeechGenerationHandler:
             updated_at=now,
             metadata={
                 "checkpointed": True,
-                "deterministic": True,
-                "network": False,
+                "deterministic": self._configuration.provider == "simulated",
+                "network": self._configuration.provider == "openrouter",
                 "sequential": True,
-                "simulated": True,
+                "simulated": self._configuration.provider == "simulated",
             },
         )
 
@@ -413,13 +452,14 @@ class SpeechGenerationHandler:
                 provider=self._provider.name,
                 requested_voice=segment.requested_voice,
                 requested_language=segment.requested_language,
-                deterministic=True,
+                deterministic=self._configuration.provider == "simulated",
                 attributes={
-                    "simulated": True,
-                    "network": False,
+                    "simulated": self._configuration.provider == "simulated",
+                    "network": self._configuration.provider == "openrouter",
                     "timing_provenance": segment.timing_provenance.value,
                 },
             ),
+            flexible_duration=self._configuration.provider == "openrouter",
         )
 
     def _provider_request(
@@ -443,12 +483,16 @@ class SpeechGenerationHandler:
         response: SpeechProviderResult,
         expected: SpeechSegmentAudioMetadata,
     ) -> None:
-        if (
-            response.mime_type != "audio/wav"
-            or response.audio != expected
-            or not response.deterministic
+        if response.mime_type != "audio/wav" or (
+            response.audio != expected and response.provider != "openrouter"
         ):
             raise SpeechProviderResponseError("speech provider result differs from request")
+        if response.provider == "openrouter" and (
+            response.audio.sample_rate_hz != expected.sample_rate_hz
+            or response.audio.channel_count != expected.channel_count
+            or response.audio.sample_width_bytes != expected.sample_width_bytes
+        ):
+            raise SpeechProviderResponseError("speech provider format differs from request")
 
     async def _recover_stored(
         self,
@@ -509,9 +553,35 @@ class SpeechGenerationHandler:
                 "metadata": {
                     "deterministic": asset.metadata.deterministic,
                     "recovered": recovered,
-                    "simulated": True,
+                    "simulated": asset.metadata.attributes.get("simulated", False),
                 },
             }
+        )
+
+    async def _checkpoint_uncertain(
+        self,
+        *,
+        context: StageContext,
+        manifest: SpeechGenerationManifest,
+        entry: SpeechSegmentManifestEntry,
+    ) -> None:
+        uncertain = entry.model_copy(
+            update={
+                "status": SpeechSegmentStatus.UNCERTAIN,
+                "error_code": "remote_submission_uncertain",
+                "generation_started_at": None,
+            }
+        )
+        current = replace_speech_entry(
+            manifest,
+            uncertain,
+            status=SpeechGenerationManifestStatus.UNCERTAIN,
+            updated_at=self._aware_now(),
+        )
+        await self._writer.checkpoint(
+            context=context,
+            previous=manifest,
+            current=current,
         )
 
     async def _checkpoint_failed(

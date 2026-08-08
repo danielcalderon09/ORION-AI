@@ -20,8 +20,8 @@ from backend.src.production.image_acquisition.exceptions import (
     ImageAcquisitionProviderPolicyException,
     ImageAcquisitionProviderRateLimitException,
     ImageAcquisitionProviderResponseException,
-    ImageAcquisitionProviderTimeoutException,
     ImageAcquisitionProviderUnavailableException,
+    ImageAcquisitionProviderUncertainException,
 )
 from backend.src.production.image_acquisition.ports import (
     ImageAcquisitionProviderRequest,
@@ -135,8 +135,10 @@ async def test_request_contract_headers_and_optional_routing(
     assert sent.headers["X-Title"] == "ORION Test"
     assert payload["model"] == "openai/test-image-model"
     assert payload["n"] == 1
-    assert payload["size"] == "64x64"
+    assert payload["resolution"] == "1K"
+    assert "size" not in payload
     assert payload["aspect_ratio"] == "1:1"
+    assert result.images[0].provider_metadata == {"width": 64, "height": 64}
     assert payload["output_format"] == "png"
     assert payload["stream"] is False
     assert payload["provider"] == {
@@ -184,6 +186,8 @@ async def test_optional_response_and_headers_may_be_absent(
         {"base_url": "http://openrouter.ai/api/v1"},
         {"base_url": "https:///api/v1"},
         {"base_url": "https://user:pass@openrouter.ai/api/v1"},
+        {"base_url": "https://example.invalid/api/v1"},
+        {"base_url": "https://openrouter.ai/api/v1/other"},
         {"provider_only": "unsafe/provider"},
         {"max_transport_attempts": 6},
     ],
@@ -233,12 +237,12 @@ async def test_http_error_classification(
 
     client = provider(
         httpx.MockTransport(handle),
-        max_transport_attempts=2,
+        max_transport_attempts=1,
     )
     with pytest.raises(expected) as raised:
         await client.generate_image(request(visual_asset_plan.assets[0]))
     assert "external detail" not in str(raised.value)
-    assert attempts == (2 if status in {429, 500, 502, 503, 504} else 1)
+    assert attempts == 1
     await client.close()
 
 
@@ -249,11 +253,11 @@ async def test_timeout_connection_and_cancel_propagate(
     errors = (
         (
             httpx.ReadTimeout("timeout"),
-            ImageAcquisitionProviderTimeoutException,
+            ImageAcquisitionProviderUncertainException,
         ),
         (
             httpx.ConnectError("connection"),
-            ImageAcquisitionProviderUnavailableException,
+            ImageAcquisitionProviderUncertainException,
         ),
     )
     for transport_error, expected in errors:
@@ -284,6 +288,24 @@ async def test_timeout_connection_and_cancel_propagate(
         b'{"data":[{"url":"https://example.invalid/image.png"}]}',
         b'{"data":[{"b64_json":"%%%"}]}',
         b'{"data":[{"b64_json":""}]}',
+        b'{"error":{"type":"provider_error"}}',
+        (
+            b'{"data":[{"b64_json":"'
+            + base64.b64encode(b"not-an-image")
+            + b'"}]}'
+        ),
+        (
+            b'{"data":[{"b64_json":"'
+            + base64.b64encode(png_bytes())
+            + b'","media_type":"image/gif"}]}'
+        ),
+        (
+            b'{"data":[{"b64_json":"'
+            + base64.b64encode(png_bytes())
+            + b'"},{"b64_json":"'
+            + base64.b64encode(png_bytes())
+            + b'"}]}'
+        ),
         (b'{"data":[{"b64_json":"' + base64.b64encode(b"<svg></svg>") + b'"}]}'),
         b'{"data":[],"data":[]}',
     ],
@@ -327,3 +349,49 @@ async def test_client_closes_and_never_calls_real_network(
     await client.close()
     assert calls == 1
     assert async_client.is_closed
+
+
+@pytest.mark.asyncio
+async def test_rejects_oversized_decoded_image(visual_asset_plan) -> None:
+    client = provider(
+        httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"b64_json": base64.b64encode(png_bytes()).decode()}
+                    ]
+                },
+            )
+        ),
+        max_decoded_image_bytes=32,
+    )
+    with pytest.raises(ImageAcquisitionProviderResponseException):
+        await client.generate_image(request(visual_asset_plan.assets[0]))
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_rejects_image_outside_planned_aspect_ratio(visual_asset_plan) -> None:
+    client = provider(
+        httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "b64_json": base64.b64encode(
+                                png_bytes((64, 32))
+                            ).decode()
+                        }
+                    ]
+                },
+            )
+        )
+    )
+    with pytest.raises(
+        ImageAcquisitionProviderResponseException,
+        match="aspect ratio",
+    ):
+        await client.generate_image(request(visual_asset_plan.assets[0]))
+    await client.close()

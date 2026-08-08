@@ -1,5 +1,6 @@
 """Durable sequential ACQUIRING_ASSETS handler."""
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -33,10 +34,12 @@ from backend.src.production.domain.enums import (
 )
 from backend.src.production.image_acquisition.configuration import (
     ImageAcquisitionConfiguration,
+    OpenRouterImageBillablePolicy,
 )
 from backend.src.production.image_acquisition.exceptions import (
     ImageAcquisitionManifestError,
     ImageAcquisitionProviderAuthenticationException,
+    ImageAcquisitionProviderConfigurationException,
     ImageAcquisitionProviderContractException,
     ImageAcquisitionProviderError,
     ImageAcquisitionProviderModelException,
@@ -45,6 +48,7 @@ from backend.src.production.image_acquisition.exceptions import (
     ImageAcquisitionProviderResponseException,
     ImageAcquisitionProviderTimeoutException,
     ImageAcquisitionProviderUnavailableException,
+    ImageAcquisitionProviderUncertainException,
     ImageAcquisitionUnsupportedAssetException,
     ImageAcquisitionValidationError,
     ProductionVisualAssetPlanReadError,
@@ -56,6 +60,7 @@ from backend.src.production.image_acquisition.manifest_writer import (
 from backend.src.production.image_acquisition.models import (
     ImageAcquisitionEntryStatus,
     ImageAcquisitionManifestStatus,
+    OpenRouterImageRequestStatus,
     ProductionImageAcquisitionEntry,
     ProductionImageAcquisitionManifest,
     replace_manifest_entry,
@@ -114,6 +119,7 @@ class ImageAcquisitionHandler:
         requested_model: str | None,
         prompt_builder: ImageGenerationPromptBuilder,
         clock: Callable[[], datetime],
+        billable_policy: OpenRouterImageBillablePolicy | None = None,
     ) -> None:
         self._plan_reader = plan_reader
         self._provider = provider
@@ -125,6 +131,7 @@ class ImageAcquisitionHandler:
         self._requested_model = requested_model
         self._prompt_builder = prompt_builder
         self._clock = clock
+        self._billable_policy = billable_policy
 
     async def execute(
         self,
@@ -286,8 +293,55 @@ class ImageAcquisitionHandler:
                     self._log_stored(command, stored_entry, reused)
                     continue
 
+                if self._provider_name == "openrouter":
+                    if entry.request_status in {
+                        OpenRouterImageRequestStatus.SUBMITTING,
+                        OpenRouterImageRequestStatus.COMPLETED,
+                        OpenRouterImageRequestStatus.UNCERTAIN,
+                    }:
+                        await self._checkpoint_error(
+                            context=context,
+                            manifest=manifest,
+                            entry=entry,
+                            status=ImageAcquisitionEntryStatus.UNCERTAIN,
+                            error_code="external_result_uncertain",
+                        )
+                        return self._failure(
+                            command,
+                            started_at,
+                            StageOutcome.NEEDS_USER_ACTION,
+                            "image_acquisition_result_uncertain",
+                        )
+                    prompt = self._prompt_builder.build(
+                        self._provider_request(command, context, asset_spec)
+                    )
+                    fingerprint = self._remote_fingerprint(asset_spec, prompt.sha256)
+                    prepared = entry.model_copy(
+                        update={
+                            "request_status": OpenRouterImageRequestStatus.PREPARED,
+                            "request_fingerprint": fingerprint,
+                            "fresh_submission_permitted": True,
+                        }
+                    )
+                    current = replace_manifest_entry(manifest, prepared)
+                    await self._manifest_writer.checkpoint(
+                        context=context, previous=manifest, current=current
+                    )
+                    manifest = current
+                    self._authorize_billable(manifest, prepared)
+                    entry = prepared
                 generating = entry.model_copy(
-                    update={"status": ImageAcquisitionEntryStatus.GENERATING}
+                    update={
+                        "status": ImageAcquisitionEntryStatus.GENERATING,
+                        "request_status": (
+                            OpenRouterImageRequestStatus.SUBMITTING
+                            if self._provider_name == "openrouter"
+                            else None
+                        ),
+                        "fresh_submission_permitted": (
+                            False if self._provider_name == "openrouter" else None
+                        ),
+                    }
                 )
                 current = replace_manifest_entry(manifest, generating)
                 await self._manifest_writer.checkpoint(
@@ -316,6 +370,29 @@ class ImageAcquisitionHandler:
                     prompt = self._prompt_builder.build(
                         self._provider_request(command, context, asset_spec)
                     )
+                    if self._provider_name == "openrouter":
+                        responded = generating.model_copy(
+                            update={
+                                "request_status": OpenRouterImageRequestStatus.COMPLETED,
+                                "fresh_submission_permitted": False,
+                                "requested_model": response.requested_model,
+                                "reported_model": response.reported_model,
+                                "provider_request_id": response.request_id,
+                                "input_tokens": response.input_tokens,
+                                "output_tokens": response.output_tokens,
+                                "total_tokens": response.total_tokens,
+                                "cost_usd": response.cost_usd,
+                                "http_status": response.http_status,
+                                "latency_ms": response.latency_ms,
+                                "finish_reason": response.finish_reason,
+                            }
+                        )
+                        current = replace_manifest_entry(manifest, responded)
+                        await self._manifest_writer.checkpoint(
+                            context=context, previous=manifest, current=current
+                        )
+                        manifest = current
+                        generating = responded
                     binary = await self._binary_writer.write(
                         request=BinaryAssetWriteRequest(
                             asset_id=_binary_asset_id(asset_spec.asset_id),
@@ -327,8 +404,20 @@ class ImageAcquisitionHandler:
                             extension=_EXTENSION[
                                 self._configuration.output_format
                             ],
-                            expected_width=asset_spec.width,
-                            expected_height=asset_spec.height,
+                            expected_width=(
+                                _safe_image_dimension(
+                                    payload.provider_metadata.get("width")
+                                )
+                                if self._provider_name == "openrouter"
+                                else asset_spec.width
+                            ),
+                            expected_height=(
+                                _safe_image_dimension(
+                                    payload.provider_metadata.get("height")
+                                )
+                                if self._provider_name == "openrouter"
+                                else asset_spec.height
+                            ),
                             metadata=ProductionBinaryAssetMetadata(
                                 source_visual_asset_id=asset_spec.asset_id,
                                 source_visual_asset_plan_artifact_id=source.artifact_id,
@@ -358,19 +447,33 @@ class ImageAcquisitionHandler:
                         ),
                         content=payload.content,
                     )
+                except asyncio.CancelledError:
+                    await self._checkpoint_error(
+                        context=context,
+                        manifest=manifest,
+                        entry=generating,
+                        status=ImageAcquisitionEntryStatus.UNCERTAIN,
+                        error_code="external_result_uncertain",
+                    )
+                    raise
                 except (
+                    ImageAcquisitionProviderUncertainException,
                     ImageAcquisitionProviderTimeoutException,
-                    ImageAcquisitionProviderRateLimitException,
-                    ImageAcquisitionProviderUnavailableException,
                 ) as exc:
                     await self._checkpoint_error(
                         context=context,
                         manifest=manifest,
                         entry=generating,
-                        status=ImageAcquisitionEntryStatus.FAILED_TRANSIENT,
+                        status=ImageAcquisitionEntryStatus.UNCERTAIN,
                         error_code=self._error_code(exc),
+                        error=exc,
                     )
-                    raise
+                    return self._failure(
+                        command,
+                        started_at,
+                        StageOutcome.NEEDS_USER_ACTION,
+                        "image_acquisition_result_uncertain",
+                    )
                 except (
                     ImageAcquisitionProviderError,
                     BinaryAssetError,
@@ -384,6 +487,7 @@ class ImageAcquisitionHandler:
                         entry=generating,
                         status=ImageAcquisitionEntryStatus.FAILED_PERMANENT,
                         error_code=self._error_code(exc),
+                        error=exc,
                     )
                     raise
                 stored_entry = self._stored_entry_from_binary(
@@ -413,12 +517,7 @@ class ImageAcquisitionHandler:
                 previous=manifest,
                 current=completed,
             )
-        except (
-            ProductionVisualAssetPlanTransientReadException,
-            ImageAcquisitionProviderTimeoutException,
-            ImageAcquisitionProviderRateLimitException,
-            ImageAcquisitionProviderUnavailableException,
-        ) as exc:
+        except ProductionVisualAssetPlanTransientReadException as exc:
             return self._failure(
                 command,
                 started_at,
@@ -571,6 +670,62 @@ class ImageAcquisitionHandler:
         ).encode("utf-8")
         return hashlib.sha256(content).hexdigest()
 
+    def _remote_fingerprint(
+        self, asset: ProductionVisualAssetSpec, prompt_sha256: str
+    ) -> str:
+        content = json.dumps(
+            {
+                "provider": self._provider_name,
+                "model": self._requested_model,
+                "visual_prompt_sha256": prompt_sha256,
+                "scene_id": asset.source_scene_id,
+                "shot_id": asset.source_shot_id,
+                "visual_asset_id": asset.asset_id,
+                "aspect_ratio": asset.aspect_ratio,
+                "resolution": "1K",
+                "reference_image_fingerprints": [],
+                "provider_request_schema_version": "1.0.0",
+            },
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return hashlib.sha256(content).hexdigest()
+
+    def _authorize_billable(
+        self,
+        manifest: ProductionImageAcquisitionManifest,
+        entry: ProductionImageAcquisitionEntry,
+    ) -> None:
+        policy = self._billable_policy
+        if policy is None or not policy.allow_billable_requests:
+            raise ImageAcquisitionProviderConfigurationException(
+                "billable image requests are disabled"
+            )
+        if policy.estimated_cost_usd is None or policy.maximum_authorized_cost_usd is None:
+            raise ImageAcquisitionProviderConfigurationException(
+                "image cost authorization is missing"
+            )
+        submitted = sum(
+            item.request_status
+            in {
+                OpenRouterImageRequestStatus.SUBMITTING,
+                OpenRouterImageRequestStatus.COMPLETED,
+                OpenRouterImageRequestStatus.FAILED,
+                OpenRouterImageRequestStatus.UNCERTAIN,
+            }
+            for item in manifest.entries
+        )
+        if submitted >= policy.maximum_requests_per_job:
+            raise ImageAcquisitionProviderConfigurationException(
+                "image job request limit was reached"
+            )
+        if entry.request_status is not OpenRouterImageRequestStatus.PREPARED:
+            raise ImageAcquisitionProviderConfigurationException(
+                "durable prepared image checkpoint is required"
+            )
+
     async def _checkpoint_error(
         self,
         *,
@@ -579,9 +734,38 @@ class ImageAcquisitionHandler:
         entry: ProductionImageAcquisitionEntry,
         status: ImageAcquisitionEntryStatus,
         error_code: str,
+        error: Exception | None = None,
     ) -> None:
+        remote_status = None
+        fresh_submission = None
+        if entry.request_status is not None:
+            remote_status = entry.request_status
+            if entry.request_status is not OpenRouterImageRequestStatus.COMPLETED:
+                remote_status = (
+                    OpenRouterImageRequestStatus.UNCERTAIN
+                    if status is ImageAcquisitionEntryStatus.UNCERTAIN
+                    else OpenRouterImageRequestStatus.FAILED
+                )
+            fresh_submission = False
+        error_http_status = getattr(error, "http_status", None)
+        error_request_id = getattr(error, "provider_request_id", None)
         failed = entry.model_copy(
-            update={"status": status, "error_code": error_code}
+            update={
+                "status": status,
+                "error_code": error_code,
+                "request_status": remote_status,
+                "fresh_submission_permitted": fresh_submission,
+                "http_status": (
+                    error_http_status
+                    if error_http_status is not None
+                    else entry.http_status
+                ),
+                "provider_request_id": (
+                    error_request_id
+                    if error_request_id is not None
+                    else entry.provider_request_id
+                ),
+            }
         )
         root_status = (
             ImageAcquisitionManifestStatus.FAILED
@@ -732,6 +916,7 @@ class ImageAcquisitionHandler:
                 if response is not None
                 else None,
                 "cost_usd": response.cost_usd if response is not None else None,
+                "http_status": response.http_status if response is not None else None,
                 "latency_ms": response.latency_ms
                 if response is not None
                 else 0,
@@ -739,6 +924,14 @@ class ImageAcquisitionHandler:
                 if response is not None
                 else "recovered",
                 "error_code": None,
+                "request_status": (
+                    OpenRouterImageRequestStatus.COMPLETED
+                    if response is not None and response.provider == "openrouter"
+                    else entry.request_status
+                ),
+                "fresh_submission_permitted": (
+                    False if entry.request_status is not None else None
+                ),
                 "metadata": {
                     "recovered": recovered,
                     "simulated": binary.metadata.attributes.get(
@@ -934,6 +1127,10 @@ class ImageAcquisitionHandler:
                 "image_asset_unsupported",
             ),
             (
+                ImageAcquisitionProviderUncertainException,
+                "image_provider_uncertain",
+            ),
+            (
                 ImageAcquisitionProviderTimeoutException,
                 "image_provider_timeout",
             ),
@@ -1019,6 +1216,14 @@ def _entry_for(
 
 def _binary_asset_id(visual_asset_id: str) -> str:
     return f"image-{visual_asset_id}"
+
+
+def _safe_image_dimension(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ImageAcquisitionProviderContractException(
+            "image provider omitted validated image dimensions"
+        )
+    return value
 
 
 def _binary_artifact_id(job_id: UUID, visual_asset_id: str) -> UUID:

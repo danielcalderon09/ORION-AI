@@ -17,6 +17,17 @@ class ImageAcquisitionUnsupportedAssetException(ImageAcquisitionValidationError)
 class ImageAcquisitionProviderError(ImageAcquisitionError):
     """Base provider failure."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        http_status: int | None = None,
+        provider_request_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.http_status = http_status
+        self.provider_request_id = provider_request_id
+
 
 class ImageAcquisitionProviderDependencyException(ImageAcquisitionProviderError):
     pass
@@ -40,6 +51,10 @@ class ImageAcquisitionProviderTimeoutException(ImageAcquisitionProviderError):
 
 class ImageAcquisitionProviderUnavailableException(ImageAcquisitionProviderError):
     pass
+
+
+class ImageAcquisitionProviderUncertainException(ImageAcquisitionProviderError):
+    """A paid submission may have been transmitted and must not be repeated."""
 
 
 class ImageAcquisitionProviderResponseException(ImageAcquisitionProviderError):

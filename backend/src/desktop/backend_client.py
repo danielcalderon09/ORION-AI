@@ -58,8 +58,19 @@ class DesktopJobSummary:
         return self.status is ProductionJobStatus.COMPLETED
 
 
+@dataclass(frozen=True, slots=True)
+class DesktopProviderStatus:
+    scripting: str
+    images: str
+    voice: str
+    video: str
+    music: str
+
+
 class DesktopBackend(Protocol):
     async def list_jobs(self, *, limit: int = 25) -> tuple[DesktopJobSummary, ...]: ...
+
+    async def provider_status(self) -> DesktopProviderStatus: ...
 
     async def run_pipeline(
         self,
@@ -98,6 +109,16 @@ class ProductionDesktopBackend:
             return tuple(_job_summary(item.job) for item in page.items)
         finally:
             engine.dispose()
+
+    async def provider_status(self) -> DesktopProviderStatus:
+        settings = self._settings_factory()
+        return DesktopProviderStatus(
+            scripting=_provider_label(settings.ORION_SCRIPTING_PROVIDER),
+            images=_provider_label(settings.ORION_IMAGE_ACQUISITION_PROVIDER),
+            voice=_provider_label(settings.ORION_SPEECH_GENERATION_PROVIDER),
+            video=_provider_label(settings.ORION_VIDEO_CLIP_GENERATION_PROVIDER),
+            music=_provider_label(settings.ORION_MUSIC_GENERATION_PROVIDER),
+        )
 
     async def run_pipeline(
         self,
@@ -170,8 +191,13 @@ def _short_prompt(prompt: str) -> str:
     return compact if len(compact) <= 52 else f"{compact[:49]}..."
 
 
+def _provider_label(value: str) -> str:
+    return "OpenRouter" if value.strip().lower() == "openrouter" else "Simulated"
+
+
 __all__ = [
     "DesktopBackend",
     "DesktopJobSummary",
+    "DesktopProviderStatus",
     "ProductionDesktopBackend",
 ]

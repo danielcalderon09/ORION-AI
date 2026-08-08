@@ -36,6 +36,14 @@ class ImageAcquisitionManifestStatus(StrEnum):
     UNCERTAIN = "uncertain"
 
 
+class OpenRouterImageRequestStatus(StrEnum):
+    PREPARED = "prepared"
+    SUBMITTING = "submitting"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    UNCERTAIN = "uncertain"
+
+
 class ProductionImageAcquisitionEntry(ContractModel):
     visual_asset_id: str = Field(pattern=r"^asset-s[0-9]{3}-q[0-9]{3}-v[0-9]{3}$")
     scene_number: int = Field(ge=1, le=50)
@@ -67,6 +75,7 @@ class ProductionImageAcquisitionEntry(ContractModel):
     output_tokens: int | None = Field(default=None, ge=0)
     total_tokens: int | None = Field(default=None, ge=0)
     cost_usd: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=9)
+    http_status: int | None = Field(default=None, ge=100, le=599)
     latency_ms: float | None = Field(default=None, ge=0)
     finish_reason: str | None = Field(default=None, max_length=100)
     attempt_number: int = Field(ge=1)
@@ -74,6 +83,9 @@ class ProductionImageAcquisitionEntry(ContractModel):
         default=None,
         pattern=r"^[a-z0-9_]{1,100}$",
     )
+    request_status: OpenRouterImageRequestStatus | None = None
+    request_fingerprint: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    fresh_submission_permitted: bool | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("storage_path")
@@ -128,6 +140,13 @@ class ProductionImageAcquisitionEntry(ContractModel):
         )
         if self.source_shot_id != expected_shot:
             raise ValueError("entry shot ID must match scene and shot numbers")
+        if self.request_status is not None:
+            if self.request_fingerprint is None or self.fresh_submission_permitted is None:
+                raise ValueError("remote image request checkpoint is incomplete")
+            if (
+                self.request_status is OpenRouterImageRequestStatus.PREPARED
+            ) != self.fresh_submission_permitted:
+                raise ValueError("remote image fresh-submission policy is inconsistent")
         return self
 
 

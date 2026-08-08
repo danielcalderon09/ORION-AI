@@ -1,4 +1,4 @@
-"""Generate one local simulated end-to-end ORION video."""
+"""Generate one provider-configured local end-to-end ORION video."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from backend.src.production.local_mvp import (
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="orion-generate-video",
-        description="Run ORION's local simulated pipeline through real FFmpeg validation.",
+        description="Run ORION's local pipeline through real FFmpeg validation.",
     )
     parser.add_argument("--prompt", help="Natural-language video idea")
     parser.add_argument("--title", help="Optional local production title")
@@ -40,6 +40,12 @@ def _parser() -> argparse.ArgumentParser:
         "--aspect-ratio",
         choices=("9:16", "16:9", "1:1"),
         default="9:16",
+    )
+    parser.add_argument(
+        "--scene-count",
+        type=int,
+        default=2,
+        help="Planned scene count (1-50; default: 2)",
     )
     parser.add_argument("--project-id", help="Optional safe local project identifier")
     parser.add_argument("--resume-job-id", type=UUID, help="Resume an existing durable job")
@@ -63,6 +69,7 @@ def local_mvp_settings() -> Settings:
         ORION_SCRIPTING_PROVIDER=discovered.ORION_SCRIPTING_PROVIDER,
         ORION_SCRIPTING_MODEL=discovered.ORION_SCRIPTING_MODEL,
         ORION_SCRIPTING_API_KEY=discovered.ORION_SCRIPTING_API_KEY,
+        ORION_OPENROUTER_API_KEY=discovered.ORION_OPENROUTER_API_KEY,
         ORION_SCRIPTING_BASE_URL=discovered.ORION_SCRIPTING_BASE_URL,
         ORION_SCRIPTING_ALLOW_BILLABLE_REQUESTS=(
             discovered.ORION_SCRIPTING_ALLOW_BILLABLE_REQUESTS
@@ -79,9 +86,47 @@ def local_mvp_settings() -> Settings:
         ),
         ORION_SCENE_PLANNING_PROVIDER="simulated",
         ORION_VISUAL_ASSET_PLANNING_PROVIDER="simulated",
-        ORION_IMAGE_ACQUISITION_PROVIDER="simulated",
+        ORION_IMAGE_ACQUISITION_PROVIDER=discovered.ORION_IMAGE_ACQUISITION_PROVIDER,
+        ORION_IMAGE_ACQUISITION_MODEL=discovered.ORION_IMAGE_ACQUISITION_MODEL,
+        ORION_IMAGE_ACQUISITION_API_KEY=discovered.ORION_IMAGE_ACQUISITION_API_KEY,
+        ORION_IMAGE_ACQUISITION_BASE_URL=discovered.ORION_IMAGE_ACQUISITION_BASE_URL,
+        ORION_IMAGE_ACQUISITION_ALLOW_BILLABLE_REQUESTS=(
+            discovered.ORION_IMAGE_ACQUISITION_ALLOW_BILLABLE_REQUESTS
+        ),
+        ORION_IMAGE_ACQUISITION_ESTIMATED_COST_USD=(
+            discovered.ORION_IMAGE_ACQUISITION_ESTIMATED_COST_USD
+        ),
+        ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD=(
+            discovered.ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD
+        ),
+        ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB=(
+            discovered.ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB
+        ),
         ORION_VIDEO_CLIP_GENERATION_PROVIDER="simulated",
-        ORION_SPEECH_GENERATION_PROVIDER="simulated",
+        ORION_SPEECH_GENERATION_PROVIDER=discovered.ORION_SPEECH_GENERATION_PROVIDER,
+        ORION_SPEECH_GENERATION_VOICE=discovered.ORION_SPEECH_GENERATION_VOICE,
+        ORION_SPEECH_GENERATION_LANGUAGE=discovered.ORION_SPEECH_GENERATION_LANGUAGE,
+        ORION_SPEECH_GENERATION_ALLOW_BILLABLE_REQUESTS=(
+            discovered.ORION_SPEECH_GENERATION_ALLOW_BILLABLE_REQUESTS
+        ),
+        ORION_SPEECH_GENERATION_REMOTE_PROVIDER=(
+            discovered.ORION_SPEECH_GENERATION_REMOTE_PROVIDER
+        ),
+        ORION_SPEECH_GENERATION_REMOTE_MODEL=(
+            discovered.ORION_SPEECH_GENERATION_REMOTE_MODEL
+        ),
+        ORION_SPEECH_GENERATION_REMOTE_VOICE=(
+            discovered.ORION_SPEECH_GENERATION_REMOTE_VOICE
+        ),
+        ORION_SPEECH_GENERATION_REMOTE_ESTIMATED_COST=(
+            discovered.ORION_SPEECH_GENERATION_REMOTE_ESTIMATED_COST
+        ),
+        ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST=(
+            discovered.ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST
+        ),
+        ORION_SPEECH_GENERATION_MAX_REQUESTS_PER_JOB=(
+            discovered.ORION_SPEECH_GENERATION_MAX_REQUESTS_PER_JOB
+        ),
         ORION_MUSIC_GENERATION_PROVIDER="simulated",
         ORION_SOUND_EFFECT_GENERATION_PROVIDER="simulated",
         ORION_RENDERER="ffmpeg",
@@ -122,6 +167,7 @@ async def _run(args: argparse.Namespace) -> int:
                 prompt=args.prompt,
                 title=args.title,
                 target_duration_seconds=args.target_duration,
+                scene_count_hint=args.scene_count,
                 aspect_ratio=args.aspect_ratio,
                 project_id=args.project_id,
                 resume_job_id=args.resume_job_id,

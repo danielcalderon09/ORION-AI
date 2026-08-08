@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     ORION_SCRIPTING_PROVIDER: Literal["simulated", "openrouter"] = "simulated"
     ORION_SCRIPTING_MODEL: str = ""
     ORION_SCRIPTING_API_KEY: SecretStr | None = None
+    ORION_OPENROUTER_API_KEY: SecretStr | None = None
     ORION_SCRIPTING_BASE_URL: str = "https://openrouter.ai/api/v1"
     ORION_SCRIPTING_ALLOW_BILLABLE_REQUESTS: bool = False
     ORION_SCRIPTING_ESTIMATED_COST_USD: Decimal | None = None
@@ -95,11 +96,11 @@ class Settings(BaseSettings):
         "webp",
     )
     ORION_IMAGE_ACQUISITION_PROVIDER: str = "simulated"
-    ORION_IMAGE_ACQUISITION_MODEL: str = ""
+    ORION_IMAGE_ACQUISITION_MODEL: str = "google/gemini-3.1-flash-lite-image"
     ORION_IMAGE_ACQUISITION_API_KEY: SecretStr | None = None
     ORION_IMAGE_ACQUISITION_BASE_URL: str = "https://openrouter.ai/api/v1"
     ORION_IMAGE_ACQUISITION_TIMEOUT_SECONDS: float = 120.0
-    ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS: int = 2
+    ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS: Literal[1] = 1
     ORION_IMAGE_ACQUISITION_RETRY_BASE_DELAY_SECONDS: float = 1.0
     ORION_IMAGE_ACQUISITION_OUTPUT_FORMAT: Literal["png", "jpeg", "webp"] = "png"
     ORION_IMAGE_ACQUISITION_QUALITY: Literal["auto", "low", "medium", "high"] = "auto"
@@ -108,6 +109,11 @@ class Settings(BaseSettings):
     ORION_IMAGE_ACQUISITION_MAX_PLAN_BYTES: int = 8_000_000
     ORION_IMAGE_ACQUISITION_MAX_MANIFEST_BYTES: int = 4_000_000
     ORION_IMAGE_ACQUISITION_PROVIDER_ONLY: str | None = None
+    ORION_IMAGE_ACQUISITION_ALLOW_BILLABLE_REQUESTS: bool = False
+    ORION_IMAGE_ACQUISITION_ESTIMATED_COST_USD: Decimal | None = None
+    ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD: Decimal | None = None
+    ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB: int = 1
+    ORION_IMAGE_ACQUISITION_MAX_REQUEST_RECORD_BYTES: int = 1_000_000
     ORION_VIDEO_CLIP_GENERATION_PROVIDER: Literal["simulated", "openrouter"] = "simulated"
     ORION_VIDEO_CLIP_GENERATION_MODEL: str = "simulated-video-v1"
     ORION_VIDEO_CLIP_GENERATION_OUTPUT_FORMAT: Literal["mp4"] = "mp4"
@@ -140,7 +146,7 @@ class Settings(BaseSettings):
     ORION_ASSET_PUBLISHING_LIFETIME_SECONDS: int = 900
     ORION_ASSET_PUBLISHING_MAX_ASSET_BYTES: int = 250_000_000
     ORION_ASSET_PUBLISHING_MAX_MANIFEST_BYTES: int = 4_000_000
-    ORION_SPEECH_GENERATION_PROVIDER: Literal["simulated"] = "simulated"
+    ORION_SPEECH_GENERATION_PROVIDER: Literal["simulated", "openrouter"] = "simulated"
     ORION_SPEECH_GENERATION_VOICE: str = "simulated-neutral-v1"
     ORION_SPEECH_GENERATION_LANGUAGE: str = "es-ES"
     ORION_SPEECH_GENERATION_WORDS_PER_MINUTE: int = 150
@@ -154,14 +160,21 @@ class Settings(BaseSettings):
     ORION_SPEECH_GENERATION_MAX_SCRIPT_BYTES: int = 2_000_000
     ORION_SPEECH_GENERATION_GENERATING_STALE_AFTER_SECONDS: float = 30
     ORION_SPEECH_GENERATION_ALLOW_BILLABLE_REQUESTS: bool = False
-    ORION_SPEECH_GENERATION_REMOTE_PROVIDER: Literal["disabled"] = "disabled"
+    ORION_SPEECH_GENERATION_REMOTE_PROVIDER: Literal["disabled", "openrouter"] = "disabled"
     ORION_SPEECH_GENERATION_REMOTE_MODEL: str | None = None
     ORION_SPEECH_GENERATION_REMOTE_VOICE: str | None = None
+    ORION_SPEECH_GENERATION_REMOTE_ESTIMATED_COST: Decimal | None = None
     ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST: Decimal | None = None
+    ORION_SPEECH_GENERATION_MAX_REQUESTS_PER_JOB: int = 1
+    ORION_SPEECH_GENERATION_OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    ORION_SPEECH_GENERATION_OPENROUTER_TIMEOUT_SECONDS: float = 120
     ORION_SPEECH_GENERATION_REMOTE_MAX_POLL_ATTEMPTS: int = 120
     ORION_SPEECH_GENERATION_REMOTE_POLL_INTERVAL_SECONDS: float = 5
     ORION_SPEECH_GENERATION_REMOTE_JOB_MAX_BYTES: int = 1_000_000
     ORION_MUSIC_GENERATION_PROVIDER: Literal["simulated"] = "simulated"
+    ORION_MUSIC_GENERATION_MODEL: str = "google/lyria-3-clip-preview"
+    ORION_VIDEO_FUTURE_PRIMARY_MODEL: str = "google/veo-3.1-lite"
+    ORION_VIDEO_FUTURE_ALTERNATIVE_MODEL: str = "bytedance/seedance-2.0"
     ORION_SOUND_EFFECT_GENERATION_PROVIDER: Literal["simulated"] = "simulated"
     ORION_AUDIO_DESIGN_SAMPLE_RATE_HZ: Literal[24_000] = 24_000
     ORION_AUDIO_DESIGN_CHANNEL_COUNT: Literal[1] = 1
@@ -271,6 +284,7 @@ class Settings(BaseSettings):
     @field_validator(
         "ORION_SPEECH_GENERATION_REMOTE_MODEL",
         "ORION_SPEECH_GENERATION_REMOTE_VOICE",
+        "ORION_SPEECH_GENERATION_REMOTE_ESTIMATED_COST",
         "ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST",
         mode="before",
     )
@@ -282,6 +296,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "ORION_SCRIPTING_API_KEY",
+        "ORION_OPENROUTER_API_KEY",
         "ORION_SCRIPTING_ESTIMATED_COST_USD",
         "ORION_SCRIPTING_MAX_ESTIMATED_COST_USD",
         mode="before",
@@ -314,6 +329,20 @@ class Settings(BaseSettings):
         return value
 
     @field_validator(
+        "ORION_IMAGE_ACQUISITION_ESTIMATED_COST_USD",
+        "ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD",
+        mode="before",
+    )
+    @classmethod
+    def empty_image_cost_is_unset(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        if isinstance(value, float):
+            raise ValueError("OpenRouter image cost must not use float")
+        return value
+
+    @field_validator(
+        "ORION_SPEECH_GENERATION_REMOTE_ESTIMATED_COST",
         "ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST",
         mode="before",
     )
@@ -520,14 +549,37 @@ class Settings(BaseSettings):
             raise ValueError("remote speech job size is outside safe limits")
         if not (0 < self.ORION_SPEECH_GENERATION_REMOTE_POLL_INTERVAL_SECONDS <= 300):
             raise ValueError("remote speech poll interval is outside safe limits")
-        if self.ORION_SPEECH_GENERATION_ALLOW_BILLABLE_REQUESTS:
-            raise ValueError("no billable remote speech provider is available")
-        if (
-            self.ORION_SPEECH_GENERATION_REMOTE_MODEL is not None
+        remote_speech_enabled = self.ORION_SPEECH_GENERATION_REMOTE_PROVIDER == "openrouter"
+        if self.ORION_SPEECH_GENERATION_PROVIDER == "openrouter" and not remote_speech_enabled:
+            raise ValueError("OpenRouter speech requires remote_provider=openrouter")
+        if remote_speech_enabled:
+            if not self.ORION_SPEECH_GENERATION_ALLOW_BILLABLE_REQUESTS:
+                raise ValueError("OpenRouter speech requires explicit billable authorization")
+            if not self.ORION_SPEECH_GENERATION_REMOTE_MODEL:
+                raise ValueError("OpenRouter speech model is missing")
+            if not self.ORION_SPEECH_GENERATION_REMOTE_VOICE:
+                raise ValueError("OpenRouter speech voice is missing")
+            speech_estimate = self.ORION_SPEECH_GENERATION_REMOTE_ESTIMATED_COST
+            speech_maximum = self.ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST
+            if (
+                speech_estimate is None
+                or speech_maximum is None
+                or speech_estimate > speech_maximum
+            ):
+                raise ValueError("OpenRouter speech cost authorization is invalid")
+            if (
+                speech_estimate * self.ORION_SPEECH_GENERATION_MAX_REQUESTS_PER_JOB
+                > speech_maximum
+            ):
+                raise ValueError("OpenRouter speech job cost authorization is invalid")
+        elif (
+            self.ORION_SPEECH_GENERATION_ALLOW_BILLABLE_REQUESTS
+            or self.ORION_SPEECH_GENERATION_REMOTE_MODEL is not None
             or self.ORION_SPEECH_GENERATION_REMOTE_VOICE is not None
+            or self.ORION_SPEECH_GENERATION_REMOTE_ESTIMATED_COST is not None
             or self.ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST is not None
         ):
-            raise ValueError("disabled remote speech cannot configure model, voice, or cost")
+            raise ValueError("disabled remote speech cannot configure billing, model, voice, or cost")
         if (
             self.ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS
             > self.ORION_VIDEO_CLIP_GENERATION_MAX_DURATION_SECONDS
@@ -572,10 +624,14 @@ class Settings(BaseSettings):
                 if not normalized or any(ord(character) < 32 for character in normalized):
                     raise ValueError(f"{name} is invalid")
                 setattr(self, name, normalized)
-        if not 1 <= self.ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS <= 5:
-            raise ValueError(
-                "ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS must be between 1 and 5"
-            )
+        if self.ORION_IMAGE_ACQUISITION_MAX_TRANSPORT_ATTEMPTS != 1:
+            raise ValueError("OpenRouter image transport attempts must equal one")
+        if not 1 <= self.ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB <= 50:
+            raise ValueError("image request limit is outside safe bounds")
+        if not 1 <= self.ORION_SPEECH_GENERATION_MAX_REQUESTS_PER_JOB <= 50:
+            raise ValueError("speech request limit is outside safe bounds")
+        if not 1_024 <= self.ORION_IMAGE_ACQUISITION_MAX_REQUEST_RECORD_BYTES <= 4_000_000:
+            raise ValueError("image request record limit is outside safe bounds")
         if (
             self.ORION_IMAGE_ACQUISITION_MAX_DECODED_IMAGE_BYTES
             > self.ORION_BINARY_ASSET_MAX_SIZE_BYTES

@@ -1,5 +1,12 @@
 # Orion AI Validation Roadmap
 
+## Phase 6D — OpenRouter image + TTS
+
+Implemented behind the existing acquisition and speech boundaries with fake transports only.
+Images and Kokoro TTS are opt-in, billable-gated, single-attempt, and durable; ambiguous
+submissions become `uncertain`. Video and music remain simulated with future model vocabulary.
+No live media request is part of this phase.
+
 > **Status:** Architecture frozen after Sprint 5. Focus shifted from feature development to real-world validation, optimization, and operational excellence.
 
 ---

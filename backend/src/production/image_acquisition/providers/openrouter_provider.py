@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import binascii
+import io
 import json
 import re
 from collections.abc import Awaitable, Callable
@@ -11,6 +12,7 @@ from time import monotonic
 from typing import Any
 
 import httpx
+from PIL import Image, UnidentifiedImageError
 
 from backend.src.production.image_acquisition.exceptions import (
     ImageAcquisitionProviderAuthenticationException,
@@ -20,8 +22,8 @@ from backend.src.production.image_acquisition.exceptions import (
     ImageAcquisitionProviderPolicyException,
     ImageAcquisitionProviderRateLimitException,
     ImageAcquisitionProviderResponseException,
-    ImageAcquisitionProviderTimeoutException,
     ImageAcquisitionProviderUnavailableException,
+    ImageAcquisitionProviderUncertainException,
 )
 from backend.src.production.image_acquisition.ports import (
     GeneratedImagePayload,
@@ -49,7 +51,7 @@ class OpenRouterImageAcquisitionProvider:
         prompt_builder: ImageGenerationPromptBuilder,
         base_url: str = "https://openrouter.ai/api/v1",
         timeout_seconds: float = 120,
-        max_transport_attempts: int = 2,
+        max_transport_attempts: int = 1,
         retry_base_delay_seconds: float = 1.0,
         max_response_bytes: int = 40_000_000,
         max_decoded_image_bytes: int = 25_000_000,
@@ -66,7 +68,14 @@ class OpenRouterImageAcquisitionProvider:
                 "image provider credential or model is missing"
             )
         parsed = httpx.URL(base_url)
-        if parsed.scheme != "https" or not parsed.host or parsed.userinfo:
+        if (
+            parsed.scheme != "https"
+            or parsed.host != "openrouter.ai"
+            or parsed.userinfo
+            or parsed.path.rstrip("/") != "/api/v1"
+            or parsed.query
+            or parsed.fragment
+        ):
             raise ImageAcquisitionProviderConfigurationException(
                 "image provider base URL is invalid"
             )
@@ -74,9 +83,9 @@ class OpenRouterImageAcquisitionProvider:
             raise ImageAcquisitionProviderConfigurationException(
                 "image provider timeout and retry delay must be positive"
             )
-        if not 1 <= max_transport_attempts <= 5:
+        if max_transport_attempts != 1:
             raise ImageAcquisitionProviderConfigurationException(
-                "image provider transport attempts must be between 1 and 5"
+                "billable image provider permits exactly one transport attempt"
             )
         if not 1 <= max_response_bytes <= 100_000_000:
             raise ImageAcquisitionProviderConfigurationException(
@@ -131,7 +140,7 @@ class OpenRouterImageAcquisitionProvider:
             "model": self._model,
             "prompt": prompt.text,
             "n": 1,
-            "size": f"{asset.width}x{asset.height}",
+            "resolution": "1K",
             "aspect_ratio": asset.aspect_ratio,
             "quality": request.configuration.quality,
             "output_format": request.configuration.output_format,
@@ -139,9 +148,18 @@ class OpenRouterImageAcquisitionProvider:
             "provider": provider,
         }
         started = self._monotonic()
-        body, request_id = await self._post_with_retries(payload)
+        body, request_id, http_status = await self._post_once(payload)
         latency_ms = max(0.0, (self._monotonic() - started) * 1000)
-        images = self._decode_images(body)
+        try:
+            images = self._decode_images(
+                body,
+                expected_width=asset.width,
+                expected_height=asset.height,
+            )
+        except ImageAcquisitionProviderResponseException as exc:
+            exc.http_status = http_status
+            exc.provider_request_id = request_id
+            raise
         usage_value = body.get("usage")
         usage = usage_value if isinstance(usage_value, dict) else {}
         return ImageAcquisitionProviderResponse(
@@ -154,6 +172,7 @@ class OpenRouterImageAcquisitionProvider:
             output_tokens=_safe_int(usage.get("completion_tokens", usage.get("output_tokens"))),
             total_tokens=_safe_int(usage.get("total_tokens")),
             cost_usd=_safe_decimal(usage.get("cost")),
+            http_status=http_status,
             latency_ms=latency_ms,
             finish_reason=_safe_string(body.get("finish_reason")),
             metadata={
@@ -164,31 +183,10 @@ class OpenRouterImageAcquisitionProvider:
             },
         )
 
-    async def _post_with_retries(
-        self,
-        payload: dict[str, Any],
-    ) -> tuple[dict[str, Any], str | None]:
-        last_error: Exception | None = None
-        for attempt in range(1, self._attempts + 1):
-            try:
-                return await self._post_once(payload)
-            except asyncio.CancelledError:
-                raise
-            except (
-                ImageAcquisitionProviderTimeoutException,
-                ImageAcquisitionProviderRateLimitException,
-                ImageAcquisitionProviderUnavailableException,
-            ) as exc:
-                last_error = exc
-            if attempt < self._attempts:
-                await self._sleeper(self._retry_delay * (2 ** (attempt - 1)))
-        assert last_error is not None
-        raise last_error
-
     async def _post_once(
         self,
         payload: dict[str, Any],
-    ) -> tuple[dict[str, Any], str | None]:
+    ) -> tuple[dict[str, Any], str | None, int]:
         try:
             async with self._get_client().stream(
                 "POST",
@@ -199,24 +197,32 @@ class OpenRouterImageAcquisitionProvider:
                 follow_redirects=False,
             ) as response:
                 content = await _read_bounded(response, self._max_response_bytes)
+                request_id = _safe_remote_id(response.headers.get("x-request-id"))
                 if response.status_code not in range(200, 300):
-                    self._raise_http_error(response.status_code, content)
-                body = _load_strict_object(content)
-                request_id = response.headers.get("x-request-id") or _safe_string(body.get("id"))
-                return body, request_id
+                    self._raise_http_error(response.status_code, content, request_id)
+                try:
+                    body = _load_strict_object(content)
+                except ImageAcquisitionProviderResponseException as exc:
+                    exc.http_status = response.status_code
+                    exc.provider_request_id = request_id
+                    raise
+                request_id = request_id or _safe_remote_id(body.get("id"))
+                return body, request_id, response.status_code
         except asyncio.CancelledError:
             raise
         except httpx.TimeoutException as exc:
-            raise ImageAcquisitionProviderTimeoutException(
-                "image provider request timed out"
+            raise ImageAcquisitionProviderUncertainException(
+                "image provider submission outcome is uncertain"
             ) from exc
         except httpx.RequestError as exc:
-            raise ImageAcquisitionProviderUnavailableException(
-                "image provider connection failed"
+            raise ImageAcquisitionProviderUncertainException(
+                "image provider submission outcome is uncertain"
             ) from exc
 
     @staticmethod
-    def _raise_http_error(status: int, content: bytes) -> None:
+    def _raise_http_error(
+        status: int, content: bytes, request_id: str | None
+    ) -> None:
         error_type = _safe_error_type(content)
         if status in {401, 402, 403} or error_type in {
             "authentication",
@@ -224,10 +230,16 @@ class OpenRouterImageAcquisitionProvider:
             "payment_required",
         }:
             raise ImageAcquisitionProviderAuthenticationException(
-                "image provider rejected authentication or billing authorization"
+                "image provider rejected authentication or billing authorization",
+                http_status=status,
+                provider_request_id=request_id,
             )
         if status == 429 or error_type == "rate_limit_exceeded":
-            raise ImageAcquisitionProviderRateLimitException("image provider rate limit reached")
+            raise ImageAcquisitionProviderRateLimitException(
+                "image provider rate limit reached",
+                http_status=status,
+                provider_request_id=request_id,
+            )
         if status in _TRANSIENT_STATUS or error_type in {
             "provider_overloaded",
             "provider_unavailable",
@@ -236,23 +248,34 @@ class OpenRouterImageAcquisitionProvider:
             "unmapped",
         }:
             raise ImageAcquisitionProviderUnavailableException(
-                "image provider is temporarily unavailable"
+                "image provider is temporarily unavailable",
+                http_status=status,
+                provider_request_id=request_id,
             )
         if error_type in {"content_policy_violation", "refusal"}:
             raise ImageAcquisitionProviderPolicyException(
-                "image request was rejected by content policy"
+                "image request was rejected by content policy",
+                http_status=status,
+                provider_request_id=request_id,
             )
         if status == 404 or error_type in {"not_found", "model_not_found"}:
             raise ImageAcquisitionProviderModelException(
-                "configured image model is unavailable or incompatible"
+                "configured image model is unavailable or incompatible",
+                http_status=status,
+                provider_request_id=request_id,
             )
         raise ImageAcquisitionProviderContractException(
-            "image provider rejected the request contract"
+            "image provider rejected the request contract",
+            http_status=status,
+            provider_request_id=request_id,
         )
 
     def _decode_images(
         self,
         body: dict[str, Any],
+        *,
+        expected_width: int,
+        expected_height: int,
     ) -> tuple[GeneratedImagePayload, ...]:
         data = body.get("data")
         if not isinstance(data, list) or len(data) != 1:
@@ -298,11 +321,48 @@ class OpenRouterImageAcquisitionProvider:
             raise ImageAcquisitionProviderResponseException(
                 "image provider returned active or vector content"
             )
+        actual_media_type = _detect_image_mime(content)
+        if actual_media_type is None or (
+            media_type is not None and media_type != actual_media_type
+        ):
+            raise ImageAcquisitionProviderResponseException(
+                "image provider media signature is invalid"
+            )
+        try:
+            with Image.open(io.BytesIO(content)) as decoded:
+                decoded.verify()
+            with Image.open(io.BytesIO(content)) as decoded:
+                width, height = decoded.size
+                decoded_format = (decoded.format or "").upper()
+        except (Image.DecompressionBombError, OSError, UnidentifiedImageError) as exc:
+            raise ImageAcquisitionProviderResponseException(
+                "image provider returned an undecodable image"
+            ) from exc
+        expected_format = {
+            "image/png": "PNG",
+            "image/jpeg": "JPEG",
+            "image/webp": "WEBP",
+        }[actual_media_type]
+        if decoded_format != expected_format or width <= 0 or height <= 0:
+            raise ImageAcquisitionProviderResponseException(
+                "image provider image dimensions or format are invalid"
+            )
+        if width * height > 40_000_000:
+            raise ImageAcquisitionProviderResponseException(
+                "image provider image dimensions exceed the configured limit"
+            )
+        expected_ratio = expected_width / expected_height
+        actual_ratio = width / height
+        if abs(actual_ratio - expected_ratio) / expected_ratio > 0.03:
+            raise ImageAcquisitionProviderResponseException(
+                "image provider image aspect ratio is outside tolerance"
+            )
         return (
             GeneratedImagePayload(
                 content=content,
-                mime_type=media_type,
+                mime_type=actual_media_type,
                 index=0,
+                provider_metadata={"width": width, "height": height},
             ),
         )
 
@@ -405,6 +465,22 @@ def _validate_referer(value: str) -> str:
 
 def _safe_string(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _safe_remote_id(value: Any) -> str | None:
+    if not isinstance(value, str) or not 1 <= len(value) <= 200:
+        return None
+    return value if re.fullmatch(r"[A-Za-z0-9_.-]+", value) else None
+
+
+def _detect_image_mime(content: bytes) -> str | None:
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if content.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 
 def _safe_int(value: Any) -> int | None:

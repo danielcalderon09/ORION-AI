@@ -1,5 +1,9 @@
 # ORION Desktop UI
 
+Phase 6D exposes a local-only backend provider summary for scripting, images, voice, video, and
+music. It is derived from typed settings, displays only `OpenRouter` or `Simulated`, exposes no
+credential or balance, and performs no provider request during desktop startup.
+
 ## Propósito
 
 ORION Desktop es el primer cliente gráfico nativo del pipeline local. Está

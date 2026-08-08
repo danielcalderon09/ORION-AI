@@ -165,6 +165,7 @@ class SpeechAudioWriteRequest(ContractModel):
     segment: SpeechSegmentRequest
     expected: SpeechSegmentAudioMetadata
     metadata: SpeechBinaryAssetMetadata
+    flexible_duration: bool = False
 
     @property
     def asset_id(self) -> str:

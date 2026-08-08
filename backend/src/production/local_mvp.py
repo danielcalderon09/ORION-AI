@@ -1,4 +1,4 @@
-"""Focused application service for ORION's local simulated end-to-end MVP."""
+"""Focused application service for ORION's provider-configured local MVP."""
 
 from __future__ import annotations
 
@@ -48,6 +48,7 @@ class LocalMvpRequest(ContractModel):
     prompt: str | None = Field(default=None, max_length=10_000)
     title: str | None = Field(default=None, min_length=1, max_length=300)
     target_duration_seconds: int = Field(default=8, ge=4, le=60)
+    scene_count_hint: int = Field(default=2, ge=1, le=50)
     aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16"
     project_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
     resume_job_id: UUID | None = None
@@ -159,6 +160,7 @@ class LocalMvpApplication:
             profile = local_mvp_profile(
                 target_duration_seconds=request.target_duration_seconds,
                 aspect_ratio=request.aspect_ratio,
+                scene_count_hint=request.scene_count_hint,
             )
             view = await self._create_job.execute(
                 CreateProductionJobCommand(
@@ -425,13 +427,16 @@ def local_mvp_profile(
     *,
     target_duration_seconds: int = 8,
     aspect_ratio: Literal["9:16", "16:9", "1:1"] = "9:16",
+    scene_count_hint: int = 2,
 ) -> dict[str, object]:
     if not 4 <= target_duration_seconds <= 60:
         raise ValueError("target duration must be between 4 and 60 seconds")
+    if not 1 <= scene_count_hint <= 50:
+        raise ValueError("scene count must be between 1 and 50")
     dimensions = {
-        "9:16": (360, 640),
-        "16:9": (640, 360),
-        "1:1": (480, 480),
+        "9:16": (576, 1024),
+        "16:9": (1024, 576),
+        "1:1": (1024, 1024),
     }
     width, height = dimensions[aspect_ratio]
     return {
@@ -441,7 +446,7 @@ def local_mvp_profile(
             "aspect_ratio": aspect_ratio,
             "visual_style": "cinematic",
             "narrative_style": "engaging",
-            "scene_count_hint": 2,
+            "scene_count_hint": scene_count_hint,
         },
         "visual_asset_planning": {
             "preferred_asset_kind": "still_image",

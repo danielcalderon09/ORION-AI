@@ -30,7 +30,20 @@ class SpeechProviderClosedError(SpeechProviderError):
 
 
 class SpeechProviderResponseError(SpeechProviderError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        http_status: int | None = None,
+        provider_request_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.http_status = http_status
+        self.provider_request_id = provider_request_id
+
+
+class SpeechProviderUncertainError(SpeechProviderError):
+    """A remote submission may have been transmitted and cannot be retried safely."""
 
 
 class SpeechAudioStoreError(SpeechGenerationError):

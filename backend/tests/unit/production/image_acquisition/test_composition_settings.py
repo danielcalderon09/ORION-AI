@@ -136,6 +136,9 @@ async def test_container_closes_image_provider_first(monkeypatch, tmp_path) -> N
             ORION_IMAGE_ACQUISITION_PROVIDER="openrouter",
             ORION_IMAGE_ACQUISITION_API_KEY="fake-test-only",
             ORION_IMAGE_ACQUISITION_MODEL="openai/test-image-model",
+            ORION_IMAGE_ACQUISITION_ALLOW_BILLABLE_REQUESTS=True,
+            ORION_IMAGE_ACQUISITION_ESTIMATED_COST_USD="0.001",
+            ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD="0.001",
         )
     )
     assert close_order == []
