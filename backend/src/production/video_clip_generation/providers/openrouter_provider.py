@@ -19,14 +19,15 @@ import httpx
 from backend.src.production.video_clip_generation.exceptions import (
     OpenRouterVideoConfigurationError,
     OpenRouterVideoContentTypeError,
+    OpenRouterVideoCostPolicyError,
     OpenRouterVideoDownloadError,
+    OpenRouterVideoError,
     OpenRouterVideoInvalidResponseError,
     OpenRouterVideoRemoteCancelledError,
     OpenRouterVideoRemoteExpiredError,
     OpenRouterVideoRemoteFailedError,
     OpenRouterVideoResponseTooLargeError,
     OpenRouterVideoTimeoutError,
-    OpenRouterVideoTransportError,
     OpenRouterVideoUncertainSubmissionError,
     VideoFramePublicationUnavailableError,
 )
@@ -54,6 +55,7 @@ from backend.src.production.video_clip_generation.providers.openrouter_models im
     OpenRouterRemoteStatus,
     OpenRouterVideoJob,
     OpenRouterVideoProviderConfiguration,
+    OpenRouterVideoRequestStatus,
     PublishedVideoFrameImage,
     RemoteVideoJobRecord,
 )
@@ -74,6 +76,8 @@ class RemoteVideoJobStore(Protocol):
     ) -> RemoteVideoJobRecord | None: ...
 
     async def create(self, record: RemoteVideoJobRecord) -> None: ...
+
+    async def count_for_job(self, *, job_id: UUID) -> int: ...
 
     async def find_latest(
         self,
@@ -161,8 +165,40 @@ class OpenRouterVideoClipGenerationProvider:
                 existing = previous
         if existing is not None:
             self._validate_recovery(existing, request, prompt.sha256)
-            terminal = await self._poll(existing)
+            if existing.request_status is OpenRouterVideoRequestStatus.PREPARED:
+                publication = await self._publisher.publish_first_frame(request)
+                validate_public_frame_url(publication.url)
+                self._validate_publication(publication, request)
+                if publication.publication_id != existing.publication_id:
+                    raise OpenRouterVideoConfigurationError(
+                        "prepared video publication identity changed"
+                    )
+                terminal = await self._submit_prepared(
+                    existing,
+                    prompt=prompt.text,
+                    first_frame_url=publication.url,
+                )
+            elif existing.request_status in {
+                OpenRouterVideoRequestStatus.SUBMITTING,
+                OpenRouterVideoRequestStatus.UNCERTAIN,
+            }:
+                raise OpenRouterVideoUncertainSubmissionError(
+                    "video submission outcome requires manual review"
+                )
+            elif existing.request_status is OpenRouterVideoRequestStatus.FAILED:
+                if existing.remote_status is not None:
+                    terminal = self._terminal_or_raise(existing)
+                raise OpenRouterVideoRemoteFailedError("video submission failed permanently")
+            else:
+                terminal = await self._poll(existing)
         else:
+            if (
+                await self._jobs.count_for_job(job_id=request.job_id)
+                >= self._config.max_requests_per_job
+            ):
+                raise OpenRouterVideoCostPolicyError(
+                    "OpenRouter video paid submission limit was reached"
+                )
             publication = await self._publisher.publish_first_frame(request)
             validate_public_frame_url(publication.url)
             self._validate_publication(publication, request)
@@ -188,16 +224,8 @@ class OpenRouterVideoClipGenerationProvider:
                 publication_id=publication.publication_id,
                 aspect_ratio=aspect_ratio,
             )
-            submitted = await self._submit(
-                model=self._config.model,
-                prompt=prompt.text,
-                duration=duration,
-                resolution=self._config.resolution,
-                aspect_ratio=aspect_ratio,
-                first_frame_url=publication.url,
-            )
             now = self._aware_now()
-            record = RemoteVideoJobRecord(
+            prepared = RemoteVideoJobRecord(
                 job_id=str(request.job_id),
                 attempt_number=request.attempt_number,
                 visual_asset_id=request.visual_asset_id,
@@ -209,25 +237,27 @@ class OpenRouterVideoClipGenerationProvider:
                 publication_provider=publication.publication_provider,
                 publication_id=publication.publication_id,
                 publication_expires_at=publication.expires_at,
-                remote_job_id=submitted.id,
-                remote_generation_id=submitted.generation_id,
-                remote_status=submitted.status,
-                submitted_at=now,
-                terminal_at=now if self._polling.terminal(submitted.status) else None,
-                remote_content_available=(submitted.status is OpenRouterRemoteStatus.COMPLETED),
+                request_status=OpenRouterVideoRequestStatus.PREPARED,
+                fresh_submission_permitted=True,
+                prepared_at=now,
+                requested_duration_seconds=duration,
+                requested_resolution=self._config.resolution,
+                requested_aspect_ratio=aspect_ratio,
+                generate_audio=False,
                 estimated_cost_usd=estimated,
-                reported_cost_usd=(submitted.usage.cost if submitted.usage is not None else None),
                 pricing_snapshot_at=now,
                 pricing_sku=pricing_sku,
-                safe_remote_path=f"/api/v1/videos/{submitted.id}",
             )
-            try:
-                await self._jobs.create(record)
-            except Exception as exc:
-                raise OpenRouterVideoUncertainSubmissionError(
-                    "remote video was accepted but its checkpoint failed"
-                ) from exc
-            terminal = await self._poll(record)
+            await self._jobs.create(prepared)
+            terminal = await self._submit_prepared(
+                prepared,
+                prompt=prompt.text,
+                first_frame_url=publication.url,
+            )
+        if terminal.remote_job_id is None:
+            raise OpenRouterVideoUncertainSubmissionError(
+                "remote video identity is unavailable"
+            )
         content, content_sha256 = await self._download(terminal.remote_job_id)
         latency = max(0.0, (self._monotonic() - started) * 1000)
         metadata = _safe_response_metadata(terminal, content_sha256)
@@ -242,13 +272,94 @@ class OpenRouterVideoClipGenerationProvider:
             ),
             provider="openrouter",
             requested_model=self._config.model,
-            reported_model=self._config.model,
+            reported_model=terminal.reported_model or self._config.model,
             request_id=terminal.remote_job_id,
             latency_ms=latency,
             cost_usd=terminal.reported_cost_usd,
             finish_reason="completed",
             metadata=metadata,
         )
+
+    async def _submit_prepared(
+        self,
+        prepared: RemoteVideoJobRecord,
+        *,
+        prompt: str,
+        first_frame_url: str,
+    ) -> RemoteVideoJobRecord:
+        if not prepared.fresh_submission_permitted:
+            raise OpenRouterVideoUncertainSubmissionError(
+                "fresh video submission is not permitted"
+            )
+        submitting = prepared.model_copy(
+            update={
+                "request_status": OpenRouterVideoRequestStatus.SUBMITTING,
+                "fresh_submission_permitted": False,
+                "submission_started_at": self._aware_now(),
+            }
+        )
+        await self._jobs.checkpoint(previous=prepared, current=submitting)
+        try:
+            submitted = await self._submit(
+                model=self._config.model,
+                prompt=prompt,
+                duration=prepared.requested_duration_seconds or 0,
+                resolution=prepared.requested_resolution or "",
+                aspect_ratio=prepared.requested_aspect_ratio or "",
+                first_frame_url=first_frame_url,
+            )
+        except asyncio.CancelledError:
+            await self._checkpoint_unresolved(submitting)
+            raise
+        except OpenRouterVideoUncertainSubmissionError:
+            await self._checkpoint_unresolved(submitting)
+            raise
+        except OpenRouterVideoError as exc:
+            failed = submitting.model_copy(
+                update={
+                    "request_status": OpenRouterVideoRequestStatus.FAILED,
+                    "submission_http_status": getattr(exc, "http_status", None),
+                }
+            )
+            await self._jobs.checkpoint(previous=submitting, current=failed)
+            raise
+        now = self._aware_now()
+        accepted = submitting.model_copy(
+            update={
+                "request_status": (
+                    OpenRouterVideoRequestStatus.COMPLETED
+                    if submitted.status is OpenRouterRemoteStatus.COMPLETED
+                    else OpenRouterVideoRequestStatus.SUBMITTED
+                ),
+                "submission_http_status": 202,
+                "reported_model": submitted.model,
+                "remote_job_id": submitted.id,
+                "remote_generation_id": submitted.generation_id,
+                "remote_status": submitted.status,
+                "submitted_at": now,
+                "terminal_at": now if self._polling.terminal(submitted.status) else None,
+                "remote_content_available": (
+                    submitted.status is OpenRouterRemoteStatus.COMPLETED
+                ),
+                "reported_cost_usd": (
+                    submitted.usage.cost if submitted.usage is not None else None
+                ),
+                "safe_remote_path": f"/api/v1/videos/{submitted.id}",
+            }
+        )
+        try:
+            await self._jobs.checkpoint(previous=submitting, current=accepted)
+        except Exception as exc:
+            raise OpenRouterVideoUncertainSubmissionError(
+                "remote video was accepted but its checkpoint failed"
+            ) from exc
+        return await self._poll(accepted)
+
+    async def _checkpoint_unresolved(self, submitting: RemoteVideoJobRecord) -> None:
+        uncertain = submitting.model_copy(
+            update={"request_status": OpenRouterVideoRequestStatus.UNCERTAIN}
+        )
+        await self._jobs.checkpoint(previous=submitting, current=uncertain)
 
     async def _submit(
         self,
@@ -282,8 +393,8 @@ class OpenRouterVideoClipGenerationProvider:
                 json=payload,
             )
         except (httpx.ConnectTimeout, httpx.ConnectError, httpx.PoolTimeout) as exc:
-            raise OpenRouterVideoTransportError(
-                "OpenRouter video submission failed before acceptance"
+            raise OpenRouterVideoUncertainSubmissionError(
+                "OpenRouter video submission outcome is uncertain"
             ) from exc
         except (httpx.ReadTimeout, httpx.WriteTimeout) as exc:
             raise OpenRouterVideoUncertainSubmissionError(
@@ -322,10 +433,21 @@ class OpenRouterVideoClipGenerationProvider:
             ) from exc
 
     async def _poll(self, record: RemoteVideoJobRecord) -> RemoteVideoJobRecord:
-        if self._polling.terminal(record.remote_status):
+        if record.remote_status is not None and self._polling.terminal(record.remote_status):
             return self._terminal_or_raise(record)
+        if record.safe_remote_path is None:
+            raise OpenRouterVideoUncertainSubmissionError(
+                "remote video polling path is unavailable"
+            )
+        polling_path = record.safe_remote_path
         started = self._polling.monotonic()
         current = record
+        if current.request_status is OpenRouterVideoRequestStatus.SUBMITTED:
+            polling = current.model_copy(
+                update={"request_status": OpenRouterVideoRequestStatus.POLLING}
+            )
+            await self._jobs.checkpoint(previous=current, current=polling)
+            current = polling
         while True:
             if (
                 current.poll_attempts >= self._polling.max_attempts
@@ -338,7 +460,7 @@ class OpenRouterVideoClipGenerationProvider:
             await self._polling.sleeper(delay)
             try:
                 response = await self._client.get(
-                    current.safe_remote_path,
+                    polling_path,
                     headers=self._json_headers(),
                 )
             except httpx.TimeoutException as exc:
@@ -377,6 +499,14 @@ class OpenRouterVideoClipGenerationProvider:
             now = self._aware_now()
             updated = current.model_copy(
                 update={
+                    "request_status": (
+                        OpenRouterVideoRequestStatus.COMPLETED
+                        if job.status is OpenRouterRemoteStatus.COMPLETED
+                        else OpenRouterVideoRequestStatus.FAILED
+                        if self._polling.terminal(job.status)
+                        else OpenRouterVideoRequestStatus.POLLING
+                    ),
+                    "reported_model": job.model or current.reported_model,
                     "remote_generation_id": (job.generation_id or current.remote_generation_id),
                     "remote_status": job.status,
                     "last_polled_at": now,
@@ -388,7 +518,7 @@ class OpenRouterVideoClipGenerationProvider:
             )
             await self._jobs.checkpoint(previous=current, current=updated)
             current = updated
-            if self._polling.terminal(current.remote_status):
+            if self._polling.terminal(job.status):
                 return self._terminal_or_raise(current)
 
     async def _download(self, remote_job_id: str) -> tuple[bytes, str]:
@@ -649,10 +779,19 @@ def _request_fingerprint(
 def _safe_response_metadata(
     record: RemoteVideoJobRecord, content_sha256: str
 ) -> dict[str, str | int | bool]:
+    if (
+        record.remote_job_id is None
+        or record.remote_status is None
+        or record.submitted_at is None
+    ):
+        raise OpenRouterVideoInvalidResponseError(
+            "completed remote video metadata is incomplete"
+        )
     result: dict[str, str | int | bool] = {
         "remote_provider": "openrouter",
         "remote_job_id": record.remote_job_id,
         "remote_status": record.remote_status.value,
+        "request_status": record.request_status.value,
         "remote_poll_attempts": record.poll_attempts,
         "remote_content_available": record.remote_content_available,
         "remote_submitted_at": record.submitted_at.isoformat(),
@@ -678,6 +817,10 @@ def _safe_response_metadata(
         result["source_publication_expires_at"] = record.publication_expires_at.isoformat()
     if record.reported_cost_usd is not None:
         result["reported_cost_usd"] = str(record.reported_cost_usd)
+    if record.reported_model is not None:
+        result["reported_model"] = record.reported_model
+    if record.submission_http_status is not None:
+        result["submission_http_status"] = record.submission_http_status
     return result
 
 

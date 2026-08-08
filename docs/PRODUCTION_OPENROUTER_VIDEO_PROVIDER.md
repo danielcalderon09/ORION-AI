@@ -1,167 +1,146 @@
-# OpenRouter Asynchronous Video Provider (Fase 5F.2)
+# OpenRouter Veo image-to-video provider — Phase 6F.1
 
-## Auditoría oficial
+Phase 6F.1 integrates OpenRouter video generation behind ORION's existing
+`video_clip_generation` boundary. The committed default remains simulated and
+billable video is disabled. Development and regression tests use only fake
+HTTP transports.
 
-Auditoría realizada el **2026-07-24 UTC** contra la guía, API reference y
-cookbook oficiales de OpenRouter Video Generation.
+## Official contract verified on 2026-08-08
 
-Fuentes primarias auditadas:
+Primary sources:
 
-- `https://openrouter.ai/docs/guides/overview/multimodal/video-generation`
-- `https://openrouter.ai/docs/api/api-reference/video-generation/submit-a-video-generation-request`
-- `https://openrouter.ai/docs/api/api-reference/video-generation/list-all-video-generation-models`
-- `https://openrouter.ai/docs/api/api-reference/video-generation/poll-video-generation-status`
-- `https://openrouter.ai/docs/api/api-reference/video-generation/download-generated-video-content`
-- `https://openrouter.ai/docs/cookbook/video-generation/image-to-video`
-- `https://openrouter.ai/docs/guides/privacy/provider-logging`
+- [OpenRouter video generation](https://openrouter.ai/docs/guides/overview/multimodal/video-generation)
+- [OpenRouter image-to-video cookbook](https://openrouter.ai/docs/cookbook/video-generation/image-to-video)
+- [Veo 3.1 Lite](https://openrouter.ai/google/veo-3.1-lite)
 
-Endpoints confirmados:
+ORION uses these official endpoints:
 
 ```text
 GET  https://openrouter.ai/api/v1/videos/models
 POST https://openrouter.ai/api/v1/videos
-GET  https://openrouter.ai/api/v1/videos/{job_id}
-GET  https://openrouter.ai/api/v1/videos/{job_id}/content?index=0
+GET  https://openrouter.ai/api/v1/videos/{id}
+GET  https://openrouter.ai/api/v1/videos/{id}/content?index=0
 ```
 
-Submit devuelve HTTP 202 con `id`, `polling_url`, `status` y
-`generation_id` opcional. Polling añade `unsigned_urls`, `error`,
-`generation_id` y `usage.cost/is_byok`. Los estados oficiales son `pending`,
-`in_progress`, `completed`, `failed`, `cancelled` y `expired`.
+Submission is asynchronous and must return HTTP 202 with `id`, `polling_url`
+and `status`; `generation_id` is optional. Polling accepts the closed states
+`pending`, `in_progress`, `completed`, `failed`, `cancelled`, and `expired`.
+ORION ignores provider output URLs and downloads through the official content
+endpoint constructed from the validated remote ID.
 
-El catálogo confirma `id`, `canonical_slug`, `supported_durations`,
-`supported_resolutions`, `supported_aspect_ratios`, `supported_sizes`,
-`supported_frame_images`, `generate_audio`, `seed`,
-`allowed_passthrough_parameters` y `pricing_skus`. ORION valida exactamente el
-modelo configurado; no selecciona fallback ni cambia duración, resolución o
-aspect ratio.
+The image-to-video payload is:
 
-Image-to-video usa `frame_images` con `type=image_url`, `image_url.url` y
-`frame_type=first_frame`. La URL debe ser HTTPS pública, estable y directamente
-descargable. ORION envía `generate_audio=false` y no envía nulls,
-`input_references`, `last_frame`, `callback_url`, `provider`, seed ni
-passthrough.
+```json
+{
+  "model": "google/veo-3.1-lite",
+  "prompt": "<bounded motion prompt>",
+  "duration": 4,
+  "resolution": "720p",
+  "aspect_ratio": "9:16",
+  "generate_audio": false,
+  "frame_images": [
+    {
+      "type": "image_url",
+      "image_url": {"url": "https://<public-host>/<verified-frame>"},
+      "frame_type": "first_frame"
+    }
+  ]
+}
+```
 
-No están confirmados un endpoint de cancelación, el TTL exacto de jobs/URLs ni
-una unidad universal para todos los `pricing_skus`. ORION no inventa esos
-contratos. Solo estima coste con `per-video-second` o
-`per-video-second-<resolution>`; un SKU ambiguo como `generate` falla cerrado.
-403, 408, 409 y 422 no figuran en la tabla vigente de submit, aunque el
-clasificador los maneja defensivamente sin reintentar el POST.
+OpenRouter's current cookbook documents a directly downloadable public HTTPS
+URL for `frame_images`; it does not document local paths, `file://`, multipart,
+or data URLs for this endpoint. ORION therefore republishes the already
+verified `SOURCE_IMAGE` bytes through the existing asset-publishing boundary.
+The filesystem publisher only copies bytes into a configured publication root;
+the owner must map that root to the configured public HTTPS base URL. ORION
+does not create a tunnel, web server, or cloud bucket.
 
-Los webhooks están documentados, pero no se implementan. Video Generation no
-es elegible para Zero Data Retention: el resultado asíncrono se conserva
-temporalmente para permitir su descarga.
+Veo 3.1 Lite advertises 4, 6, and 8 second output, 720p or 1080p, and `9:16`
+or `16:9`. ORION v1 fixes generated audio to `false`; narration remains Kokoro
+and music remains a separate stage. The first controlled test is 4 seconds,
+720p, portrait, and one source image.
 
-## Arquitectura y flujo durable
+## Durable lifecycle and recovery
 
-`OpenRouterVideoClipGenerationProvider` implementa el puerto existente. Handler,
-store MP4, ffprobe, artifacts y manifest permanecen provider-neutral.
+Each visual asset has one record at:
 
 ```text
-SOURCE_IMAGE verificada
-  -> VideoMotionPromptBuilder
-  -> VideoFrameImagePublisher
-  -> GET /videos/models (cache TTL)
-  -> BillableVideoGenerationPolicy
-  -> POST /videos (una sola vez)
-  -> remote-jobs/video-<visual_asset_id>.json
-  -> polling acotado/checkpointado
-  -> GET /videos/{id}/content?index=0
-  -> VideoClipBinaryStore + ffprobe
-  -> manifest/artifacts existentes
+production/<job_id>/generating_video_clips/attempt-<n>/remote-jobs/video-<visual_asset_id>.json
 ```
 
-El remote job se guarda en:
+Lifecycle:
 
 ```text
-production/<job_id>/generating_video_clips/attempt-<n>/
-remote-jobs/video-<visual_asset_id>.json
+prepared -> submitting -> submitted -> polling -> completed
+                         \-> failed
+                         \-> uncertain
 ```
 
-Es JSON canónico write-once/CAS. Persiste IDs/estado remotos, intentos,
-timestamps, prompt hash, capability snapshot hash, fingerprint, publication
-ID, coste estimado/reportado y SKU. No guarda API key, Authorization, URL
-completa, signed URL, query string, body remoto ni bytes.
+`prepared` is persisted before the POST. Immediately before transmission the
+record becomes `submitting` and `fresh_submission_permitted=false`. A timeout,
+cancellation, connection loss, malformed 202, or failed accepted-request
+checkpoint becomes `uncertain`; it is never submitted again automatically.
+Once a remote ID exists, resume polls the same job. Polling attempts do not
+count as paid submissions. Completed local clips are reused.
 
-## Publisher, prompt y privacidad
+The record retains provider/model, source image SHA-256, prompt SHA-256,
+capability snapshot hash, request fingerprint, publication identity/expiry,
+requested duration/resolution/aspect ratio/audio flag, submission HTTP status,
+safe remote ID/status, polling counters, timestamps, estimated cost, reported
+cost when supplied, and reported model when supplied.
 
-`VideoFrameImagePublisher` separa publicación y generación. Esta fase incluye
-`DisabledVideoFrameImagePublisher` (falla cerrado) e
-`InMemoryVideoFrameImagePublisher` (solo tests, HTTPS ficticio, cero red). No
-existe publisher real, object storage, CDN, túnel o endpoint público.
+It never retains API keys, Authorization, prompt text, source-image bytes or
+base64, absolute paths, raw provider bodies, complete headers, cookies, signed
+output URLs, or query tokens.
 
-No se expone el workspace ni se aceptan URLs por job. Se rechazan HTTP,
-localhost, IP privadas/link-local, userinfo y fragmentos. Una publicación
-expirada antes del submit no se usa; después del submit recovery utiliza solo
-el remote job ID y nunca republica ni vuelve a cobrar.
+The request fingerprint includes provider/model, source image SHA-256, prompt
+hash, duration, resolution, aspect ratio, audio flag, capability snapshot, and
+request schema/configuration version. It excludes timestamps, attempts,
+credentials, public/signed URLs, and machine paths.
 
-`VideoMotionPromptBuilder` crea un prompt cerrado y reproducible desde el rol
-durable allowlisted. Preserva identidad/composición/colores/entorno, pide
-movimiento sutil y prohíbe nuevos sujetos, texto, logos, cortes, transiciones y
-audio. El texto se excluye de repr/serialización/logs; solo persiste SHA-256.
-La adquisición actual no conserva descripción visual completa, por lo que no
-se releen Prompt, Plan, Script, Scene Plan ni Visual Asset Plan.
+## Billing and output safety
 
-## Coste, configuración y opt-in
+Activation requires all of:
 
-El default continúa siendo:
+- provider `openrouter` and explicit model;
+- a canonical or backward-compatible OpenRouter credential;
+- `ALLOW_BILLABLE_REQUESTS=true`;
+- capability metadata that exactly supports model/duration/resolution/ratio;
+- a reproducible provider pricing SKU;
+- estimated cost at or below the configured Decimal maximum;
+- `MAX_REQUESTS_PER_JOB=1` for the first test;
+- a real filesystem publication boundary backed by public HTTPS.
+
+ORION makes at most one POST per durable request. Polling is independently
+bounded by attempt count and overall time. Unknown remote states fail closed.
+
+The download uses fixed OpenRouter host/path, no redirects, bounded streaming,
+`video/mp4`, and an MP4 signature check. The existing binary store and ffprobe
+then require one H.264 video stream, no audio or extra streams, contractual
+dimensions/duration/frame rate, bounded bytes, and a checksum before storing
+the existing `VIDEO_CLIP` artifact. Media composition and rendering consume
+that artifact without a provider-specific path.
+
+## Configuration and future models
+
+Safe committed defaults:
 
 ```text
 ORION_VIDEO_CLIP_GENERATION_PROVIDER=simulated
 ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS=false
 ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER=disabled
+ORION_ASSET_PUBLISHING_PUBLISHER=null
 ```
 
-Antes del POST, la policy exige opt-in, OpenRouter, capacidades exactas, una
-salida, ausencia de clip/remote job, lease/CAS, precio estimable y coste bajo el
-máximo. Dinero usa `Decimal`; la estimación no promete coincidir con el cargo.
-Aunque exista una key, OpenRouter no se activa automáticamente. Como no hay
-publisher real, la composición soportada no puede enviar solicitudes
-facturables en esta fase.
+Primary: `google/veo-3.1-lite`.
 
-## HTTP, descarga y validación
+Future candidates only, with no fallback execution:
 
-El adaptador usa `httpx.AsyncClient`, TLS, host oficial fijado, redirects
-desactivados, headers cerrados, timeouts y límites. Rechaza host externo,
-userinfo, traversal, fragmentos y query tokens. Ignora `unsigned_urls` y
-descarga siempre por el endpoint oficial construido desde un ID validado.
+- fast: `bytedance/seedance-2.0-fast`;
+- quality: `bytedance/seedance-2.0`.
 
-La descarga es streaming, exige `video/mp4`, limita bytes incrementalmente y
-calcula SHA-256. El handler usa el store durable y ffprobe vuelve a exigir
-MP4/H.264, un video stream, cero audio/subtitles/data, dimensiones, duración,
-fps y frame count contractuales. No transcodifica resultados reales.
-
-## Recovery, incertidumbre y cancelación
-
-- Clip válido: cero publicación, discovery, submit, polling o descarga.
-- Remote pending/in_progress: retoma polling sin repetir POST.
-- Remote completed: descarga sin submit.
-- Un attempt nuevo busca de forma contractual el último remote job activo o
-  completed y lo reutiliza solo si coincide el fingerprint completo.
-- Remote failed/cancelled/expired: fallo tipado; no reenvía en el attempt.
-- Timeout/transporte tras posible envío: `uncertain`; no reenvía.
-- 202 aceptado cuyo checkpoint falla: `uncertain`; evitar doble cobro tiene
-  prioridad.
-- `CancelledError` se propaga y se conserva el último checkpoint durable.
-
-Polling usa reloj monotónico, máximos de tiempo/intentos, sleeper/jitter
-inyectables, `Retry-After` acotado y checkpoints. Tests no duermen realmente.
-
-## API, tests, rollback y límites
-
-No hay endpoints nuevos. La API nunca expone URLs, firmas, Authorization, key,
-prompt completo, bodies ni bytes. Todos los tests usan `httpx.MockTransport`,
-hosts `.test`, key ficticia y guard de host; no existe live smoke.
-
-Rollback: seleccionar `simulated`, mantener billable `false` y publisher
-`disabled`. Manifests históricos 1.0.0 siguen válidos: campos remotos son
-aditivos y opcionales.
-
-No incluye publisher real, S3, R2, GCS, Azure Blob, CDN, live generation,
-text-to-video, last frame, múltiples referencias, `input_references`, audio,
-webhooks, fallback, selección automática, narración, música, timeline,
-DaVinci, render final ni frontend.
-
-La siguiente fase recomendada es **Fase 5F.3 — Secure Public Frame Publishing
-and Controlled Live Validation**.
+Known limitations: public HTTPS hosting is external to ORION; no text-to-video,
+last frame, multiple references, provider fallback, provider audio, webhooks,
+or remote cancellation is implemented. Video Generation is not advertised by
+OpenRouter as Zero Data Retention eligible.

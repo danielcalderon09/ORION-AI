@@ -649,6 +649,33 @@ def test_composition_openrouter_fails_before_network_without_real_publisher(
         build_production_container(configured)
 
 
+def test_composition_builds_lazy_openrouter_video_with_shared_key_and_publisher(
+    tmp_path: Path,
+) -> None:
+    configured = base_settings(tmp_path).model_copy(
+        update={
+            "ORION_OPENROUTER_API_KEY": SecretStr("fake-shared-key"),
+            "ORION_VIDEO_CLIP_GENERATION_PROVIDER": "openrouter",
+            "ORION_VIDEO_CLIP_GENERATION_MODEL": "google/veo-3.1-lite",
+            "ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS": True,
+            "ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD": Decimal("0.20"),
+            "ORION_VIDEO_CLIP_GENERATION_MAX_REQUESTS_PER_JOB": 1,
+            "ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER": "filesystem",
+            "ORION_ASSET_PUBLISHING_PUBLISHER": "filesystem",
+            "ORION_ASSET_PUBLISHING_PUBLIC_ROOT": tmp_path / "public",
+            "ORION_ASSET_PUBLISHING_PUBLIC_BASE_URL": (
+                "https://media.example.test/orion"
+            ),
+        }
+    )
+    container = build_production_container(configured)
+    assert type(container.video_clip_generation_provider).__name__ == (
+        "OpenRouterVideoClipGenerationProvider"
+    )
+    assert not (tmp_path / "public").exists()
+    container.shutdown()
+
+
 @pytest.mark.parametrize(
     "updates",
     [

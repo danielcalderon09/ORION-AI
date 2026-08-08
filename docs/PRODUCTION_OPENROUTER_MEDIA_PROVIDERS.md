@@ -12,8 +12,9 @@ boundaries. Video and music remain configuration vocabulary only.
 | Image primary | `google/gemini-3.1-flash-lite-image` | implemented, opt-in |
 | Image quality fallback | `google/gemini-3.1-flash-image` | vocabulary only |
 | TTS primary | `hexgrad/kokoro-82m` | implemented, opt-in |
-| Video primary | `google/veo-3.1-lite` | future, simulated now |
-| Video alternative | `bytedance/seedance-2.0` | future, simulated now |
+| Video primary | `google/veo-3.1-lite` | implemented image-to-video, opt-in |
+| Video fast candidate | `bytedance/seedance-2.0-fast` | vocabulary only |
+| Video quality candidate | `bytedance/seedance-2.0` | vocabulary only |
 | Music | `google/lyria-3-clip-preview` | future, simulated now |
 
 ## Current official interfaces
@@ -42,10 +43,12 @@ The official [Kokoro model page](https://openrouter.ai/hexgrad/kokoro-82m/pricin
 character-based pricing; the runtime still uses explicit local authorization rather than fetching
 or trusting mutable catalog metadata.
 
-Video remains simulated. The future API is asynchronous `POST /api/v1/videos`, as documented by
+Video remains simulated by default. Phase 6F.1 implements asynchronous `POST /api/v1/videos`, as documented by
 [OpenRouter Video Generation](https://openrouter.ai/docs/guides/overview/multimodal/video-generation).
 Current official metadata for Veo 3.1 Lite includes portrait `9:16`, landscape `16:9`, and 4, 6,
-or 8 second clips. Phase 6D does not submit, poll, or download a video.
+or 8 second clips. The opt-in adapter publishes the verified first frame through the existing
+asset-publishing boundary, submits once, resumes bounded polling, downloads a bounded MP4, and
+stores the existing `VIDEO_CLIP` artifact. Tests perform no live submit, poll, or download.
 
 Music remains simulated. `google/lyria-3-clip-preview` is recorded for future 30-second music
 clips; Phase 6D adds no music transport.
@@ -87,7 +90,8 @@ Current limitations:
 - no verified public OpenRouter Spanish voice ID is hard-coded;
 - image reference inputs are fingerprint-ready but not sent in this MVP;
 - image quality fallback is not automatic;
-- no video or music execution is activated;
+- video execution is implemented but disabled by default and requires externally served HTTPS
+  publication of the first frame;
 - image and speech cost estimates must be supplied explicitly by the owner;
 - an uncertain request requires manual review and a new controlled request identity.
 

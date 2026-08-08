@@ -138,8 +138,9 @@ class Settings(BaseSettings):
     ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_VIDEO_BYTES: int = 50_000_000
     ORION_VIDEO_CLIP_GENERATION_OPENROUTER_CAPABILITY_CACHE_TTL_SECONDS: float = 3600
     ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD: Decimal = Decimal("1.00")
+    ORION_VIDEO_CLIP_GENERATION_MAX_REQUESTS_PER_JOB: int = 1
     ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS: bool = False
-    ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER: Literal["disabled"] = "disabled"
+    ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER: Literal["disabled", "filesystem"] = "disabled"
     ORION_ASSET_PUBLISHING_PUBLISHER: Literal["null", "filesystem"] = "null"
     ORION_ASSET_PUBLISHING_PUBLIC_ROOT: Path | None = None
     ORION_ASSET_PUBLISHING_PUBLIC_BASE_URL: str = "https://assets.orion.test"
@@ -174,6 +175,7 @@ class Settings(BaseSettings):
     ORION_MUSIC_GENERATION_PROVIDER: Literal["simulated"] = "simulated"
     ORION_MUSIC_GENERATION_MODEL: str = "google/lyria-3-clip-preview"
     ORION_VIDEO_FUTURE_PRIMARY_MODEL: str = "google/veo-3.1-lite"
+    ORION_VIDEO_FUTURE_FAST_MODEL: str = "bytedance/seedance-2.0-fast"
     ORION_VIDEO_FUTURE_ALTERNATIVE_MODEL: str = "bytedance/seedance-2.0"
     ORION_SOUND_EFFECT_GENERATION_PROVIDER: Literal["simulated"] = "simulated"
     ORION_AUDIO_DESIGN_SAMPLE_RATE_HZ: Literal[24_000] = 24_000
@@ -593,6 +595,8 @@ class Settings(BaseSettings):
             raise ValueError("OpenRouter video poll attempts are outside safe limits")
         if self.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD <= 0:
             raise ValueError("OpenRouter video maximum cost must be positive")
+        if not 1 <= self.ORION_VIDEO_CLIP_GENERATION_MAX_REQUESTS_PER_JOB <= 50:
+            raise ValueError("OpenRouter video request limit is outside safe bounds")
         parsed_video_url = urlsplit(self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_BASE_URL)
         if (
             parsed_video_url.scheme != "https"
@@ -614,6 +618,14 @@ class Settings(BaseSettings):
             or self.ORION_VIDEO_CLIP_GENERATION_MODEL == "simulated-video-v1"
         ):
             raise ValueError("OpenRouter video requires an explicit model ID")
+        if self.ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER == "filesystem" and (
+            self.ORION_ASSET_PUBLISHING_PUBLISHER != "filesystem"
+        ):
+            raise ValueError("filesystem video frames require filesystem asset publishing")
+        if self.ORION_VIDEO_CLIP_GENERATION_PROVIDER == "openrouter" and (
+            self.ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER != "filesystem"
+        ):
+            raise ValueError("OpenRouter video requires filesystem first-frame publishing")
         for name in (
             "ORION_VIDEO_CLIP_GENERATION_FFMPEG_PATH",
             "ORION_VIDEO_CLIP_GENERATION_FFPROBE_PATH",

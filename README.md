@@ -99,9 +99,10 @@ determinista; OpenRouter Images API es opcional y no permite fallback. Consulta
 [`docs/PRODUCTION_IMAGE_ACQUISITION_PROVIDER.md`](docs/PRODUCTION_IMAGE_ACQUISITION_PROVIDER.md).
 
 GENERATING_VIDEO_CLIPS consume exclusivamente ese manifest completed y sus `SOURCE_IMAGE`
-verificados. El provider simulado offline sigue siendo el default. Fase 5F.2 añade un adaptador
-asíncrono OpenRouter con capabilities, gate de coste, remote jobs/polling durables y descarga
-segura, pero permanece no ejecutable sin un publisher HTTPS real (no incluido). Consulta
+verificados. El provider simulado offline sigue siendo el default. Fase 6F.1 integra Veo 3.1 Lite
+image-to-video con checkpoint previo al submit, una sola submission facturable, polling/recovery
+durables, publicación del primer frame mediante el boundary existente y descarga MP4 acotada.
+La URL configurada debe servir realmente el publication root por HTTPS. Consulta
 [`docs/PRODUCTION_VIDEO_CLIP_GENERATION.md`](docs/PRODUCTION_VIDEO_CLIP_GENERATION.md) y
 [`docs/PRODUCTION_OPENROUTER_VIDEO_PROVIDER.md`](docs/PRODUCTION_OPENROUTER_VIDEO_PROVIDER.md).
 

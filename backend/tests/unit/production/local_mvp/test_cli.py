@@ -59,3 +59,30 @@ def test_local_mvp_settings_forwards_only_explicit_scripting_environment(
     assert Decimal("0.01") == configured.ORION_SCRIPTING_ESTIMATED_COST_USD
     assert "runtime-secret" not in repr(configured)
     assert configured.ORION_PLANNING_PROVIDER == "simulated"
+
+
+def test_local_mvp_settings_forwards_explicit_openrouter_video_environment(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ORION_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    monkeypatch.setenv("TEMP_DIR", str(tmp_path / "temp"))
+    monkeypatch.setenv("ORION_VIDEO_CLIP_GENERATION_PROVIDER", "openrouter")
+    monkeypatch.setenv("ORION_VIDEO_CLIP_GENERATION_MODEL", "google/veo-3.1-lite")
+    monkeypatch.setenv("ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS", "true")
+    monkeypatch.setenv("ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD", "0.20")
+    monkeypatch.setenv("ORION_VIDEO_CLIP_GENERATION_MAX_REQUESTS_PER_JOB", "1")
+    monkeypatch.setenv("ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER", "filesystem")
+    monkeypatch.setenv("ORION_ASSET_PUBLISHING_PUBLISHER", "filesystem")
+    monkeypatch.setenv("ORION_ASSET_PUBLISHING_PUBLIC_ROOT", str(tmp_path / "public"))
+    monkeypatch.setenv(
+        "ORION_ASSET_PUBLISHING_PUBLIC_BASE_URL", "https://media.example.test/orion"
+    )
+    configured = generate_video.local_mvp_settings()
+    assert configured.ORION_VIDEO_CLIP_GENERATION_PROVIDER == "openrouter"
+    assert configured.ORION_VIDEO_CLIP_GENERATION_MODEL == "google/veo-3.1-lite"
+    assert Decimal("0.20") == configured.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD
+    assert configured.ORION_VIDEO_CLIP_GENERATION_MAX_REQUESTS_PER_JOB == 1
+    assert configured.ORION_ASSET_PUBLISHING_PUBLISHER == "filesystem"

@@ -132,6 +132,7 @@ def test_settings_add_only_bounded_offline_composition_limits(
     tmp_path: Path,
 ) -> None:
     settings = Settings(
+        _env_file=None,
         ORION_HOME=tmp_path / "home",
         MODELS_DIR=tmp_path / "models",
         PROJECTS_DIR=tmp_path / "projects",

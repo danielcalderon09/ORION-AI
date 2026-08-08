@@ -15,6 +15,7 @@ from backend.src.production.video_clip_generation.exceptions import (
     OpenRouterVideoAuthenticationError,
     OpenRouterVideoConfigurationError,
     OpenRouterVideoContentTypeError,
+    OpenRouterVideoCostPolicyError,
     OpenRouterVideoDownloadError,
     OpenRouterVideoInsufficientCreditsError,
     OpenRouterVideoInvalidRequestError,
@@ -25,7 +26,6 @@ from backend.src.production.video_clip_generation.exceptions import (
     OpenRouterVideoRemoteFailedError,
     OpenRouterVideoResponseTooLargeError,
     OpenRouterVideoServerError,
-    OpenRouterVideoTransportError,
     OpenRouterVideoUncertainSubmissionError,
     RemoteVideoJobStoreError,
     VideoFramePublicationUnavailableError,
@@ -41,6 +41,7 @@ from backend.src.production.video_clip_generation.providers.openrouter_capabilit
 )
 from backend.src.production.video_clip_generation.providers.openrouter_models import (
     OpenRouterVideoProviderConfiguration,
+    OpenRouterVideoRequestStatus,
 )
 from backend.src.production.video_clip_generation.providers.openrouter_provider import (
     OpenRouterVideoClipGenerationProvider,
@@ -92,6 +93,7 @@ def provider_for(
     max_attempts: int = 5,
     max_video_bytes: int = 1_000_000,
     sleeper: Callable[[float], Awaitable[None]] = no_sleep,
+    max_requests_per_job: int = 1,
 ) -> tuple[
     OpenRouterVideoClipGenerationProvider,
     InMemoryRemoteVideoJobStore,
@@ -108,6 +110,7 @@ def provider_for(
         max_poll_seconds=60,
         max_poll_attempts=max_attempts,
         max_video_bytes=max_video_bytes,
+        max_requests_per_job=max_requests_per_job,
     )
     polling = OpenRouterVideoPollingPolicy(
         interval_seconds=0.01,
@@ -425,7 +428,10 @@ async def test_invalid_202_response_is_uncertain(payload: dict[str, object]) -> 
         provider, store, _ = provider_for(client)
         with pytest.raises(OpenRouterVideoUncertainSubmissionError):
             await provider.generate_clip(openrouter_request())
-        assert store.records == {}
+        record = next(iter(store.records.values()))
+        assert record.request_status is OpenRouterVideoRequestStatus.UNCERTAIN
+        assert record.fresh_submission_permitted is False
+        assert record.remote_job_id is None
 
 
 @pytest.mark.parametrize(
@@ -497,8 +503,8 @@ async def test_download_enforces_incremental_size_limit() -> None:
 @pytest.mark.parametrize(
     ("error", "expected"),
     [
-        (httpx.ConnectTimeout("connect"), OpenRouterVideoTransportError),
-        (httpx.ConnectError("connect"), OpenRouterVideoTransportError),
+        (httpx.ConnectTimeout("connect"), OpenRouterVideoUncertainSubmissionError),
+        (httpx.ConnectError("connect"), OpenRouterVideoUncertainSubmissionError),
         (
             httpx.ReadTimeout("read"),
             OpenRouterVideoUncertainSubmissionError,
@@ -522,9 +528,59 @@ async def test_submit_transport_failure_distinguishes_uncertainty(
         transport=httpx.MockTransport(handler),
         base_url="https://openrouter.ai",
     ) as client:
-        provider, _, _ = provider_for(client)
+        provider, store, _ = provider_for(client)
         with pytest.raises(expected):
             await provider.generate_clip(openrouter_request())
+        record = next(iter(store.records.values()))
+        assert record.request_status is OpenRouterVideoRequestStatus.UNCERTAIN
+        assert record.fresh_submission_permitted is False
+        assert record.remote_job_id is None
+
+
+@pytest.mark.asyncio
+async def test_submit_cancellation_is_uncertain_and_never_resubmitted() -> None:
+    post_count = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        if request.url.path.endswith("/models"):
+            return response(request, 200, models_body())
+        post_count += 1
+        raise asyncio.CancelledError
+
+    store = InMemoryRemoteVideoJobStore()
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://openrouter.ai",
+    ) as client:
+        provider, _, _ = provider_for(client, store=store)
+        with pytest.raises(asyncio.CancelledError):
+            await provider.generate_clip(openrouter_request())
+        record = next(iter(store.records.values()))
+        assert record.request_status is OpenRouterVideoRequestStatus.UNCERTAIN
+        assert record.fresh_submission_permitted is False
+        with pytest.raises(OpenRouterVideoUncertainSubmissionError):
+            await provider.generate_clip(openrouter_request())
+        assert post_count == 1
+
+
+@pytest.mark.asyncio
+async def test_paid_submission_limit_blocks_second_visual_without_http() -> None:
+    observations: list[tuple[str, str, dict[str, Any] | None]] = []
+    async with httpx.AsyncClient(
+        transport=successful_transport(observations),
+        base_url="https://openrouter.ai",
+    ) as client:
+        provider, _, frames = provider_for(client, max_requests_per_job=1)
+        await provider.generate_clip(openrouter_request())
+        with pytest.raises(OpenRouterVideoCostPolicyError, match="limit"):
+            await provider.generate_clip(
+                openrouter_request().model_copy(
+                    update={"visual_asset_id": "asset-s001-q002-v001"}
+                )
+            )
+        assert len([item for item in observations if item[0] == "POST"]) == 1
+        assert frames.calls == 1
 
 
 @pytest.mark.asyncio
@@ -596,8 +652,10 @@ async def test_checkpoint_failure_after_202_is_uncertain_and_never_polls() -> No
     observations: list[tuple[str, str, dict[str, Any] | None]] = []
 
     class FailingStore(InMemoryRemoteVideoJobStore):
-        async def create(self, record) -> None:
-            raise RemoteVideoJobStoreError("simulated durable failure")
+        async def checkpoint(self, *, previous, current) -> None:
+            if current.remote_job_id is not None:
+                raise RemoteVideoJobStoreError("simulated durable failure")
+            await super().checkpoint(previous=previous, current=current)
 
     async with httpx.AsyncClient(
         transport=successful_transport(observations),

@@ -327,6 +327,9 @@ from backend.src.production.video_clip_generation.exceptions import (
     OpenRouterVideoConfigurationError,
     VideoFramePublicationUnavailableError,
 )
+from backend.src.production.video_clip_generation.frame_image_publisher import (
+    PublishedAssetVideoFrameImagePublisher,
+)
 from backend.src.production.video_clip_generation.handler import (
     VideoClipGenerationHandler,
 )
@@ -346,6 +349,12 @@ from backend.src.production.video_clip_generation.providers import (
 )
 from backend.src.production.video_clip_generation.providers.availability import (
     resolve_media_executable,
+)
+from backend.src.production.video_clip_generation.providers.openrouter_models import (
+    OpenRouterVideoProviderConfiguration,
+)
+from backend.src.production.video_clip_generation.providers.openrouter_provider import (
+    create_openrouter_video_provider,
 )
 from backend.src.production.video_clip_generation.reader import (
     DurableImageAcquisitionManifestReader,
@@ -686,7 +695,11 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         binary_assets=filesystem_binary_asset_store,
         video_clips=filesystem_video_clip_store,
     )
-    video_clip_generation_provider = _build_video_clip_generation_provider(settings)
+    video_clip_generation_provider = _build_video_clip_generation_provider(
+        settings,
+        asset_publisher=asset_publisher,
+        clock=clock,
+    )
     image_acquisition_manifest_reader = DurableImageAcquisitionManifestReader(
         workspace_root=settings.PROJECTS_DIR,
         repository=SQLAlchemyImageAcquisitionManifestQueryRepository(sessions),
@@ -1492,6 +1505,9 @@ def _openrouter_api_key(settings: Settings, legacy: object | None) -> str | None
 
 def _build_video_clip_generation_provider(
     settings: Settings,
+    *,
+    asset_publisher: AssetPublisher,
+    clock: Callable[[], datetime],
 ) -> VideoClipGenerationProvider:
     if settings.ORION_VIDEO_CLIP_GENERATION_PROVIDER == "simulated":
         return SimulatedVideoClipGenerationProvider(
@@ -1505,14 +1521,63 @@ def _build_video_clip_generation_provider(
         raise OpenRouterVideoConfigurationError(
             "OpenRouter video requires explicit billable authorization"
         )
-    if settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_API_KEY is None:
+    api_key = _openrouter_api_key(
+        settings,
+        settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_API_KEY,
+    )
+    if api_key is None:
         raise OpenRouterVideoConfigurationError("OpenRouter video credential is missing")
-    if settings.ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER == "disabled":
+    if (
+        settings.ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER != "filesystem"
+        or asset_publisher.name != "filesystem"
+    ):
         raise VideoFramePublicationUnavailableError(
             "OpenRouter video requires a real secure frame publisher"
         )
-    raise OpenRouterVideoConfigurationError(
-        "configured OpenRouter video frame publisher is unsupported"
+    return create_openrouter_video_provider(
+        api_key=api_key,
+        configuration=OpenRouterVideoProviderConfiguration(
+            base_url=settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_BASE_URL,
+            model=settings.ORION_VIDEO_CLIP_GENERATION_MODEL,
+            resolution=settings.ORION_VIDEO_CLIP_GENERATION_RESOLUTION,
+            timeout_seconds=(
+                settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_TIMEOUT_SECONDS
+            ),
+            poll_interval_seconds=(
+                settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_POLL_INTERVAL_SECONDS
+            ),
+            max_poll_seconds=(
+                settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_SECONDS
+            ),
+            max_poll_attempts=(
+                settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_ATTEMPTS
+            ),
+            max_response_bytes=(
+                settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_RESPONSE_BYTES
+            ),
+            max_video_bytes=(
+                settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_VIDEO_BYTES
+            ),
+            capability_cache_ttl_seconds=(
+                settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_CAPABILITY_CACHE_TTL_SECONDS
+            ),
+            max_estimated_cost_usd=(
+                settings.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD
+            ),
+            max_requests_per_job=(
+                settings.ORION_VIDEO_CLIP_GENERATION_MAX_REQUESTS_PER_JOB
+            ),
+            allow_billable_requests=(
+                settings.ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS
+            ),
+        ),
+        frame_publisher=PublishedAssetVideoFrameImagePublisher(
+            publisher=asset_publisher,
+            lifetime_seconds=settings.ORION_ASSET_PUBLISHING_LIFETIME_SECONDS,
+            clock=clock,
+        ),
+        workspace_root=settings.PROJECTS_DIR,
+        clock=clock,
     )
 
 

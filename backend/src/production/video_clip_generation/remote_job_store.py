@@ -18,6 +18,7 @@ from backend.src.production.video_clip_generation.exceptions import (
 )
 from backend.src.production.video_clip_generation.providers.openrouter_models import (
     OpenRouterRemoteStatus,
+    OpenRouterVideoRequestStatus,
     RemoteVideoJobRecord,
 )
 from backend.src.production.video_clip_generation.serialization import (
@@ -44,6 +45,9 @@ class InMemoryRemoteVideoJobStore:
             raise RemoteVideoJobConflictError("remote video job already exists")
         self.records[key] = record
         self.checkpoints += 1
+
+    async def count_for_job(self, *, job_id: UUID) -> int:
+        return sum(candidate_job == job_id for candidate_job, _, _ in self.records)
 
     async def find_latest(
         self,
@@ -95,6 +99,9 @@ class LocalRemoteVideoJobStore:
     async def create(self, record: RemoteVideoJobRecord) -> None:
         await asyncio.to_thread(self._create_sync, record)
 
+    async def count_for_job(self, *, job_id: UUID) -> int:
+        return await asyncio.to_thread(self._count_for_job_sync, job_id)
+
     async def find_latest(
         self,
         *,
@@ -126,6 +133,18 @@ class LocalRemoteVideoJobStore:
         if not path.exists():
             return None
         return self._read_file(path)
+
+    def _count_for_job_sync(self, job_id: UUID) -> int:
+        root = self._root / "production" / str(job_id) / "generating_video_clips"
+        if not root.exists():
+            return 0
+        self._confinement.reject_unsafe_components(root)
+        count = 0
+        for candidate in root.glob("attempt-*/remote-jobs/video-*.json"):
+            self._confinement.reject_unsafe_file(candidate)
+            self._read_file(candidate)
+            count += 1
+        return count
 
     def _create_sync(self, record: RemoteVideoJobRecord) -> None:
         path = self._path(UUID(record.job_id), record.attempt_number, record.visual_asset_id)
@@ -249,12 +268,14 @@ def _validate_transition(previous: RemoteVideoJobRecord, current: RemoteVideoJob
         "publication_provider",
         "publication_id",
         "publication_expires_at",
-        "remote_job_id",
-        "submitted_at",
+        "prepared_at",
+        "requested_duration_seconds",
+        "requested_resolution",
+        "requested_aspect_ratio",
+        "generate_audio",
         "estimated_cost_usd",
         "pricing_snapshot_at",
         "pricing_sku",
-        "safe_remote_path",
     )
     if any(getattr(previous, item) != getattr(current, item) for item in immutable):
         raise RemoteVideoJobConflictError("remote video job immutable fields changed")
@@ -263,6 +284,47 @@ def _validate_transition(previous: RemoteVideoJobRecord, current: RemoteVideoJob
         and current.remote_generation_id != previous.remote_generation_id
     ):
         raise RemoteVideoJobConflictError("remote generation identity changed")
+    if previous.remote_job_id is not None and current.remote_job_id != previous.remote_job_id:
+        raise RemoteVideoJobConflictError("remote video identity changed")
+    if previous.safe_remote_path is not None and current.safe_remote_path != previous.safe_remote_path:
+        raise RemoteVideoJobConflictError("remote video path changed")
+    if previous.submitted_at is not None and current.submitted_at != previous.submitted_at:
+        raise RemoteVideoJobConflictError("remote video submission time changed")
+    if (
+        previous.submission_started_at is not None
+        and current.submission_started_at != previous.submission_started_at
+    ):
+        raise RemoteVideoJobConflictError("video submission start time changed")
+    allowed_request_statuses = {
+        OpenRouterVideoRequestStatus.PREPARED: {
+            OpenRouterVideoRequestStatus.PREPARED,
+            OpenRouterVideoRequestStatus.SUBMITTING,
+        },
+        OpenRouterVideoRequestStatus.SUBMITTING: {
+            OpenRouterVideoRequestStatus.SUBMITTED,
+            OpenRouterVideoRequestStatus.COMPLETED,
+            OpenRouterVideoRequestStatus.FAILED,
+            OpenRouterVideoRequestStatus.UNCERTAIN,
+        },
+        OpenRouterVideoRequestStatus.SUBMITTED: {
+            OpenRouterVideoRequestStatus.SUBMITTED,
+            OpenRouterVideoRequestStatus.POLLING,
+            OpenRouterVideoRequestStatus.COMPLETED,
+            OpenRouterVideoRequestStatus.FAILED,
+        },
+        OpenRouterVideoRequestStatus.POLLING: {
+            OpenRouterVideoRequestStatus.POLLING,
+            OpenRouterVideoRequestStatus.COMPLETED,
+            OpenRouterVideoRequestStatus.FAILED,
+        },
+        OpenRouterVideoRequestStatus.COMPLETED: {OpenRouterVideoRequestStatus.COMPLETED},
+        OpenRouterVideoRequestStatus.FAILED: {OpenRouterVideoRequestStatus.FAILED},
+        OpenRouterVideoRequestStatus.UNCERTAIN: {OpenRouterVideoRequestStatus.UNCERTAIN},
+    }
+    if current.request_status not in allowed_request_statuses[previous.request_status]:
+        raise RemoteVideoJobConflictError("remote video request status transition is invalid")
+    if previous.fresh_submission_permitted is False and current.fresh_submission_permitted:
+        raise RemoteVideoJobConflictError("fresh video submission permission cannot be restored")
     if current.poll_attempts < previous.poll_attempts:
         raise RemoteVideoJobConflictError("remote poll attempts cannot decrease")
     if previous.last_polled_at is not None and (
@@ -280,7 +342,7 @@ def _validate_transition(previous: RemoteVideoJobRecord, current: RemoteVideoJob
 
 
 def _is_reusable(record: RemoteVideoJobRecord) -> bool:
-    return record.remote_status not in {
+    return record.request_status is not OpenRouterVideoRequestStatus.FAILED and record.remote_status not in {
         OpenRouterRemoteStatus.FAILED,
         OpenRouterRemoteStatus.CANCELLED,
         OpenRouterRemoteStatus.EXPIRED,

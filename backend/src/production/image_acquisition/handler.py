@@ -449,6 +449,15 @@ class ImageAcquisitionHandler:
                                     ),
                                     "configured_provider": self._provider_name,
                                     "configured_model": self._requested_model,
+                                    "video_visual_subject": asset_spec.visual_subject,
+                                    "video_environment": asset_spec.environment,
+                                    "video_action": asset_spec.composition.action,
+                                    "video_camera_movement": (
+                                        asset_spec.camera_intent.movement
+                                    ),
+                                    "video_camera_framing": (
+                                        asset_spec.camera_intent.framing
+                                    ),
                                     "simulated": response.metadata.get(
                                         "simulated",
                                         False,

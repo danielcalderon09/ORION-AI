@@ -6,11 +6,13 @@ import hashlib
 import json
 from datetime import timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import httpx
 import pytest
 from pydantic import ValidationError
 
+from backend.src.production.asset_publishing.publishers.filesystem import FilesystemPublisher
 from backend.src.production.video_clip_generation.configuration import (
     VideoClipGenerationConfiguration,
 )
@@ -25,6 +27,7 @@ from backend.src.production.video_clip_generation.exceptions import (
 from backend.src.production.video_clip_generation.frame_image_publisher import (
     DisabledVideoFrameImagePublisher,
     InMemoryVideoFrameImagePublisher,
+    PublishedAssetVideoFrameImagePublisher,
     validate_public_frame_url,
 )
 from backend.src.production.video_clip_generation.ports import (
@@ -239,6 +242,32 @@ async def test_in_memory_publisher_is_offline_deterministic_and_safe() -> None:
         await publisher.publish_first_frame(request)
 
 
+@pytest.mark.asyncio
+async def test_filesystem_frame_publisher_reuses_verified_source_without_leaking_path(
+    tmp_path: Path,
+) -> None:
+    source = openrouter_request()
+    root = tmp_path / "public"
+    publisher = PublishedAssetVideoFrameImagePublisher(
+        publisher=FilesystemPublisher(
+            public_root=root,
+            public_base_url="https://media.example.test/orion",
+            clock=lambda: NOW,
+        ),
+        lifetime_seconds=900,
+        clock=lambda: NOW,
+    )
+    result = await publisher.publish_first_frame(source)
+    published = tuple(root.glob("*.*"))
+    binaries = tuple(path for path in published if not path.name.endswith(".publication.json"))
+    assert len(binaries) == 1
+    assert binaries[0].read_bytes() == source.source_image_content
+    assert result.content_sha256 == source.source_image_sha256
+    assert result.publication_provider == "filesystem"
+    assert "url" not in result.model_dump(mode="json")
+    assert str(tmp_path) not in repr(result)
+
+
 @pytest.mark.parametrize(
     "unsafe",
     [
@@ -299,6 +328,23 @@ def test_motion_prompt_is_closed_deterministic_and_sanitized(role: str) -> None:
 def test_motion_prompt_limit_is_enforced() -> None:
     prompt = VideoMotionPromptBuilder(max_characters=200).build(openrouter_request(role="x" * 100))
     assert len(prompt.text) <= 200
+
+
+def test_motion_prompt_uses_allowlisted_durable_visual_context() -> None:
+    prompt = VideoMotionPromptBuilder().build(
+        openrouter_request(
+            source_metadata={
+                "video_visual_subject": "astronauta frente a un crater",
+                "video_environment": "llanura marciana con polvo fino",
+                "video_action": "el polvo cruza lentamente el encuadre",
+                "video_camera_movement": "dolly",
+                "video_camera_framing": "wide",
+            }
+        )
+    )
+    assert "astronauta frente a un crater" in prompt.text
+    assert "el polvo cruza lentamente" in prompt.text
+    assert "Camera movement: dolly" in prompt.text
 
 
 @pytest.mark.parametrize(

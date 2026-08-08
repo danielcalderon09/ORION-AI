@@ -31,7 +31,7 @@ base64, `file://`, rutas absolutas ni comandos.
 
 ## Provider simulado y determinismo
 
-`SimulatedVideoClipGenerationProvider` es el único provider de esta fase. Opera offline, no
+`SimulatedVideoClipGenerationProvider` sigue siendo el provider predeterminado. Opera offline, no
 importa HTTP, no usa API keys y no genera contenido creativo nuevo. Repite la imagen y superpone
 un movimiento geométrico horizontal ligero cuyo color y dirección derivan de
 `visual_asset_id`. Usa H.264, MP4, 24 o 30 fps, conserva dimensiones, elimina metadata variable,
@@ -123,16 +123,16 @@ Las pruebas usan perfiles temporales, ffmpeg/ffprobe locales y cero red o coste.
 operativo mantiene `simulated`; el rollback de código revierte la etapa, artifacts y módulos sin
 migración porque `ArtifactType` se persiste como string.
 
-El alcance original 5F.1 no incluía proveedor real. Fase 5F.2 añade el
-adaptador OpenRouter, pero permanece bloqueado sin un publisher HTTPS real y no
-realiza live generation.
-# Extensión OpenRouter de Fase 5F.2
+El alcance original 5F.1 no incluía proveedor real. Fase 6F.1 completa el
+adaptador OpenRouter Veo image-to-video como opt-in; sigue requiriendo que el
+publication root configurado esté servido realmente por HTTPS.
+# Extensión OpenRouter de Fase 6F.1
 
 La infraestructura 5F.1 se conserva: el mismo handler/store/validator/manifest
 admite metadata remota opcional y `simulated` continúa como default. El
-adaptador OpenRouter añade capabilities, cost gate, remote job durable, polling
-y descarga segura. Está bloqueado por default y no puede ejecutarse sin un
-publisher HTTPS real, ausente en esta fase. Consulta
+adaptador OpenRouter añade capabilities, checkpoint pre-submit, cost gate,
+remote job durable, polling reanudable, publicación del primer frame y descarga
+segura. Está bloqueado por default y no se activa sin publisher HTTPS. Consulta
 `PRODUCTION_OPENROUTER_VIDEO_PROVIDER.md`.
 
 Los campos remotos son aditivos al schema 1.0.0. Provider, modelo, key,

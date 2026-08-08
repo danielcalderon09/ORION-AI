@@ -180,6 +180,17 @@ class DurableImageAcquisitionManifestReader:
                         "source_visual_asset_plan_sha256": (
                             manifest.source_visual_asset_plan_sha256
                         ),
+                        **{
+                            key: binary.metadata.attributes[key]
+                            for key in (
+                                "video_visual_subject",
+                                "video_environment",
+                                "video_action",
+                                "video_camera_movement",
+                                "video_camera_framing",
+                            )
+                            if key in binary.metadata.attributes
+                        },
                     },
                 )
             )

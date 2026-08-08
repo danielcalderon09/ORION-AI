@@ -145,6 +145,8 @@ class VideoClipManifestCorruptException(VideoClipManifestError):
 class OpenRouterVideoError(VideoClipProviderError):
     """Base typed OpenRouter video failure."""
 
+    http_status: int | None = None
+
 
 class OpenRouterVideoConfigurationError(OpenRouterVideoError):
     pass

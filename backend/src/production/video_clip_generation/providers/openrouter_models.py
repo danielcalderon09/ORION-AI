@@ -27,6 +27,16 @@ class OpenRouterRemoteStatus(StrEnum):
     EXPIRED = "expired"
 
 
+class OpenRouterVideoRequestStatus(StrEnum):
+    PREPARED = "prepared"
+    SUBMITTING = "submitting"
+    SUBMITTED = "submitted"
+    POLLING = "polling"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    UNCERTAIN = "uncertain"
+
+
 class OpenRouterVideoUsage(ContractModel):
     cost: Decimal = Field(ge=0, max_digits=18, decimal_places=9)
     is_byok: bool | None = None
@@ -37,6 +47,7 @@ class OpenRouterVideoJob(ContractModel):
     polling_url: str = Field(min_length=1, max_length=1000)
     status: OpenRouterRemoteStatus
     generation_id: str | None = Field(default=None, max_length=200)
+    model: str | None = Field(default=None, max_length=300)
     unsigned_urls: tuple[str, ...] = Field(default=(), max_length=10)
     usage: OpenRouterVideoUsage | None = None
     error: str | None = Field(default=None, max_length=1000)
@@ -144,6 +155,7 @@ class OpenRouterVideoProviderConfiguration(ContractModel):
     max_video_bytes: int = Field(default=50_000_000, ge=1, le=250_000_000)
     capability_cache_ttl_seconds: float = Field(default=3600, gt=0, le=86_400)
     max_estimated_cost_usd: Decimal = Field(gt=0, max_digits=18, decimal_places=9)
+    max_requests_per_job: int = Field(default=1, ge=1, le=50)
     allow_billable_requests: bool = False
 
     @field_validator("max_estimated_cost_usd", mode="before")
@@ -168,10 +180,20 @@ class RemoteVideoJobRecord(ContractModel):
     publication_provider: str
     publication_id: str
     publication_expires_at: datetime | None = None
-    remote_job_id: str
+    request_status: OpenRouterVideoRequestStatus = OpenRouterVideoRequestStatus.SUBMITTED
+    fresh_submission_permitted: bool = False
+    prepared_at: datetime | None = None
+    submission_started_at: datetime | None = None
+    submission_http_status: int | None = Field(default=None, ge=100, le=599)
+    requested_duration_seconds: int | None = Field(default=None, ge=1, le=60)
+    requested_resolution: str | None = Field(default=None, max_length=30)
+    requested_aspect_ratio: str | None = Field(default=None, max_length=20)
+    generate_audio: bool = False
+    reported_model: str | None = Field(default=None, max_length=300)
+    remote_job_id: str | None = None
     remote_generation_id: str | None = None
-    remote_status: OpenRouterRemoteStatus
-    submitted_at: datetime
+    remote_status: OpenRouterRemoteStatus | None = None
+    submitted_at: datetime | None = None
     last_polled_at: datetime | None = None
     poll_attempts: int = Field(default=0, ge=0)
     terminal_at: datetime | None = None
@@ -180,10 +202,12 @@ class RemoteVideoJobRecord(ContractModel):
     reported_cost_usd: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=9)
     pricing_snapshot_at: datetime
     pricing_sku: str
-    safe_remote_path: str
+    safe_remote_path: str | None = None
 
     @field_validator(
         "publication_expires_at",
+        "prepared_at",
+        "submission_started_at",
         "submitted_at",
         "last_polled_at",
         "terminal_at",
@@ -203,15 +227,33 @@ class RemoteVideoJobRecord(ContractModel):
             raise ValueError("remote video local job ID is invalid") from exc
         if self.provider != "openrouter":
             raise ValueError("remote video provider must be OpenRouter")
-        if (
-            not self.remote_job_id
-            or any(
+        if self.remote_job_id is not None and (
+            any(
                 character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
                 for character in self.remote_job_id
             )
             or self.safe_remote_path != f"/api/v1/videos/{self.remote_job_id}"
         ):
             raise ValueError("remote video path is not contractual")
+        if (self.remote_job_id is None) != (self.safe_remote_path is None):
+            raise ValueError("remote video identity and path differ")
+        if self.request_status is OpenRouterVideoRequestStatus.PREPARED:
+            if not self.fresh_submission_permitted or self.remote_job_id is not None:
+                raise ValueError("prepared video request state is invalid")
+        elif self.request_status in {
+            OpenRouterVideoRequestStatus.SUBMITTING,
+            OpenRouterVideoRequestStatus.UNCERTAIN,
+        }:
+            if self.fresh_submission_permitted or self.remote_job_id is not None:
+                raise ValueError("unresolved video submission state is invalid")
+        elif (
+            self.request_status is OpenRouterVideoRequestStatus.FAILED
+            and self.remote_job_id is None
+        ):
+            if self.fresh_submission_permitted:
+                raise ValueError("failed video submission permits a fresh request")
+        elif self.remote_job_id is None or self.remote_status is None:
+            raise ValueError("accepted video request requires remote identity")
         terminal = self.remote_status in {
             OpenRouterRemoteStatus.COMPLETED,
             OpenRouterRemoteStatus.FAILED,
@@ -224,14 +266,22 @@ class RemoteVideoJobRecord(ContractModel):
             self.remote_status is OpenRouterRemoteStatus.COMPLETED
         ):
             raise ValueError("remote video content availability is inconsistent")
-        if (
-            self.publication_expires_at is not None
-            and self.publication_expires_at <= self.submitted_at
-        ):
+        request_anchor = self.submitted_at or self.prepared_at
+        if request_anchor is None:
+            raise ValueError("remote video request timestamp is missing")
+        if self.publication_expires_at is not None and self.publication_expires_at <= request_anchor:
             raise ValueError("remote video publication expired before submission")
-        if self.last_polled_at is not None and self.last_polled_at < self.submitted_at:
+        if (
+            self.last_polled_at is not None
+            and self.submitted_at is not None
+            and self.last_polled_at < self.submitted_at
+        ):
             raise ValueError("remote video poll timestamp precedes submission")
-        if self.terminal_at is not None and self.terminal_at < self.submitted_at:
+        if (
+            self.terminal_at is not None
+            and self.submitted_at is not None
+            and self.terminal_at < self.submitted_at
+        ):
             raise ValueError("remote video terminal timestamp precedes submission")
         if (self.poll_attempts == 0) != (self.last_polled_at is None):
             raise ValueError("remote video poll timestamp and attempt count differ")

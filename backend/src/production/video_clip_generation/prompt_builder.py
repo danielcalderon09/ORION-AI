@@ -36,11 +36,27 @@ class VideoMotionPromptBuilder:
 
     def build(self, source: VideoClipProviderRequest) -> VideoMotionPrompt:
         role = _clean_fragment(source.source_role, maximum=80)
+        subject = _metadata_fragment(source, "video_visual_subject", maximum=240)
+        environment = _metadata_fragment(source, "video_environment", maximum=240)
+        action = _metadata_fragment(source, "video_action", maximum=240)
+        movement = _metadata_fragment(source, "video_camera_movement", maximum=80)
+        framing = _metadata_fragment(source, "video_camera_framing", maximum=80)
+        context = " ".join(
+            fragment
+            for fragment in (
+                f"Subject: {subject}." if subject else "",
+                f"Environment: {environment}." if environment else "",
+                f"Motion intent: {action}." if action else "",
+                f"Camera movement: {movement}." if movement else "",
+                f"Framing: {framing}." if framing else "",
+            )
+            if fragment
+        )
         text = (
             "Animate only the provided first frame. "
             f"Preserve the {role} subject identity, composition, colors, lighting, "
-            "and environment. Use subtle natural subject motion and a slow cinematic "
-            "push-in. Keep the camera stable and motion physically coherent. "
+            f"and environment. {context} "
+            "Use subtle natural subject motion. Keep motion physically coherent. "
             "Do not introduce new subjects, text, logos, cuts, transitions, flicker, "
             "warping, or changes of scene. Generate no audio."
         )
@@ -60,3 +76,12 @@ def _clean_fragment(value: str, *, maximum: int) -> str:
     clean = _URL_OR_PATH.sub(" ", clean)
     clean = " ".join(clean.split())
     return (clean[:maximum] or "visual").strip()
+
+
+def _metadata_fragment(
+    source: VideoClipProviderRequest, key: str, *, maximum: int
+) -> str | None:
+    value = source.source_metadata.get(key)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return _clean_fragment(value, maximum=maximum)
