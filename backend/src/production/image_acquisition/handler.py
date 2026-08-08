@@ -110,6 +110,7 @@ _MIME = {
     "jpeg": "image/jpeg",
     "webp": "image/webp",
 }
+_FORMAT_BY_MIME = {mime_type: output_format for output_format, mime_type in _MIME.items()}
 _ROLE = {
     VisualAssetRole.PRIMARY: BinaryAssetRole.PRIMARY,
     VisualAssetRole.SUPPORTING: BinaryAssetRole.SUPPORTING,
@@ -396,32 +397,19 @@ class ImageAcquisitionHandler:
                         )
                     payload = response.images[0]
                     expected_mime = _MIME[self._configuration.output_format]
-                    if payload.mime_type is not None and payload.mime_type != expected_mime:
+                    durable_mime = payload.mime_type or expected_mime
+                    durable_output_format = _FORMAT_BY_MIME.get(durable_mime)
+                    if durable_output_format is None:
                         raise ImageAcquisitionProviderContractException(
-                            "provider MIME differs from requested output format",
-                            diagnostic_subtype=ImageDiagnosticSubtype.MIME_MISMATCH,
-                            diagnostic_metadata=(
-                                generating.diagnostic_metadata.model_copy(
-                                    update={
-                                        "requested_output_format": (
-                                            self._configuration.output_format
-                                        )
-                                    }
-                                )
-                                if generating.diagnostic_metadata is not None
-                                else ImageDiagnosticMetadata(
-                                    declared_media_type=payload.mime_type,
-                                    detected_media_type=payload.mime_type,
-                                    expected_width=asset_spec.width,
-                                    expected_height=asset_spec.height,
-                                    expected_aspect_ratio=(asset_spec.width / asset_spec.height),
-                                    requested_output_format=(self._configuration.output_format),
-                                )
+                            "provider returned an unsupported image format",
+                            diagnostic_subtype=(
+                                ImageDiagnosticSubtype.UNSUPPORTED_IMAGE_FORMAT
                             ),
-                            validation_error_code="mime_mismatch",
-                            validation_error_path="data[0].media_type",
+                            diagnostic_metadata=generating.diagnostic_metadata,
+                            validation_error_code="unsupported_image_format",
+                            validation_error_path="images[0].mime_type",
                             validation_error_message=(
-                                "provider MIME differs from requested output format"
+                                "provider returned an unsupported image format"
                             ),
                         )
                     prompt = self._prompt_builder.build(
@@ -434,8 +422,8 @@ class ImageAcquisitionHandler:
                             scene_id=asset_spec.source_scene_id,
                             shot_id=asset_spec.source_shot_id,
                             asset_role=_ROLE[asset_spec.role],
-                            mime_type=expected_mime,
-                            extension=_EXTENSION[self._configuration.output_format],
+                            mime_type=durable_mime,
+                            extension=_EXTENSION[durable_output_format],
                             expected_width=(
                                 _safe_image_dimension(payload.provider_metadata.get("width"))
                                 if self._provider_name == "openrouter"

@@ -1,6 +1,7 @@
 """Durable, sanitized image-failure diagnostics with fake providers only."""
 
 import asyncio
+import base64
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -55,9 +56,25 @@ def _png_bytes() -> bytes:
     return stream.getvalue()
 
 
+def _real_contract_jpeg_bytes() -> bytes:
+    stream = BytesIO()
+    Image.new("RGB", (768, 1376), "firebrick").save(stream, "JPEG", quality=95)
+    return stream.getvalue()
+
+
 def _single_asset_source(source_visual_plan):
     plan = source_visual_plan.visual_asset_plan.model_copy(
         update={"assets": (source_visual_plan.visual_asset_plan.assets[0],)}
+    )
+    return source_visual_plan.model_copy(update={"visual_asset_plan": plan})
+
+
+def _real_contract_source(source_visual_plan):
+    asset = source_visual_plan.visual_asset_plan.assets[0].model_copy(
+        update={"width": 576, "height": 1024, "aspect_ratio": "9:16"}
+    )
+    plan = source_visual_plan.visual_asset_plan.model_copy(
+        update={"aspect_ratio": "9:16", "assets": (asset,)}
     )
     return source_visual_plan.model_copy(update={"visual_asset_plan": plan})
 
@@ -196,6 +213,84 @@ async def test_2xx_validation_failure_preserves_metadata_and_blocks_resubmission
     second = await acquired.execute(command, context)
     assert second.result.outcome is StageOutcome.FAILED_PERMANENT
     assert calls == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_requested_png_accepts_real_valid_jpeg_response_contract(
+    tmp_path,
+    source_visual_plan,
+    image_command_context,
+) -> None:
+    content = _real_contract_jpeg_bytes()
+    calls = 0
+
+    def respond(http_request):
+        nonlocal calls
+        calls += 1
+        sent = json.loads(http_request.content)
+        assert sent["output_format"] == "png"
+        assert sent["resolution"] == "1K"
+        assert sent["aspect_ratio"] == "9:16"
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "b64_json": base64.b64encode(content).decode(),
+                        "media_type": "image/jpeg",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 353,
+                    "completion_tokens": 1120,
+                    "total_tokens": 1473,
+                    "cost": "0.03368825",
+                },
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    provider = OpenRouterImageAcquisitionProvider(
+        api_key="fake-test-key-never-persisted",
+        model="google/gemini-3.1-flash-lite-image",
+        prompt_builder=ImageGenerationPromptBuilder(),
+        client=client,
+        max_transport_attempts=1,
+    )
+    writer = InMemoryImageAcquisitionManifestWriter()
+    command, context = image_command_context
+    output = await _handler(
+        source=_real_contract_source(source_visual_plan),
+        provider=provider,
+        manifest_writer=writer,
+        binary_reader=store(tmp_path),
+    ).execute(command, context)
+
+    assert output.result.outcome is StageOutcome.SUCCEEDED
+    assert calls == 1
+    manifest = await writer.read_existing(context=context)
+    assert manifest is not None
+    entry = manifest.entries[0]
+    assert entry.status is ImageAcquisitionEntryStatus.STORED
+    assert entry.request_status is OpenRouterImageRequestStatus.COMPLETED
+    assert entry.fresh_submission_permitted is False
+    assert entry.mime_type == "image/jpeg"
+    assert entry.extension == "jpg"
+    assert entry.width == 768
+    assert entry.height == 1376
+    assert entry.size_bytes == len(content)
+    assert entry.cost_usd == Decimal("0.03368825")
+    assert entry.diagnostic_metadata is not None
+    assert entry.diagnostic_metadata.declared_media_type == "image/jpeg"
+    assert entry.diagnostic_metadata.detected_media_type == "image/jpeg"
+    assert entry.diagnostic_metadata.decoded_format == "JPEG"
+    assert entry.diagnostic_metadata.expected_width == 576
+    assert entry.diagnostic_metadata.expected_height == 1024
+    assert entry.diagnostic_metadata.decoded_width == 768
+    assert entry.diagnostic_metadata.decoded_height == 1376
+    assert entry.diagnostic_metadata.decoded_size_bytes == len(content)
+    assert entry.diagnostic_metadata.requested_output_format == "png"
     await client.aclose()
 
 
