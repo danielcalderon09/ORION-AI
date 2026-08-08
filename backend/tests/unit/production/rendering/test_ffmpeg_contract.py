@@ -12,8 +12,10 @@ import pytest
 from backend.src.production.application.results import StageOutcome
 from backend.src.production.domain.enums import ArtifactType
 from backend.src.production.media_composition.domain.models import (
+    CompositionAssetKind,
     CompositionTransitionKind,
 )
+from backend.src.production.media_composition.ports import MediaCompositionSource
 from backend.src.production.rendering.configuration import RenderingConfiguration
 from backend.src.production.rendering.exceptions import (
     RenderingConflictError,
@@ -48,10 +50,17 @@ from backend.tests.unit.production.rendering.conftest import (
 
 
 class FakeControlledRunner:
-    def __init__(self, *, ffmpeg_return_code: int = 0, wrong_width: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        ffmpeg_return_code: int = 0,
+        wrong_width: bool = False,
+        output_duration_seconds: float = 4.0,
+    ) -> None:
         self.calls: list[tuple[str, tuple[str, ...]]] = []
         self.ffmpeg_return_code = ffmpeg_return_code
         self.wrong_width = wrong_width
+        self.output_duration_seconds = output_duration_seconds
 
     async def run(
         self,
@@ -78,12 +87,15 @@ class FakeControlledRunner:
                     "width": 640 if self.wrong_width else 1280,
                     "height": 720,
                     "avg_frame_rate": "24/1",
-                    "duration": "4.000000",
+                    "duration": f"{self.output_duration_seconds:.6f}",
                     "disposition": {"attached_pic": 0},
                 },
                 {"codec_type": "audio", "codec_name": "aac"},
             ],
-            "format": {"format_name": "mov,mp4", "duration": "4.000000"},
+            "format": {
+                "format_name": "mov,mp4",
+                "duration": f"{self.output_duration_seconds:.6f}",
+            },
         }
         return ControlledProcessResult(
             identity,
@@ -94,8 +106,11 @@ class FakeControlledRunner:
         )
 
 
-def _real_asset_source(workspace: Path):
-    source = make_source()
+def _real_asset_source(
+    workspace: Path,
+    source: MediaCompositionSource | None = None,
+) -> MediaCompositionSource:
+    source = source or make_source()
     assets = []
     for asset in source.assets:
         target = workspace.joinpath(*asset.relative_path.split("/"))
@@ -111,6 +126,36 @@ def _real_asset_source(workspace: Path):
             )
         )
     return source.model_copy(update={"assets": tuple(assets)})
+
+
+def _fifteen_second_looping_source() -> MediaCompositionSource:
+    source = make_source()
+    assets = []
+    for asset in source.assets:
+        if asset.kind is CompositionAssetKind.VIDEO:
+            assets.append(asset.model_copy(update={"duration_ms": 4_000, "frame_count": 96}))
+        elif asset.kind is CompositionAssetKind.NARRATION:
+            assets.append(asset.model_copy(update={"duration_ms": 15_000, "frame_count": 360_000}))
+    asset_ids = {asset.asset_id for asset in assets}
+    return source.model_copy(
+        update={
+            "assets": tuple(sorted(assets, key=lambda item: item.asset_id)),
+            "asset_validation": tuple(
+                item for item in source.asset_validation if item.asset_id in asset_ids
+            ),
+            "shots": (
+                source.shots[0].model_copy(update={"shot_start_ms": 0, "shot_end_ms": 7_500}),
+                source.shots[1].model_copy(update={"shot_start_ms": 7_500, "shot_end_ms": 15_000}),
+            ),
+            "narration": (
+                source.narration[0].model_copy(
+                    update={"timeline_start_ms": 0, "duration_ms": 15_000}
+                ),
+            ),
+            "music": None,
+            "sound_effects": (),
+        }
+    )
 
 
 def test_configuration_is_closed_and_bounded() -> None:
@@ -172,7 +217,7 @@ async def test_version_probe_normalizes_and_excludes_banner() -> None:
 def test_ffmpeg_request_and_execution_plan_are_deterministic(tmp_path: Path) -> None:
     source = make_verified_source()
     dry = build_local_render_request(source, RenderingConfiguration())
-    configuration = RenderingConfiguration(renderer="ffmpeg")
+    configuration = RenderingConfiguration(renderer=RendererKind.FFMPEG)
     ffmpeg = build_local_render_request(source, configuration)
     assert ffmpeg.request_fingerprint != dry.request_fingerprint
     alternate = build_local_render_request(
@@ -203,6 +248,63 @@ def test_ffmpeg_request_and_execution_plan_are_deterministic(tmp_path: Path) -> 
     )
     with pytest.raises(RenderingRequestError, match="unsupported"):
         build_ffmpeg_execution_plan(ffmpeg, unsupported, context, configuration)
+
+
+def test_ffmpeg_plan_trims_looped_video_to_fifteen_second_timeline() -> None:
+    verified = make_verified_source(composition_source=_fifteen_second_looping_source())
+    configuration = RenderingConfiguration(renderer=RendererKind.FFMPEG)
+    request = build_local_render_request(verified, configuration)
+    _, context = make_render_command_context()
+
+    plan = build_ffmpeg_execution_plan(request, verified.plan, context, configuration)
+    filters = plan.argument_vector[plan.argument_vector.index("-filter_complex") + 1]
+
+    assert request.expected_duration_ms == 15_000
+    assert request.expected_duration_frames == 360
+    assert plan.argument_vector.count("-stream_loop") == 2
+    assert filters.count("trim=start=0:duration=7.5") == 2
+    assert "trim=start=0:end=4" not in filters
+    assert plan.argument_vector[plan.argument_vector.index("-t") + 1] == "15"
+
+
+@pytest.mark.asyncio
+async def test_fake_ffmpeg_preparation_accepts_fifteen_second_looped_video(
+    tmp_path: Path,
+) -> None:
+    composition_source = _real_asset_source(
+        tmp_path,
+        _fifteen_second_looping_source(),
+    )
+    source = make_verified_source(composition_source=composition_source)
+    command, context = make_render_command_context()
+    configuration = RenderingConfiguration(renderer=RendererKind.FFMPEG)
+    runner = FakeControlledRunner(output_duration_seconds=15.0)
+    store = LocalRenderPreparationStore(
+        tmp_path,
+        max_request_bytes=configuration.max_request_bytes,
+        max_manifest_bytes=configuration.max_manifest_bytes,
+        max_execution_plan_bytes=configuration.max_execution_plan_bytes,
+    )
+
+    output = await LocalRenderPreparationHandler(
+        source_reader=StaticVerifiedSourceReader(source),
+        store=store,
+        renderer=LocalFFmpegRenderer(
+            workspace_root=tmp_path,
+            runner=runner,  # type: ignore[arg-type]
+        ),
+        configuration=configuration,
+        clock=lambda: NOW,
+    ).execute(command, context)
+
+    assert output.result.outcome is StageOutcome.SUCCEEDED
+    assert output.result.metadata["media_produced"] is True
+    assert [identity for identity, _ in runner.calls] == [
+        "ffmpeg",
+        "ffprobe",
+        "ffmpeg",
+        "ffprobe",
+    ]
 
 
 @pytest.mark.asyncio

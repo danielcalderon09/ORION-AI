@@ -84,10 +84,7 @@ def build_ffmpeg_execution_plan(
         if kind is CompositionAssetKind.VIDEO:
             label = f"v{video_number}"
             source_start = clip.source_in_frame / request.frame_rate_numerator
-            source_end_frame = clip.source_out_frame
-            trim = f"start={_decimal(source_start)}"
-            if source_end_frame is not None:
-                trim += f":end={_decimal(source_end_frame / request.frame_rate_numerator)}"
+            trim = f"start={_decimal(source_start)}:duration={_decimal(duration)}"
             video_filters.append(
                 f"[{input_index}:v]trim={trim},setpts=PTS-STARTPTS,"
                 f"scale={request.output_width}:{request.output_height}:"
