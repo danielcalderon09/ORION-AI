@@ -5,6 +5,7 @@ import hashlib
 import logging
 from collections.abc import Callable
 from datetime import datetime
+from decimal import Decimal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import ValidationError
@@ -114,6 +115,42 @@ class VideoClipGenerationHandler:
             else:
                 self._validate_manifest_source(manifest, source)
 
+            pending_images = tuple(
+                image
+                for image in source.source_images
+                if _entry_for(manifest, image.visual_asset_id).status
+                is VideoClipEntryStatus.PENDING
+            )
+            prepared_requests = {
+                image.visual_asset_id: self._provider_request(command, context, image)
+                for image in pending_images
+            }
+            preflight = getattr(self._provider, "preflight_job", None)
+            if prepared_requests and callable(preflight):
+                try:
+                    planned = await preflight(tuple(prepared_requests.values()))
+                    prepared_requests = {item.visual_asset_id: item for item in planned}
+                except OpenRouterVideoError as exc:
+                    image = pending_images[0]
+                    entry = _entry_for(manifest, image.visual_asset_id)
+                    error_code = _pre_submission_error_code(exc) or "video_clip_provider_contract"
+                    diagnostic = self._provider_diagnostic_metadata(exc, image=image)
+                    await self._checkpoint_error(
+                        context=context,
+                        manifest=manifest,
+                        entry=entry,
+                        status=VideoClipEntryStatus.FAILED_PERMANENT,
+                        error_code=error_code,
+                        diagnostic_metadata=diagnostic,
+                    )
+                    return self._failure(
+                        command,
+                        started_at,
+                        StageOutcome.FAILED_PERMANENT,
+                        error_code,
+                        diagnostic_metadata=diagnostic,
+                    )
+
             stored_assets: dict[str, ProductionVideoClipAsset] = {}
             for image in source.source_images:
                 entry = _entry_for(manifest, image.visual_asset_id)
@@ -219,17 +256,10 @@ class VideoClipGenerationHandler:
                     stored_assets[image.visual_asset_id] = recovered
                     continue
 
-                generating = entry.model_copy(
-                    update={
-                        "status": VideoClipEntryStatus.GENERATING,
-                        "error_code": None,
-                    }
-                )
-                current = replace_manifest_entry(manifest, generating)
-                await self._writer.checkpoint(context=context, previous=manifest, current=current)
-                manifest = current
                 try:
-                    provider_request = self._provider_request(command, context, image)
+                    provider_request = prepared_requests.get(
+                        image.visual_asset_id
+                    ) or self._provider_request(command, context, image)
                 except (TypeError, ValueError, ValidationError):
                     diagnostic = self._request_diagnostic_metadata(
                         image=image,
@@ -239,7 +269,7 @@ class VideoClipGenerationHandler:
                     await self._checkpoint_error(
                         context=context,
                         manifest=manifest,
-                        entry=generating,
+                        entry=entry,
                         status=VideoClipEntryStatus.FAILED_PERMANENT,
                         error_code="video_clip_request_invalid",
                         diagnostic_metadata=diagnostic,
@@ -251,12 +281,24 @@ class VideoClipGenerationHandler:
                         "video_clip_request_invalid",
                         diagnostic_metadata=diagnostic,
                     )
+                generating = entry.model_copy(
+                    update={
+                        "status": VideoClipEntryStatus.GENERATING,
+                        "requested_duration_seconds": provider_request.duration_seconds,
+                        "error_code": None,
+                    }
+                )
+                current = replace_manifest_entry(manifest, generating)
+                await self._writer.checkpoint(
+                    context=context, previous=manifest, current=current
+                )
+                manifest = current
                 try:
                     try:
                         response = await self._provider.generate_clip(provider_request)
                     except OpenRouterVideoError as exc:
-                        error_code = _pre_submission_error_code(exc)
-                        if error_code is None:
+                        mapped_error_code = _pre_submission_error_code(exc)
+                        if mapped_error_code is None:
                             raise
                         diagnostic = self._provider_diagnostic_metadata(exc, image=image)
                         await self._checkpoint_error(
@@ -264,14 +306,14 @@ class VideoClipGenerationHandler:
                             manifest=manifest,
                             entry=generating,
                             status=VideoClipEntryStatus.FAILED_PERMANENT,
-                            error_code=error_code,
+                            error_code=mapped_error_code,
                             diagnostic_metadata=diagnostic,
                         )
                         return self._failure(
                             command,
                             started_at,
                             StageOutcome.FAILED_PERMANENT,
-                            error_code,
+                            mapped_error_code,
                             diagnostic_metadata=diagnostic,
                         )
                     payload = response.clips[0]
@@ -283,6 +325,7 @@ class VideoClipGenerationHandler:
                         request=self._write_request(
                             source=source,
                             image=image,
+                            provider_request=provider_request,
                             response=response,
                         ),
                         content=payload.content,
@@ -451,9 +494,13 @@ class VideoClipGenerationHandler:
                 shot_number=image.shot_number,
                 role=VisualAssetRole(image.role),
                 status=VideoClipEntryStatus.PENDING,
+                planned_duration_seconds=image.planned_duration_seconds,
                 attempt_number=attempt_number,
             )
-            for image in sorted(source.source_images, key=lambda item: item.visual_asset_id)
+            for image in sorted(
+                source.source_images,
+                key=lambda item: (item.scene_number, item.shot_number, item.visual_asset_id),
+            )
         )
         return ProductionVideoClipManifest(
             source_image_manifest_schema_version=source.schema_version,
@@ -486,7 +533,10 @@ class VideoClipGenerationHandler:
             or tuple(entry.visual_asset_id for entry in manifest.entries)
             != tuple(
                 image.visual_asset_id
-                for image in sorted(source.source_images, key=lambda item: item.visual_asset_id)
+                for image in sorted(
+                    source.source_images,
+                    key=lambda item: (item.scene_number, item.shot_number, item.visual_asset_id),
+                )
             )
         ):
             raise VideoClipIntegrityError("video clip manifest source or configuration changed")
@@ -534,7 +584,11 @@ class VideoClipGenerationHandler:
             or asset.shot_id != image.shot_id
             or asset.width != expected_width
             or asset.height != expected_height
-            or abs(asset.duration_seconds - self._configuration.duration_seconds) > 0.08
+            or abs(
+                asset.duration_seconds
+                - (entry.requested_duration_seconds or self._configuration.duration_seconds)
+            )
+            > 0.08
             or abs(asset.frame_rate - self._configuration.frame_rate) > 0.01
             or metadata.source_image_manifest_artifact_id != source.artifact_id
             or metadata.source_image_manifest_sha256 != source.sha256
@@ -578,7 +632,9 @@ class VideoClipGenerationHandler:
             source_role=image.role,
             source_metadata=image.metadata,
             source_image_content=image.content,
-            duration_seconds=self._configuration.duration_seconds,
+            duration_seconds=(
+                image.planned_duration_seconds or self._configuration.duration_seconds
+            ),
             frame_rate=self._configuration.frame_rate,
             width=width,
             height=height,
@@ -591,6 +647,7 @@ class VideoClipGenerationHandler:
         *,
         source: ReadImageAcquisitionManifest,
         image: VerifiedSourceImage,
+        provider_request: VideoClipProviderRequest,
         response: VideoClipProviderResponse,
     ) -> VideoClipWriteRequest:
         width, height = self._configuration.output_dimensions(image.width, image.height)
@@ -606,7 +663,7 @@ class VideoClipGenerationHandler:
             role=VisualAssetRole(image.role),
             expected_width=width,
             expected_height=height,
-            expected_duration_seconds=self._configuration.duration_seconds,
+            expected_duration_seconds=provider_request.duration_seconds,
             expected_frame_rate=self._configuration.frame_rate,
             metadata=VideoClipMetadata(
                 source_image_manifest_artifact_id=source.artifact_id,
@@ -654,6 +711,10 @@ class VideoClipGenerationHandler:
                 "video_codec": asset.video_codec,
                 "audio_codec": None,
                 "has_audio": False,
+                "video_adaptation": _video_adaptation(
+                    entry.planned_duration_seconds,
+                    asset.duration_seconds,
+                ),
                 "provider": response.provider if response else asset.metadata.provider,
                 "requested_model": (
                     response.requested_model if response else asset.metadata.requested_model
@@ -742,7 +803,10 @@ class VideoClipGenerationHandler:
                         "source_shot_id": entry.source_shot_id,
                         "role": entry.role.value,
                         "generation_mode": entry.generation_mode.value,
+                        "planned_duration_seconds": entry.planned_duration_seconds,
+                        "requested_duration_seconds": entry.requested_duration_seconds,
                         "duration_seconds": entry.duration_seconds,
+                        "video_adaptation": entry.video_adaptation,
                         "frame_rate": entry.frame_rate,
                         "frame_count": entry.frame_count,
                         "video_codec": entry.video_codec,
@@ -767,6 +831,12 @@ class VideoClipGenerationHandler:
                             if entry.reported_cost_usd is not None
                             else None
                         ),
+                        "estimated_cost_usd": (
+                            str(entry.estimated_cost_usd)
+                            if entry.estimated_cost_usd is not None
+                            else None
+                        ),
+                        "pricing_sku": entry.pricing_sku,
                         "prompt_sha256": entry.prompt_sha256,
                         "capability_snapshot_hash": (entry.capability_snapshot_hash),
                         "publication_provider": entry.publication_provider,
@@ -794,6 +864,18 @@ class VideoClipGenerationHandler:
                     "source_image_manifest_sha256": source.sha256,
                     "entry_count": len(manifest.entries),
                     "stored_count": manifest.summary.stored,
+                    "requested_durations_seconds": [
+                        entry.requested_duration_seconds for entry in manifest.entries
+                    ],
+                    "estimated_cost_usd": str(
+                        sum(
+                            (
+                                entry.estimated_cost_usd or Decimal("0")
+                                for entry in manifest.entries
+                            ),
+                            Decimal("0"),
+                        )
+                    ),
                     "checkpointed": True,
                     "configuration_fingerprint": (manifest.configuration_fingerprint),
                 },
@@ -910,6 +992,11 @@ class VideoClipGenerationHandler:
             "pricing_sku",
             "estimated_cost_usd",
             "max_estimated_cost_usd",
+            "estimated_job_cost_usd",
+            "max_estimated_job_cost_usd",
+            "planned_request_count",
+            "existing_request_count",
+            "max_requests_per_job",
             "publication_id",
             "source_asset_provider",
             "source_asset_model",
@@ -946,7 +1033,7 @@ def _pre_submission_error_code(error: OpenRouterVideoError) -> str | None:
         return "video_clip_publication_error"
     if phase == "pricing_discovery":
         return "video_clip_pricing_error"
-    if phase in {"cost_estimation", "cost_authorization"}:
+    if phase in {"cost_estimation", "cost_authorization", "aggregate_cost_authorization"}:
         return "video_clip_cost_policy"
     if phase in {"capability_discovery", "capability_contract"}:
         return "video_clip_capability_error"
@@ -1009,3 +1096,15 @@ def _metadata_datetime(value: object) -> datetime | None:
     if result.tzinfo is None:
         raise VideoClipProviderResponseException("provider remote timestamp is not timezone-aware")
     return result
+
+
+def _video_adaptation(
+    planned_duration_seconds: float | None,
+    actual_duration_seconds: float,
+) -> str:
+    if planned_duration_seconds is None:
+        return "none"
+    difference = actual_duration_seconds - planned_duration_seconds
+    if abs(difference) <= 0.001:
+        return "none"
+    return "trim" if difference > 0 else "loop"

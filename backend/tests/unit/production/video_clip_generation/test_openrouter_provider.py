@@ -7,6 +7,7 @@ import json
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 import httpx
 import pytest
@@ -33,6 +34,7 @@ from backend.src.production.video_clip_generation.exceptions import (
 from backend.src.production.video_clip_generation.frame_image_publisher import (
     InMemoryVideoFrameImagePublisher,
 )
+from backend.src.production.video_clip_generation.ports import VideoClipProviderRequest
 from backend.src.production.video_clip_generation.prompt_builder import (
     VideoMotionPromptBuilder,
 )
@@ -94,6 +96,7 @@ def provider_for(
     max_video_bytes: int = 1_000_000,
     sleeper: Callable[[float], Awaitable[None]] = no_sleep,
     max_requests_per_job: int = 1,
+    max_estimated_job_cost_usd: Decimal = Decimal("1"),
 ) -> tuple[
     OpenRouterVideoClipGenerationProvider,
     InMemoryRemoteVideoJobStore,
@@ -111,6 +114,7 @@ def provider_for(
         max_poll_attempts=max_attempts,
         max_video_bytes=max_video_bytes,
         max_requests_per_job=max_requests_per_job,
+        max_estimated_job_cost_usd=max_estimated_job_cost_usd,
     )
     polling = OpenRouterVideoPollingPolicy(
         interval_seconds=0.01,
@@ -147,6 +151,111 @@ def provider_for(
     )
 
 
+def multi_scene_models_body() -> dict[str, object]:
+    item = models_body()["data"][0]
+    assert isinstance(item, dict)
+    return {
+        "data": [
+            {
+                **item,
+                "supported_durations": [4, 6, 8],
+                "pricing_skus": {
+                    "duration_seconds_without_audio_720p": "0.03",
+                },
+            }
+        ]
+    }
+
+
+def multi_scene_requests() -> tuple[VideoClipProviderRequest, ...]:
+    base = openrouter_request()
+    return tuple(
+        base.model_copy(
+            update={
+                "visual_asset_id": f"asset-s{index:03d}-q001-v001",
+                "source_image_artifact_id": UUID(
+                    f"40000000-0000-4000-8000-{index:012d}"
+                ),
+                "duration_seconds": duration,
+            }
+        )
+        for index, duration in enumerate((4.0, 5.0, 6.0), start=1)
+    )
+
+
+@pytest.mark.asyncio
+async def test_multi_scene_preflight_selects_durations_and_authorizes_aggregate() -> None:
+    observations: list[tuple[str, str]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        observations.append((request.method, request.url.path))
+        assert request.method == "GET"
+        return response(request, 200, multi_scene_models_body())
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://openrouter.ai",
+    ) as client:
+        provider, _, _ = provider_for(
+            client,
+            max_requests_per_job=3,
+            max_estimated_job_cost_usd=Decimal("0.48"),
+        )
+        planned = await provider.preflight_job(multi_scene_requests())
+
+    assert tuple(item.duration_seconds for item in planned) == (4.0, 6.0, 6.0)
+    assert Decimal("0.03") * sum(
+        Decimal(str(item.duration_seconds)) for item in planned
+    ) == Decimal("0.48")
+    assert observations == [("GET", "/api/v1/videos/models")]
+
+
+@pytest.mark.asyncio
+async def test_multi_scene_aggregate_budget_blocks_before_first_post() -> None:
+    observations: list[tuple[str, str]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        observations.append((request.method, request.url.path))
+        return response(request, 200, multi_scene_models_body())
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://openrouter.ai",
+    ) as client:
+        provider, jobs, _ = provider_for(
+            client,
+            max_requests_per_job=3,
+            max_estimated_job_cost_usd=Decimal("0.40"),
+        )
+        with pytest.raises(OpenRouterVideoCostPolicyError) as error:
+            await provider.preflight_job(multi_scene_requests())
+
+    assert error.value.diagnostic_code == "aggregate_cost_limit_exceeded"
+    assert not jobs.records
+    assert all(method != "POST" for method, _ in observations)
+
+
+@pytest.mark.asyncio
+async def test_multi_scene_simulated_source_blocks_all_before_discovery_or_post() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"unexpected network request: {request.method}")
+
+    requests = list(multi_scene_requests())
+    requests[1] = requests[1].model_copy(
+        update={"source_metadata": {"simulated": True}}
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://openrouter.ai",
+    ) as client:
+        provider, jobs, _ = provider_for(client, max_requests_per_job=3)
+        with pytest.raises(OpenRouterVideoConfigurationError) as error:
+            await provider.preflight_job(tuple(requests))
+
+    assert error.value.diagnostic_code == "simulated_source_asset_not_billable"
+    assert not jobs.records
+
+
 def response(
     request: httpx.Request,
     status: int,
@@ -168,6 +277,7 @@ def successful_transport(
     poll_states: list[str] | None = None,
     content: bytes = FAKE_MP4,
     content_type: str = "video/mp4",
+    models_payload: dict[str, object] | None = None,
 ) -> httpx.MockTransport:
     states = list(poll_states or ["completed"])
 
@@ -176,7 +286,7 @@ def successful_transport(
         body = json.loads(request.content) if request.content else None
         observations.append((request.method, request.url.path, body))
         if request.url.path == "/api/v1/videos/models":
-            return response(request, 200, models_body())
+            return response(request, 200, models_payload or models_body())
         if request.method == "POST" and request.url.path == "/api/v1/videos":
             return response(
                 request,
@@ -212,6 +322,45 @@ def successful_transport(
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
     return httpx.MockTransport(handler)
+
+
+@pytest.mark.asyncio
+async def test_mock_multi_scene_generation_reaches_three_unique_prepared_records() -> None:
+    observations: list[tuple[str, str, dict[str, Any] | None]] = []
+    async with httpx.AsyncClient(
+        transport=successful_transport(
+            observations,
+            models_payload=multi_scene_models_body(),
+        ),
+        base_url="https://openrouter.ai",
+        follow_redirects=False,
+    ) as client:
+        provider, jobs, _ = provider_for(
+            client,
+            max_requests_per_job=3,
+            max_estimated_job_cost_usd=Decimal("0.48"),
+        )
+        planned = await provider.preflight_job(multi_scene_requests())
+        for request in planned:
+            await provider.generate_clip(request)
+
+    records = tuple(jobs.records.values())
+    assert len(records) == 3
+    assert len({item.visual_asset_id for item in records}) == 3
+    assert len({item.provider_request_fingerprint for item in records}) == 3
+    assert tuple(item.requested_duration_seconds for item in records) == (4, 6, 6)
+    assert tuple(item.estimated_cost_usd for item in records) == (
+        Decimal("0.12"),
+        Decimal("0.18"),
+        Decimal("0.18"),
+    )
+    assert all(
+        item.pricing_sku == "duration_seconds_without_audio_720p" for item in records
+    )
+    assert sum(
+        method == "POST" and path == "/api/v1/videos"
+        for method, path, _ in observations
+    ) == 3
 
 
 @pytest.mark.asyncio

@@ -918,6 +918,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         ),
         workspace_root=settings.PROJECTS_DIR,
         clock=clock,
+        artifact_inventory=SQLAlchemyMediaCompositionArtifactInventory(artifacts),
     )
     rendering_configuration = RenderingConfiguration(
         renderer=RendererKind(settings.ORION_RENDERER),
@@ -1566,6 +1567,9 @@ def _build_video_clip_generation_provider(
             ),
             max_estimated_cost_usd=(
                 settings.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD
+            ),
+            max_estimated_job_cost_usd=(
+                settings.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_JOB_COST_USD
             ),
             max_requests_per_job=(
                 settings.ORION_VIDEO_CLIP_GENERATION_MAX_REQUESTS_PER_JOB

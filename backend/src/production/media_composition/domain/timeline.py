@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from fractions import Fraction
 
 from backend.src.production.media_composition.configuration import (
@@ -28,6 +29,9 @@ from backend.src.production.media_composition.exceptions import (
     MediaCompositionPlanError,
 )
 from backend.src.production.media_composition.ports import MediaCompositionSource
+from backend.src.production.media_composition.scene_reconciliation import (
+    reconcile_scene_durations,
+)
 
 _TRACK_IDS = (
     "track-video",
@@ -42,6 +46,8 @@ def build_media_composition_plan(
     source: MediaCompositionSource,
     configuration: MediaCompositionConfiguration,
 ) -> MediaCompositionPlan:
+    original_planned_total_ms = source.shots[-1].shot_end_ms
+    source, scene_timings = reconcile_scene_durations(source)
     assets = {item.asset_id: item for item in source.assets}
     video_assets = [assets[shot.video_asset_id] for shot in source.shots]
     video_metadata = [_video_metadata(item) for item in video_assets]
@@ -59,7 +65,13 @@ def build_media_composition_plan(
 
     video_clips = _video_clips(source, frame_rate, total_ms)
     narration_clips = _narration_clips(source, configuration, frame_rate, total_ms)
-    music_clips = _music_clips(source, configuration, frame_rate, total_ms)
+    music_clips = _music_clips(
+        source,
+        configuration,
+        frame_rate,
+        total_ms,
+        allow_timeline_extension=total_ms > original_planned_total_ms,
+    )
     sound_effect_clips = _sound_effect_clips(
         source,
         configuration,
@@ -149,8 +161,10 @@ def build_media_composition_plan(
         subtitle_cues=subtitle_cues,
         metadata={
             "content_generation": False,
-            "narration_extended_timeline": total_ms > planned_total_ms,
-            "planned_duration_ms": planned_total_ms,
+            "narration_extended_timeline": total_ms > original_planned_total_ms,
+            "planned_duration_ms": original_planned_total_ms,
+            "reconciled_scene_count": len(scene_timings),
+            "video_adaptations": _video_adaptations(video_clips, assets),
             "renderer_neutral": True,
             "subtitle_text_embedded": False,
         },
@@ -237,12 +251,16 @@ def _music_clips(
     configuration: MediaCompositionConfiguration,
     frame_rate: int,
     total_ms: int,
+    *,
+    allow_timeline_extension: bool,
 ) -> tuple[CompositionClip, ...]:
     if source.music is None:
         return ()
-    if abs(source.music.duration_ms - total_ms) > 1:
+    if not allow_timeline_extension and abs(source.music.duration_ms - total_ms) > 1:
         raise MediaCompositionPlanError("music duration does not match timeline")
     end = _ms_to_frames(total_ms, frame_rate)
+    source_frames = _ms_to_frames(source.music.duration_ms, frame_rate)
+    loop_count = max(1, (end + source_frames - 1) // source_frames)
     fade = min(configuration.fade_duration_ms, total_ms // 2)
     return (
         CompositionClip(
@@ -254,6 +272,9 @@ def _music_clips(
             timeline_end_frame=end,
             timeline_start_ms=0,
             timeline_end_ms=_frames_to_ms(end, frame_rate),
+            source_out_frame=min(source_frames, end),
+            playback_mode="loop" if loop_count > 1 else "once",
+            loop_count=loop_count,
             fade_in_ms=fade,
             fade_out_ms=fade,
             volume_envelope=VolumeEnvelope(
@@ -411,6 +432,26 @@ def _video_metadata(asset: object) -> tuple[int, int, int]:
     if width is None or height is None or frame_rate is None:
         raise MediaCompositionPlanError("video asset profile is missing")
     return width, height, frame_rate
+
+
+def _video_adaptations(
+    clips: tuple[CompositionClip, ...],
+    assets: Mapping[str, object],
+) -> dict[str, str]:
+    adaptations: dict[str, str] = {}
+    for clip in clips:
+        asset_duration = getattr(assets[clip.asset_id], "duration_ms", None)
+        if not isinstance(asset_duration, int):
+            raise MediaCompositionPlanError("video asset duration is missing")
+        timeline_duration = clip.timeline_end_ms - clip.timeline_start_ms
+        if clip.playback_mode == "loop":
+            adaptation = "loop"
+        elif asset_duration > timeline_duration:
+            adaptation = "trim"
+        else:
+            adaptation = "none"
+        adaptations[clip.clip_id] = adaptation
+    return adaptations
 
 
 def _single_value(name: str, values: tuple[int, ...]) -> int:

@@ -874,6 +874,7 @@ class ImageAcquisitionHandler:
                 shot_number=asset.shot_number,
                 source_shot_id=asset.source_shot_id,
                 role=asset.role,
+                planned_duration_seconds=asset.expected_duration_seconds,
                 generation_mode=asset.generation_mode,
                 status=ImageAcquisitionEntryStatus.PENDING,
                 attempt_number=attempt_number,
@@ -991,6 +992,7 @@ class ImageAcquisitionHandler:
                 ),
                 "fresh_submission_permitted": (False if entry.request_status is not None else None),
                 "metadata": {
+                    **entry.metadata,
                     "recovered": recovered,
                     "simulated": binary.metadata.attributes.get(
                         "simulated",
@@ -1039,6 +1041,7 @@ class ImageAcquisitionHandler:
                         "source_shot_id": entry.source_shot_id,
                         "role": entry.role.value,
                         "generation_mode": entry.generation_mode.value,
+                        "planned_duration_seconds": entry.planned_duration_seconds,
                         "width": binary.width,
                         "height": binary.height,
                         "prompt_version": binary.metadata.attributes.get("prompt_version"),

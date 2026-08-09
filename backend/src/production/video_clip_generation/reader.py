@@ -195,6 +195,7 @@ class DurableImageAcquisitionManifestReader:
                     scene_number=entry.scene_number,
                     shot_number=entry.shot_number,
                     role=entry.role.value,
+                    planned_duration_seconds=entry.planned_duration_seconds,
                     content=resolved.content,
                     metadata={
                         **_source_provenance_metadata(

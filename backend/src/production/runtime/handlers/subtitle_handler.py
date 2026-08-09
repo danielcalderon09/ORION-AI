@@ -1,12 +1,14 @@
 import asyncio
 import hashlib
 import os
+import re
 import tempfile
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
-from uuid import NAMESPACE_URL, uuid5
+from typing import Protocol
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from backend.src.production.application.commands import StageCommand
 from backend.src.production.application.results import StageOutcome, StageResult
@@ -23,6 +25,14 @@ from backend.src.production.runtime.runtime_models import StageExecutionOutput
 from backend.src.production.scene_planning.exceptions import ProductionScriptReadException
 from backend.src.production.scene_planning.ports import ProductionScriptReader
 from backend.src.production.scripting.models import ProductionScriptScene
+from backend.src.production.speech_generation.models import SpeechGenerationManifestStatus
+from backend.src.production.speech_generation.serialization import (
+    deserialize_speech_manifest,
+)
+
+
+class SubtitleArtifactInventory(Protocol):
+    async def list_for_job(self, job_id: UUID) -> tuple[Artifact, ...]: ...
 
 
 class SubtitleHandler(SimulatedStageHandler):
@@ -43,6 +53,7 @@ class DurableSubtitleHandler:
         script_reader: ProductionScriptReader,
         workspace_root: Path,
         clock: Callable[[], datetime],
+        artifact_inventory: SubtitleArtifactInventory | None = None,
         max_subtitle_bytes: int = 1_000_000,
     ) -> None:
         if max_subtitle_bytes < 1:
@@ -50,6 +61,7 @@ class DurableSubtitleHandler:
         self._script_reader = script_reader
         self._confinement = WorkspaceConfinement(workspace_root)
         self._clock = clock
+        self._artifact_inventory = artifact_inventory
         self._max_subtitle_bytes = max_subtitle_bytes
 
     async def execute(
@@ -64,7 +76,15 @@ class DurableSubtitleHandler:
         started_at = self._aware_now()
         try:
             source = await self._script_reader.read_for_scene_planning(context=context)
-            content = _serialize_srt(source.script.scenes)
+            actual_durations = await self._actual_scene_durations(command.job_id)
+            cue_durations = tuple(
+                max(
+                    round(scene.estimated_duration_seconds * 1_000),
+                    actual_durations.get(f"scene-{scene.scene_number:03d}", 0),
+                )
+                for scene in source.script.scenes
+            )
+            content = _serialize_srt(source.script.scenes, cue_durations)
             if len(content) > self._max_subtitle_bytes:
                 raise ValueError("generated subtitles exceed the configured limit")
             relative_path = (
@@ -93,7 +113,7 @@ class DurableSubtitleHandler:
             status=ArtifactStatus.READY,
             size_bytes=size_bytes,
             sha256=sha256,
-            duration_seconds=source.script.target_duration_seconds,
+            duration_seconds=sum(cue_durations) / 1_000,
             provider="orion-simulated-subtitles",
             model_version="deterministic-srt-v1",
             metadata={
@@ -102,6 +122,7 @@ class DurableSubtitleHandler:
                 "simulated": True,
                 "source_script_artifact_id": str(source.artifact_id),
                 "source_script_sha256": source.sha256,
+                "actual_speech_timing": bool(actual_durations),
             },
         )
         finished_at = self._aware_now()
@@ -123,6 +144,33 @@ class DurableSubtitleHandler:
             ),
             artifacts=(artifact,),
         )
+
+    async def _actual_scene_durations(self, job_id: UUID) -> dict[str, int]:
+        if self._artifact_inventory is None:
+            return {}
+        artifacts = await self._artifact_inventory.list_for_job(job_id)
+        candidates = tuple(
+            item
+            for item in artifacts
+            if item.artifact_type is ArtifactType.PRODUCTION_SPEECH_GENERATION_MANIFEST
+            and item.status is ArtifactStatus.READY
+        )
+        if not candidates:
+            return {}
+        artifact = max(candidates, key=lambda item: _manifest_attempt(item.relative_path))
+        target = self._confinement.resolve(artifact.relative_path)
+        self._confinement.reject_unsafe_file(target)
+        content = await asyncio.to_thread(target.read_bytes)
+        if artifact.sha256 != hashlib.sha256(content).hexdigest():
+            raise ValueError("speech manifest checksum differs")
+        manifest = deserialize_speech_manifest(content)
+        if manifest.status is not SpeechGenerationManifestStatus.COMPLETED:
+            raise ValueError("speech manifest is not complete")
+        return {
+            entry.source_scene_id: entry.duration_ms
+            for entry in manifest.entries
+            if entry.duration_ms is not None
+        }
 
     def _write_once(self, relative_path: str, content: bytes) -> tuple[int, str]:
         target = self._confinement.resolve(relative_path)
@@ -192,13 +240,22 @@ class DurableSubtitleHandler:
         return value
 
 
-def _serialize_srt(scenes: tuple[ProductionScriptScene, ...]) -> bytes:
+def _serialize_srt(
+    scenes: tuple[ProductionScriptScene, ...],
+    durations_ms: tuple[int, ...] | None = None,
+) -> bytes:
+    if durations_ms is not None and len(durations_ms) != len(scenes):
+        raise ValueError("subtitle durations must match scenes")
     cue_lines: list[str] = []
     start_ms = 0
     for index, scene in enumerate(scenes, start=1):
-        duration_seconds = scene.estimated_duration_seconds
         narration = " ".join(scene.narration.split())
-        end_ms = start_ms + round(duration_seconds * 1000)
+        duration_ms = (
+            durations_ms[index - 1]
+            if durations_ms is not None
+            else round(scene.estimated_duration_seconds * 1000)
+        )
+        end_ms = start_ms + duration_ms
         cue_lines.extend(
             (
                 str(index),
@@ -216,3 +273,10 @@ def _srt_timestamp(milliseconds: int) -> str:
     minutes, remainder = divmod(remainder, 60_000)
     seconds, millis = divmod(remainder, 1_000)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+
+def _manifest_attempt(relative_path: str) -> int:
+    match = re.search(r"/attempt-([1-9][0-9]*)/", relative_path)
+    if match is None:
+        raise ValueError("speech manifest path has no attempt identity")
+    return int(match.group(1))

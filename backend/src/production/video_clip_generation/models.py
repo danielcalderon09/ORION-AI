@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
@@ -177,6 +177,9 @@ class ProductionVideoClipEntry(ContractModel):
     video_codec: str | None = None
     audio_codec: str | None = None
     has_audio: bool | None = None
+    planned_duration_seconds: float | None = Field(default=None, gt=0, le=600)
+    requested_duration_seconds: float | None = Field(default=None, gt=0, le=600)
+    video_adaptation: Literal["none", "trim", "loop", "freeze"] | None = None
     provider: str | None = None
     requested_model: str | None = None
     reported_model: str | None = None

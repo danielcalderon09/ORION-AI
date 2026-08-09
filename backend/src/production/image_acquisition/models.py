@@ -57,6 +57,7 @@ class ProductionImageAcquisitionEntry(ContractModel):
         pattern=r"^scene-[0-9]{3}-shot-[0-9]{3}$"
     )
     role: VisualAssetRole
+    planned_duration_seconds: float | None = Field(default=None, gt=0, le=600)
     generation_mode: GenerationMode
     status: ImageAcquisitionEntryStatus
     binary_asset_id: str | None = Field(

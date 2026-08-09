@@ -89,6 +89,7 @@ class VerifiedSourceImage(ContractModel):
     scene_number: int
     shot_number: int
     role: str
+    planned_duration_seconds: float | None = Field(default=None, gt=0, le=600)
     content: bytes = Field(repr=False, exclude=True)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -176,7 +177,7 @@ class VideoClipProviderRequest(ContractModel):
     source_role: str = Field(min_length=1, max_length=100)
     source_metadata: dict[str, Any] = Field(default_factory=dict)
     source_image_content: bytes = Field(repr=False, exclude=True, min_length=1)
-    duration_seconds: float = Field(gt=0, le=10)
+    duration_seconds: float = Field(gt=0, le=600)
     frame_rate: int = Field(gt=0, le=120)
     width: int = Field(gt=0, le=16_384)
     height: int = Field(gt=0, le=16_384)

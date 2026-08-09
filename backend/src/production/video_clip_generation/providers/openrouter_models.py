@@ -189,10 +189,17 @@ class OpenRouterVideoProviderConfiguration(ContractModel):
     max_video_bytes: int = Field(default=50_000_000, ge=1, le=250_000_000)
     capability_cache_ttl_seconds: float = Field(default=3600, gt=0, le=86_400)
     max_estimated_cost_usd: Decimal = Field(gt=0, max_digits=18, decimal_places=9)
+    max_estimated_job_cost_usd: Decimal = Field(
+        default=Decimal("1.00"), gt=0, max_digits=18, decimal_places=9
+    )
     max_requests_per_job: int = Field(default=1, ge=1, le=50)
     allow_billable_requests: bool = False
 
-    @field_validator("max_estimated_cost_usd", mode="before")
+    @field_validator(
+        "max_estimated_cost_usd",
+        "max_estimated_job_cost_usd",
+        mode="before",
+    )
     @classmethod
     def reject_float_cost(cls, value: Any) -> Any:
         if isinstance(value, float):

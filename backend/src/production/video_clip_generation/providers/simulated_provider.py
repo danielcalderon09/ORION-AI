@@ -50,6 +50,14 @@ class SimulatedVideoClipGenerationProvider:
         self._maximum = max_output_bytes
         self._closed = False
 
+    async def preflight_job(
+        self,
+        requests: tuple[VideoClipProviderRequest, ...],
+    ) -> tuple[VideoClipProviderRequest, ...]:
+        """Simulated clips support each planned duration without remote billing."""
+
+        return requests
+
     async def generate_clip(self, request: VideoClipProviderRequest) -> VideoClipProviderResponse:
         if self._closed:
             raise VideoClipProviderDependencyException("video clip provider is closed")

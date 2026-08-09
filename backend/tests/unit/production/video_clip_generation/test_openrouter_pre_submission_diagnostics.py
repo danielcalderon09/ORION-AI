@@ -283,7 +283,7 @@ async def test_a_capability_endpoint_failure_is_durable_and_never_submits(
     assert entry.metadata["requested_resolution"] == "720p"
     assert entry.metadata["requested_aspect_ratio"] == "9:16"
     assert entry.metadata["generate_audio"] is False
-    assert entry.metadata["publication_id"].startswith("pub-")
+    assert "publication_id" not in entry.metadata
     assert output.result.metadata["diagnostic_code"] == "capability_http_error"
     serialized = repr(entry.metadata) + repr(output.result.metadata)
     assert "or-test-key-never-real" not in serialized
@@ -308,7 +308,7 @@ async def test_c_unsupported_duration_is_durable_and_never_submits(
     tmp_path,
 ) -> None:
     _, entry, counts, _ = await execute_case(
-        tmp_path, capabilities=[capability(durations=[8])]
+        tmp_path, capabilities=[capability(durations=[3])]
     )
     assert entry.metadata["diagnostic_code"] == "capability_duration_unsupported"
     assert entry.metadata["requested_duration_seconds"] == 4

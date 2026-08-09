@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
@@ -145,7 +146,7 @@ def test_real_narration_extends_short_video_timeline_without_regeneration(
     assert narration.timeline_end_frame == 151
     assert narration.timeline_end_ms == 6_292
     assert plan.subtitle_cues[0].start_ms == 0
-    assert plan.subtitle_cues[0].end_ms == 4_000
+    assert plan.subtitle_cues[0].end_ms == 6_275
 
 
 def test_narration_within_video_keeps_planned_timeline(
@@ -160,6 +161,147 @@ def test_narration_within_video_keeps_planned_timeline(
     assert plan.metadata["narration_extended_timeline"] is False
     assert plan.tracks[0].clips[0].playback_mode == "once"
     assert plan.tracks[1].clips[0].timeline_end_ms == 3_500
+
+
+def test_three_scene_real_narration_shifts_following_tracks_without_overlap(
+    composition_source: MediaCompositionSource,
+) -> None:
+    video_template = next(
+        item for item in composition_source.assets if item.kind is CompositionAssetKind.VIDEO
+    )
+    narration_template = next(
+        item
+        for item in composition_source.assets
+        if item.kind is CompositionAssetKind.NARRATION
+    )
+    music = next(
+        item for item in composition_source.assets if item.kind is CompositionAssetKind.MUSIC
+    ).model_copy(update={"duration_ms": 15_000, "frame_count": 360_000})
+    videos = tuple(
+        video_template.model_copy(
+            update={
+                "asset_id": f"video-scene-{index:03d}",
+                "artifact_id": UUID(f"30000000-0000-4000-8001-{index:012d}"),
+                "relative_path": f"production/test/video-{index}.mp4",
+                "duration_ms": duration,
+                "frame_count": duration * 24 // 1_000,
+                "scene_id": f"scene-{index:03d}",
+                "shot_id": f"scene-{index:03d}-shot-001",
+            }
+        )
+        for index, duration in enumerate((4_000, 6_000, 6_000), start=1)
+    )
+    narrations = tuple(
+        narration_template.model_copy(
+            update={
+                "asset_id": f"speech-scene-{index:03d}",
+                "artifact_id": UUID(f"30000000-0000-4000-8002-{index:012d}"),
+                "relative_path": f"production/test/speech-{index}.wav",
+                "duration_ms": duration,
+                "frame_count": duration * 24,
+                "scene_id": f"scene-{index:03d}",
+            }
+        )
+        for index, duration in enumerate((5_000, 4_000, 6_000), start=1)
+    )
+    subtitle_asset = narration_template.model_copy(
+        update={
+            "asset_id": "subtitles-three-scenes",
+            "artifact_id": UUID("30000000-0000-4000-8003-000000000001"),
+            "kind": CompositionAssetKind.SUBTITLES,
+            "relative_path": "production/test/subtitles.srt",
+            "mime_type": "application/x-subrip",
+            "duration_ms": None,
+            "sample_rate_hz": None,
+            "channel_count": None,
+            "sample_width_bytes": None,
+            "frame_count": None,
+            "scene_id": None,
+        }
+    )
+    assets = tuple(
+        sorted((*videos, *narrations, music, subtitle_asset), key=lambda item: item.asset_id)
+    )
+    validations = tuple(
+        CompositionAssetValidation(
+            asset_id=item.asset_id,
+            availability=CompositionAssetAvailability.AVAILABLE,
+            relative_path=item.relative_path,
+            expected_sha256=item.sha256,
+            actual_sha256=item.sha256,
+        )
+        for item in assets
+    )
+    planned = ((0, 4_000), (4_000, 9_000), (9_000, 15_000))
+    shots = tuple(
+        CompositionShotSource(
+            scene_id=f"scene-{index:03d}",
+            shot_id=f"scene-{index:03d}-shot-001",
+            scene_number=index,
+            shot_number=1,
+            scene_start_ms=start,
+            shot_start_ms=start,
+            shot_end_ms=end,
+            transition_kind="none",
+            transition_duration_ms=0,
+            video_asset_id=videos[index - 1].asset_id,
+        )
+        for index, (start, end) in enumerate(planned, start=1)
+    )
+    narration_sources = tuple(
+        CompositionNarrationSource(
+            scene_id=f"scene-{index:03d}",
+            sequence_index=index - 1,
+            timeline_start_ms=planned[index - 1][0],
+            duration_ms=duration,
+            asset_id=narrations[index - 1].asset_id,
+        )
+        for index, duration in enumerate((5_000, 4_000, 6_000), start=1)
+    )
+    subtitles = CompositionSubtitleSource(
+        asset_id="subtitles-three-scenes",
+        cue_start_ms=(0, 4_000, 9_000),
+        cue_end_ms=(4_000, 9_000, 15_000),
+        cue_text_sha256=("a" * 64, "b" * 64, "c" * 64),
+    )
+    source = composition_source.model_copy(
+        update={
+            "assets": assets,
+            "asset_validation": validations,
+            "shots": shots,
+            "narration": narration_sources,
+            "music": composition_source.music.model_copy(update={"duration_ms": 15_000}),
+            "sound_effects": (),
+            "subtitles": subtitles,
+        }
+    )
+
+    plan = build_media_composition_plan(source, MediaCompositionConfiguration())
+
+    video_clips = plan.tracks[0].clips
+    assert [(item.timeline_start_ms, item.timeline_end_ms) for item in video_clips] == [
+        (0, 5_000),
+        (5_000, 10_000),
+        (10_000, 16_000),
+    ]
+    assert [(item.timeline_start_ms, item.timeline_end_ms) for item in plan.tracks[1].clips] == [
+        (0, 5_000),
+        (5_000, 9_000),
+        (10_000, 16_000),
+    ]
+    assert [(item.start_ms, item.end_ms) for item in plan.subtitle_cues] == [
+        (0, 5_000),
+        (5_000, 10_000),
+        (10_000, 16_000),
+    ]
+    assert plan.output.expected_duration_ms == 16_000
+    assert video_clips[0].playback_mode == "loop"
+    assert video_clips[1].playback_mode == "once"
+    assert plan.metadata["video_adaptations"] == {
+        "clip-video-scene-001-shot-001": "loop",
+        "clip-video-scene-002-shot-001": "trim",
+        "clip-video-scene-003-shot-001": "none",
+    }
 
 
 def test_existing_subtitles_are_aligned_without_copying_text(

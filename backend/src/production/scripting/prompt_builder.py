@@ -21,7 +21,7 @@ class ScriptingPrompt(ContractModel):
 
 
 class ScriptingPromptBuilder:
-    scripting_prompt_version = "2.1.0"
+    scripting_prompt_version = "2.2.0"
     structured_output_mode = "json_schema"
     system_instruction = (
         "Create a production-ready voice-over script from the supplied durable production "
@@ -30,7 +30,10 @@ class ScriptingPromptBuilder:
         "script scene per source scene, including source_scene_number and exact planned "
         "durations. Narration must be clear, non-empty, subtitle-compatible, naturally paced, "
         "and suitable for voice-over. Keep the combined narration across all scenes within the "
-        "exact narration_word_count_policy supplied by the user payload. Do not reference "
+        "exact narration_word_count_policy supplied by the user payload. Every scene must add "
+        "new information while maintaining thematic continuity; do not repeat the introduction. "
+        "For short-form scripts, omit a call to action unless the source plan explicitly requires "
+        "one. Do not reference "
         "unavailable assets, imitate copyrighted "
         "characters, present uncertain facts as certain, reveal hidden reasoning, or include "
         "credentials, system details, executable content, shell commands, filesystem paths, "

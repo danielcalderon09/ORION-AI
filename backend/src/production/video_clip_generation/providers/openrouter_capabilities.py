@@ -50,19 +50,8 @@ class OpenRouterVideoModelCapabilityResolver:
         resolution: str,
         aspect_ratio: str,
     ) -> OpenRouterVideoModelCapability:
-        models = await self._models()
-        capability = next((item for item in models.data if item.id == model), None)
-        if capability is None:
-            raise OpenRouterVideoUnsupportedModelError(
-                "configured OpenRouter video model is unavailable",
-                diagnostic_phase="capability_contract",
-                diagnostic_code="capability_model_not_found",
-                diagnostic_metadata={
-                    "capability_endpoint_status": 200,
-                    "capability_model_found": False,
-                },
-            )
-        incompatible = _incompatible_capability(
+        capability = await self.discover(model=model)
+        incompatible = incompatible_video_capability(
             capability,
             duration=duration,
             resolution=resolution,
@@ -76,6 +65,23 @@ class OpenRouterVideoModelCapabilityResolver:
                 diagnostic_metadata={
                     "capability_endpoint_status": 200,
                     "capability_model_found": True,
+                },
+            )
+        return capability
+
+    async def discover(self, *, model: str) -> OpenRouterVideoModelCapability:
+        """Return one validated catalog model without assuming a requested duration."""
+
+        models = await self._models()
+        capability = next((item for item in models.data if item.id == model), None)
+        if capability is None:
+            raise OpenRouterVideoUnsupportedModelError(
+                "configured OpenRouter video model is unavailable",
+                diagnostic_phase="capability_contract",
+                diagnostic_code="capability_model_not_found",
+                diagnostic_metadata={
+                    "capability_endpoint_status": 200,
+                    "capability_model_found": False,
                 },
             )
         return capability
@@ -138,7 +144,7 @@ class OpenRouterVideoModelCapabilityResolver:
         return models
 
 
-def _incompatible_capability(
+def incompatible_video_capability(
     capability: OpenRouterVideoModelCapability,
     *,
     duration: int,
@@ -154,6 +160,9 @@ def _incompatible_capability(
     if "first_frame" not in capability.supported_frame_images:
         return "capability_first_frame_unsupported"
     return None
+
+
+__all__ = ["OpenRouterVideoModelCapabilityResolver", "incompatible_video_capability"]
 
 
 async def _read_bounded(response: httpx.Response, maximum: int) -> bytes:

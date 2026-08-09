@@ -154,6 +154,16 @@ ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER=disabled
 ORION_ASSET_PUBLISHING_PUBLISHER=null
 ```
 
+Phase 7A adds a distinct aggregate ceiling for multi-scene jobs:
+
+```text
+ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_JOB_COST_USD=1.00
+```
+
+Every planned scene is resolved against model capabilities and the complete
+estimate is authorized before the first paid submission. See
+[`PRODUCTION_MULTI_SCENE_SHORT_PIPELINE.md`](PRODUCTION_MULTI_SCENE_SHORT_PIPELINE.md).
+
 Primary: `google/veo-3.1-lite`.
 
 Future candidates only, with no fallback execution:

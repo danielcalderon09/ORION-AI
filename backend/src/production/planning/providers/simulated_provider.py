@@ -1,5 +1,9 @@
 """Deterministic no-network PlanningProvider used by default."""
 
+from backend.src.production.planning.duration_allocation import (
+    SceneDurationInput,
+    allocate_scene_durations,
+)
 from backend.src.production.planning.models import ProductionPlan, ProductionScenePlan
 from backend.src.production.planning.ports import (
     PlanningProviderRequest,
@@ -14,16 +18,27 @@ class SimulatedPlanningProvider:
     ) -> PlanningProviderResponse:
         config = request.configuration
         count = config.scene_count_hint
-        portion = request.target_duration_seconds / count
-        durations = [portion for _ in range(count)]
-        durations[-1] = request.target_duration_seconds - sum(durations[:-1])
         topic = " ".join(request.prompt.split())
         short_topic = topic[:120]
+        narrations = tuple(
+            f"Narration for scene {index} about {short_topic}." for index in range(1, count + 1)
+        )
+        allocations = allocate_scene_durations(
+            target_duration_ms=round(request.target_duration_seconds * 1_000),
+            scenes=tuple(
+                SceneDurationInput(
+                    scene_id=f"scene-{index:03d}",
+                    scene_number=index,
+                    narration_word_count=len(narrations[index - 1].split()),
+                )
+                for index in range(1, count + 1)
+            ),
+        )
         scenes = tuple(
             ProductionScenePlan(
                 scene_number=index,
                 title=f"Scene {index}: {short_topic[:80]}",
-                narration=f"Narration for scene {index} about {short_topic}.",
+                narration=narrations[index - 1],
                 visual_description=(
                     f"A {config.visual_style} visual illustrating scene {index} of {short_topic}."
                 ),
@@ -32,12 +47,12 @@ class SimulatedPlanningProvider:
                     f"aspect ratio {request.aspect_ratio}"
                 ),
                 motion_instruction="Slow controlled camera movement",
-                estimated_duration_seconds=duration,
+                estimated_duration_seconds=allocation.planned_duration_ms / 1_000,
                 transition="cut" if index < count else "fade_to_black",
                 on_screen_text=short_topic if index == 1 else None,
                 metadata={"simulated": True},
             )
-            for index, duration in enumerate(durations, start=1)
+            for index, allocation in enumerate(allocations, start=1)
         )
         plan = ProductionPlan(
             title=short_topic[:100],

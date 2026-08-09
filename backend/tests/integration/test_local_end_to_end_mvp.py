@@ -33,6 +33,7 @@ async def test_real_local_e2e_produces_validated_mp4_and_resume_does_not_rerende
 
     workspace = tmp_path / "projects"
     settings = Settings(
+        _env_file=None,
         ORION_HOME=tmp_path / "orion-home",
         MODELS_DIR=tmp_path / "models",
         PROJECTS_DIR=workspace,
@@ -74,7 +75,12 @@ async def test_real_local_e2e_produces_validated_mp4_and_resume_does_not_rerende
     )
     try:
         report = await application.run(
-            LocalMvpRequest(prompt="Explica en un video corto tres curiosidades sobre Marte.")
+            LocalMvpRequest(
+                prompt="Crea un short de 15 segundos sobre tres misterios del océano",
+                target_duration_seconds=15,
+                scene_count_hint=3,
+                aspect_ratio="9:16",
+            )
         )
         assert report.success is True, report.failure
         assert report.status is ProductionJobStatus.COMPLETED
@@ -88,11 +94,11 @@ async def test_real_local_e2e_produces_validated_mp4_and_resume_does_not_rerende
         assert hashlib.sha256(content).hexdigest() == output.sha256
         assert output.video_codec == "h264"
         assert output.audio_codec == "aac"
-        assert (output.width, output.height) == (360, 640)
+        assert (output.width, output.height) == (576, 1024)
         assert output.frame_rate_numerator / output.frame_rate_denominator == pytest.approx(
             24, abs=0.01
         )
-        assert output.duration_ms == pytest.approx(8_000, abs=500)
+        assert output.duration_ms == pytest.approx(15_000, abs=500)
 
         artifacts = await container.list_artifacts.execute(report.job_id)
         assert all(
@@ -106,6 +112,43 @@ async def test_real_local_e2e_produces_validated_mp4_and_resume_does_not_rerende
                 for item in artifacts.items
             )
             == 1
+        )
+        assert (
+            sum(
+                item.artifact.artifact_type is ArtifactType.SOURCE_IMAGE
+                for item in artifacts.items
+            )
+            == 3
+        )
+        clip_artifacts = tuple(
+            item.artifact
+            for item in artifacts.items
+            if item.artifact.artifact_type is ArtifactType.SOURCE_VIDEO_CLIP
+        )
+        assert all(item.metadata["planned_duration_seconds"] == 5 for item in clip_artifacts)
+        assert all(item.metadata["requested_duration_seconds"] == 5 for item in clip_artifacts)
+        assert all(item.metadata["video_adaptation"] == "none" for item in clip_artifacts)
+        video_manifest = next(
+            item.artifact
+            for item in artifacts.items
+            if item.artifact.artifact_type
+            is ArtifactType.PRODUCTION_VIDEO_CLIP_MANIFEST
+        )
+        assert video_manifest.metadata["requested_durations_seconds"] == [5, 5, 5]
+        assert video_manifest.metadata["estimated_cost_usd"] == "0"
+        assert (
+            sum(
+                item.artifact.artifact_type is ArtifactType.SOURCE_VIDEO_CLIP
+                for item in artifacts.items
+            )
+            == 3
+        )
+        assert (
+            sum(
+                item.artifact.artifact_type is ArtifactType.NARRATION
+                for item in artifacts.items
+            )
+            == 3
         )
         assert (
             sum(

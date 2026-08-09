@@ -1,5 +1,12 @@
 # Orion AI Validation Roadmap
 
+## Phase 7 — Multi-scene short-form
+
+- **7A (offline):** duration-aware 2–5 scene pipeline, aggregate video budget,
+  all-source preflight, actual narration reconciliation, and per-scene recovery.
+- **7B:** controlled two-scene real provider test.
+- **7C:** controlled three-to-five-scene production short.
+
 ## Phase 6D — OpenRouter image + TTS
 
 Implemented behind the existing acquisition and speech boundaries with fake transports only.

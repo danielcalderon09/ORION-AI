@@ -8,6 +8,7 @@ import json
 import re
 from collections.abc import Callable
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from time import monotonic
 from typing import Protocol
@@ -16,6 +17,9 @@ from uuid import UUID
 
 import httpx
 
+from backend.src.production.video_clip_generation.duration_strategy import (
+    select_provider_duration,
+)
 from backend.src.production.video_clip_generation.exceptions import (
     OpenRouterVideoConfigurationError,
     OpenRouterVideoContentTypeError,
@@ -47,6 +51,7 @@ from backend.src.production.video_clip_generation.providers.openrouter_capabilit
     OpenRouterVideoModelCapabilityResolver,
     _read_bounded,
     _strict_json,
+    incompatible_video_capability,
 )
 from backend.src.production.video_clip_generation.providers.openrouter_error_classifier import (
     raise_for_openrouter_status,
@@ -134,6 +139,84 @@ class OpenRouterVideoClipGenerationProvider:
         self._monotonic = monotonic_clock
         self._owns_client = owns_client
         self._closed = False
+
+    async def preflight_job(
+        self,
+        requests: tuple[VideoClipProviderRequest, ...],
+    ) -> tuple[VideoClipProviderRequest, ...]:
+        """Validate every known scene and its aggregate budget before any publication or POST."""
+
+        if not requests:
+            raise OpenRouterVideoConfigurationError("video preflight requires at least one request")
+        identity = {(request.job_id, request.attempt_number) for request in requests}
+        if len(identity) != 1:
+            raise OpenRouterVideoConfigurationError("video preflight requests must share one job")
+        job_id, _ = next(iter(identity))
+        existing_count = await self._jobs.count_for_job(job_id=job_id)
+        if existing_count + len(requests) > self._config.max_requests_per_job:
+            raise OpenRouterVideoCostPolicyError(
+                "OpenRouter video paid submission limit would be exceeded",
+                diagnostic_phase="aggregate_cost_authorization",
+                diagnostic_code="request_limit_exceeded",
+                diagnostic_metadata={
+                    "planned_request_count": len(requests),
+                    "existing_request_count": existing_count,
+                    "max_requests_per_job": self._config.max_requests_per_job,
+                },
+            )
+        for request in requests:
+            _reject_simulated_source_image(request)
+
+        capability = await self._resolver.discover(model=self._config.model)
+        adjusted: list[VideoClipProviderRequest] = []
+        total = Decimal("0")
+        for request in requests:
+            selected_duration = select_provider_duration(
+                request.duration_seconds,
+                capability.supported_durations,
+            )
+            aspect_ratio = request.configuration.aspect_ratio(
+                request.source_image_width,
+                request.source_image_height,
+            )
+            incompatible = incompatible_video_capability(
+                capability,
+                duration=selected_duration,
+                resolution=self._config.resolution,
+                aspect_ratio=aspect_ratio,
+            )
+            if incompatible is not None:
+                raise OpenRouterVideoConfigurationError(
+                    "configured OpenRouter model does not support a planned scene",
+                    diagnostic_phase="capability_contract",
+                    diagnostic_code=incompatible,
+                )
+            estimated, _ = self._cost_policy.authorize(
+                provider="openrouter",
+                capability=capability,
+                duration_seconds=selected_duration,
+                resolution=self._config.resolution,
+                generate_audio=request.configuration.generate_audio,
+                output_count=1,
+                has_remote_job=False,
+                has_recoverable_clip=False,
+            )
+            total += estimated
+            adjusted.append(request.model_copy(update={"duration_seconds": selected_duration}))
+        if total > self._config.max_estimated_job_cost_usd:
+            raise OpenRouterVideoCostPolicyError(
+                "aggregate OpenRouter video estimate exceeds the configured job limit",
+                diagnostic_phase="aggregate_cost_authorization",
+                diagnostic_code="aggregate_cost_limit_exceeded",
+                diagnostic_metadata={
+                    "estimated_job_cost_usd": str(total),
+                    "max_estimated_job_cost_usd": str(
+                        self._config.max_estimated_job_cost_usd
+                    ),
+                    "planned_request_count": len(requests),
+                },
+            )
+        return tuple(adjusted)
 
     async def generate_clip(self, request: VideoClipProviderRequest) -> VideoClipProviderResponse:
         if self._closed:

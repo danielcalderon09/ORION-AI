@@ -110,6 +110,12 @@ pública manual y cleanup para exponer temporalmente ese root mediante un Quick
 Tunnel externo; consulta
 [`docs/PRODUCTION_TEMPORARY_PUBLICATION.md`](docs/PRODUCTION_TEMPORARY_PUBLICATION.md).
 
+Fase 7A añade el pipeline short-form multi-scene offline: asignación ponderada
+de duración, selección por capabilities, presupuesto agregado antes del primer
+POST, preflight de todos los first frames y reconciliación local de
+narración/subtítulos/timeline. Consulta
+[`docs/PRODUCTION_MULTI_SCENE_SHORT_PIPELINE.md`](docs/PRODUCTION_MULTI_SCENE_SHORT_PIPELINE.md).
+
 GENERATING_NARRATION consume el `ProductionScript` durable y crea un WAV PCM
 por escena, con manifest CAS, sidecars, checksum, recovery e idempotencia. El
 default sigue siendo `simulated`; Phase 6D agrega Kokoro sobre OpenRouter como

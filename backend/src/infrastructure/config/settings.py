@@ -138,6 +138,7 @@ class Settings(BaseSettings):
     ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_VIDEO_BYTES: int = 50_000_000
     ORION_VIDEO_CLIP_GENERATION_OPENROUTER_CAPABILITY_CACHE_TTL_SECONDS: float = 3600
     ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD: Decimal = Decimal("1.00")
+    ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_JOB_COST_USD: Decimal = Decimal("1.00")
     ORION_VIDEO_CLIP_GENERATION_MAX_REQUESTS_PER_JOB: int = 1
     ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS: bool = False
     ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER: Literal["disabled", "filesystem"] = "disabled"
@@ -595,6 +596,8 @@ class Settings(BaseSettings):
             raise ValueError("OpenRouter video poll attempts are outside safe limits")
         if self.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD <= 0:
             raise ValueError("OpenRouter video maximum cost must be positive")
+        if self.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_JOB_COST_USD <= 0:
+            raise ValueError("OpenRouter video maximum job cost must be positive")
         if not 1 <= self.ORION_VIDEO_CLIP_GENERATION_MAX_REQUESTS_PER_JOB <= 50:
             raise ValueError("OpenRouter video request limit is outside safe bounds")
         parsed_video_url = urlsplit(self.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_BASE_URL)
