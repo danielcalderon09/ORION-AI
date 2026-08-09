@@ -78,8 +78,39 @@ def test_prompt_is_deterministic_strict_and_excludes_internal_metadata(
     builder = ScriptingPromptBuilder(max_plan_bytes=100_000)
     first = builder.build(scripting_request)
     assert first == builder.build(scripting_request)
-    assert first.version == "2.0.0"
+    assert first.version == "2.1.0"
     assert first.response_schema["additionalProperties"] is False
-    assert "metadata" not in json.loads(first.user)["source_plan"]
+    user_payload = json.loads(first.user)
+    assert "metadata" not in user_payload["source_plan"]
+    assert user_payload["narration_word_count_policy"] == {
+        "maximum_total_words": 80,
+        "minimum_total_words": 10,
+        "scope": "all_scenes_combined",
+    }
     with pytest.raises(ValueError, match="prompt limit"):
         ScriptingPromptBuilder(max_plan_bytes=10).build(scripting_request)
+
+
+def test_four_second_prompt_exposes_the_exact_short_narration_bound(
+    scripting_request,
+) -> None:
+    source_scene = scripting_request.plan.scenes[0]
+    short_plan = scripting_request.plan.model_copy(
+        update={
+            "target_duration_seconds": 4,
+            "scenes": (
+                source_scene.model_copy(update={"estimated_duration_seconds": 4}),
+            ),
+        }
+    )
+    short_request = scripting_request.model_copy(
+        update={"plan": short_plan, "target_duration_seconds": 4}
+    )
+
+    prompt = ScriptingPromptBuilder(max_plan_bytes=100_000).build(short_request)
+
+    assert json.loads(prompt.user)["narration_word_count_policy"] == {
+        "maximum_total_words": 16,
+        "minimum_total_words": 2,
+        "scope": "all_scenes_combined",
+    }

@@ -38,6 +38,21 @@ async def _valid_script(scripting_request) -> dict[str, object]:
     return response.script.model_dump(mode="json")
 
 
+def _four_second_request(scripting_request):
+    source_scene = scripting_request.plan.scenes[0]
+    short_plan = scripting_request.plan.model_copy(
+        update={
+            "target_duration_seconds": 4,
+            "scenes": (
+                source_scene.model_copy(update={"estimated_duration_seconds": 4}),
+            ),
+        }
+    )
+    return scripting_request.model_copy(
+        update={"plan": short_plan, "target_duration_seconds": 4}
+    )
+
+
 def _envelope(content: dict[str, object] | str) -> dict[str, object]:
     text = content if isinstance(content, str) else json.dumps(content)
     return {
@@ -360,6 +375,50 @@ async def test_duration_policy_error_is_classified(scripting_request) -> None:
     assert record.validation_error_message == (
         "script narration exceeds the requested duration policy"
     )
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_observed_four_second_overlong_output_is_rejected_durably(
+    scripting_request,
+) -> None:
+    short_request = _four_second_request(scripting_request)
+    payload = await _valid_script(short_request)
+    payload["scenes"][0]["narration"] = " ".join("word" for _ in range(17))
+    provider, store = _provider(
+        lambda request: httpx.Response(200, json=_envelope(payload), request=request)
+    )
+
+    with pytest.raises(ScriptingProviderContractError):
+        await provider.generate_script(short_request)
+
+    record = _record(store)
+    assert record.status is OpenRouterScriptingRequestStatus.FAILED
+    assert record.fresh_submission_permitted is False
+    assert record.validation_error_code is OpenRouterScriptingValidationErrorCode.DURATION_POLICY
+    assert record.validation_error_path == "scenes"
+    assert record.validation_error_message == (
+        "script narration exceeds the requested duration policy"
+    )
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_four_second_single_scene_structured_output_is_valid(
+    scripting_request,
+) -> None:
+    short_request = _four_second_request(scripting_request)
+    payload = await _valid_script(short_request)
+    payload["scenes"][0]["narration"] = "Marte guarda volcanes, polvo y huellas de agua antigua."
+    provider, store = _provider(
+        lambda request: httpx.Response(200, json=_envelope(payload), request=request)
+    )
+
+    response = await provider.generate_script(short_request)
+
+    assert response.script.target_duration_seconds == 4
+    assert len(response.script.scenes) == 1
+    assert _record(store).status is OpenRouterScriptingRequestStatus.COMPLETED
     await provider.close()
 
 
