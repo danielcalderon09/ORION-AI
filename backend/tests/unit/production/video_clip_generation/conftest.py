@@ -243,6 +243,8 @@ async def durable_source(root: Path, *, width: int = 64, height: int = 64):
         sha256=binary.sha256,
         width=binary.width,
         height=binary.height,
+        provider="orion-simulated",
+        model_version="simulated-image-v1",
         metadata={
             "source_visual_asset_plan_artifact_id": str(VISUAL_PLAN_ID),
             "source_visual_asset_plan_sha256": "b" * 64,

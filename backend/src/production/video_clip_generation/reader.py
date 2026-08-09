@@ -69,6 +69,29 @@ _SOURCE_METADATA_ALLOWLIST = frozenset(
 )
 
 
+def _source_provenance_metadata(
+    *,
+    provider: str | None,
+    model: str | None,
+    artifact_metadata: dict[str, Any],
+    binary_attributes: dict[str, Any],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    if provider is not None:
+        result["provider"] = provider
+    if model is not None:
+        result["model"] = model
+    simulation_markers = (
+        artifact_metadata.get("simulated"),
+        binary_attributes.get("simulated"),
+    )
+    if any(marker is True for marker in simulation_markers):
+        result["simulated"] = True
+    elif any(marker is False for marker in simulation_markers):
+        result["simulated"] = False
+    return result
+
+
 class DurableImageAcquisitionManifestReader:
     def __init__(
         self,
@@ -174,6 +197,12 @@ class DurableImageAcquisitionManifestReader:
                     role=entry.role.value,
                     content=resolved.content,
                     metadata={
+                        **_source_provenance_metadata(
+                            provider=artifact.provider or binary.metadata.provider,
+                            model=artifact.model_version or binary.metadata.model_version,
+                            artifact_metadata=metadata,
+                            binary_attributes=binary.metadata.attributes,
+                        ),
                         "source_visual_asset_plan_artifact_id": str(
                             manifest.source_visual_asset_plan_artifact_id
                         ),

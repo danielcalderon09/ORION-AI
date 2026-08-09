@@ -107,5 +107,7 @@ class SQLAlchemyImageAcquisitionManifestQueryRepository:
                 sha256=record.sha256,
                 width=record.width,
                 height=record.height,
+                provider=record.provider,
+                model_version=record.model_version,
                 metadata=record.metadata_json,
             )

@@ -178,6 +178,8 @@ class OpenRouterVideoClipGenerationProvider:
             )
             if previous is not None:
                 existing = previous
+        if existing is None or existing.request_status is OpenRouterVideoRequestStatus.PREPARED:
+            _reject_simulated_source_image(request)
         if existing is not None:
             self._validate_recovery(existing, request, prompt.sha256)
             if existing.request_status is OpenRouterVideoRequestStatus.PREPARED:
@@ -788,6 +790,29 @@ def _integer_duration(value: float) -> int:
             "OpenRouter video duration must be a whole number of seconds"
         )
     return result
+
+
+def _reject_simulated_source_image(request: VideoClipProviderRequest) -> None:
+    metadata = request.source_metadata
+    provider = metadata.get("provider")
+    model = metadata.get("model")
+    simulated = metadata.get("simulated")
+    if (
+        simulated is not True
+        and provider != "orion-simulated"
+        and model != "simulated-image-v1"
+    ):
+        return
+    raise OpenRouterVideoConfigurationError(
+        "Billable OpenRouter video rejects a simulated first-frame asset",
+        diagnostic_phase="source_validation",
+        diagnostic_code="simulated_source_asset_not_billable",
+        diagnostic_metadata={
+            "source_asset_provider": provider if isinstance(provider, str) else None,
+            "source_asset_model": model if isinstance(model, str) else None,
+            "source_asset_simulated": simulated if isinstance(simulated, bool) else None,
+        },
+    )
 
 
 def _validate_base_url(value: str) -> None:

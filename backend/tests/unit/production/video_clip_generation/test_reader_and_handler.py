@@ -118,6 +118,9 @@ async def test_reader_validates_manifest_source_sidecar_and_allowlist(tmp_path) 
     read = await reader.read_for_video_clip_generation(context=context)
     assert read.artifact_id == MANIFEST_ID
     assert read.source_images[0].content == source.source_images[0].content
+    assert read.source_images[0].metadata["simulated"] is True
+    assert read.source_images[0].metadata["provider"] == "orion-simulated"
+    assert read.source_images[0].metadata["model"] == "simulated-image-v1"
     assert "unsafe_ignored" not in read.metadata
 
 

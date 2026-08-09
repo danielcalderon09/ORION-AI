@@ -911,6 +911,9 @@ class VideoClipGenerationHandler:
             "estimated_cost_usd",
             "max_estimated_cost_usd",
             "publication_id",
+            "source_asset_provider",
+            "source_asset_model",
+            "source_asset_simulated",
         }
         metadata.update(
             {
@@ -949,6 +952,8 @@ def _pre_submission_error_code(error: OpenRouterVideoError) -> str | None:
         return "video_clip_capability_error"
     if phase in {"request_construction", "configuration"}:
         return "video_clip_request_invalid"
+    if phase == "source_validation":
+        return "video_clip_source_invalid"
     if phase == "pre_submission":
         return "video_clip_provider_contract"
     return None

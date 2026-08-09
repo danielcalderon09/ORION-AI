@@ -110,8 +110,22 @@ async def execute_case(
     *,
     discovery_status: int = 200,
     capabilities: list[dict[str, object]] | None = None,
+    source_metadata: dict[str, object] | None = None,
 ) -> tuple[Any, Any, dict[str, int], RecordingRemoteStore]:
     source, _, _ = await durable_source(tmp_path, width=576, height=1024)
+    provenance = source_metadata or {
+        "simulated": False,
+        "provider": "openrouter",
+        "model": "google/gemini-3.1-flash-lite-image",
+    }
+    source = source.model_copy(
+        update={
+            "source_images": tuple(
+                image.model_copy(update={"metadata": provenance})
+                for image in source.source_images
+            )
+        }
+    )
     counts = {"discovery": 0, "post": 0}
 
     async def transport_handler(request: httpx.Request) -> httpx.Response:
@@ -216,6 +230,42 @@ async def execute_case(
 
 async def _no_sleep() -> None:
     return None
+
+
+@pytest.mark.parametrize(
+    "source_metadata",
+    [
+        {"simulated": True},
+        {"provider": "orion-simulated"},
+        {"model": "simulated-image-v1"},
+    ],
+)
+@pytest.mark.asyncio
+async def test_simulated_source_is_durably_rejected_before_any_remote_request(
+    tmp_path,
+    source_metadata: dict[str, object],
+) -> None:
+    output, entry, counts, jobs = await execute_case(
+        tmp_path,
+        source_metadata=source_metadata,
+    )
+    assert output.result.outcome is StageOutcome.FAILED_PERMANENT
+    assert output.result.error_code == "video_clip_source_invalid"
+    assert output.result.metadata["diagnostic_code"] == (
+        "simulated_source_asset_not_billable"
+    )
+    assert entry.error_code == "video_clip_source_invalid"
+    assert entry.metadata["phase"] == "source_validation"
+    assert entry.metadata["diagnostic_code"] == "simulated_source_asset_not_billable"
+    durable_field = {
+        "simulated": "source_asset_simulated",
+        "provider": "source_asset_provider",
+        "model": "source_asset_model",
+    }
+    for key, value in source_metadata.items():
+        assert entry.metadata[durable_field[key]] == value
+    assert counts == {"discovery": 0, "post": 0}
+    assert jobs.created == []
 
 
 @pytest.mark.asyncio

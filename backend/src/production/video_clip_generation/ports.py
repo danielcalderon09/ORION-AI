@@ -52,6 +52,8 @@ class SourceImageArtifactCandidate(ContractModel):
     sha256: str | None
     width: int | None
     height: int | None
+    provider: str | None = Field(default=None, min_length=1, max_length=200)
+    model_version: str | None = Field(default=None, min_length=1, max_length=300)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
