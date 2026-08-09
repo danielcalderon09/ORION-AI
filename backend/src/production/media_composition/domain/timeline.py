@@ -6,6 +6,7 @@ import math
 from collections.abc import Mapping
 from fractions import Fraction
 
+from backend.src.production.domain.duration_resolution import DurationResolutionPolicy
 from backend.src.production.media_composition.configuration import (
     MediaCompositionConfiguration,
 )
@@ -47,7 +48,13 @@ def build_media_composition_plan(
     configuration: MediaCompositionConfiguration,
 ) -> MediaCompositionPlan:
     original_planned_total_ms = source.shots[-1].shot_end_ms
-    source, scene_timings = reconcile_scene_durations(source)
+    source, scene_timings = reconcile_scene_durations(
+        source,
+        policy=DurationResolutionPolicy(
+            maximum_absolute_extension_ms=configuration.maximum_absolute_extension_ms,
+            maximum_relative_extension_ratio=configuration.maximum_relative_extension_ratio,
+        ),
+    )
     assets = {item.asset_id: item for item in source.assets}
     video_assets = [assets[shot.video_asset_id] for shot in source.shots]
     video_metadata = [_video_metadata(item) for item in video_assets]
@@ -55,10 +62,7 @@ def build_media_composition_plan(
     height = _single_value("video height", tuple(item[1] for item in video_metadata))
     frame_rate = _single_value("video frame rate", tuple(item[2] for item in video_metadata))
     planned_total_ms = source.shots[-1].shot_end_ms
-    narration_total_ms = max(
-        item.timeline_start_ms + item.duration_ms for item in source.narration
-    )
-    total_ms = max(planned_total_ms, narration_total_ms)
+    total_ms = planned_total_ms
     total_frames = _ms_to_frames(total_ms, frame_rate)
     if total_frames <= 0:
         raise MediaCompositionPlanError("timeline duration must be positive")
@@ -122,7 +126,7 @@ def build_media_composition_plan(
         ),
     )
     transitions = _transitions(source, video_clips, frame_rate)
-    ducking = _ducking(source, configuration)
+    ducking = _ducking(source, narration_clips, configuration)
     output = OutputVideoSpecification(
         width=width,
         height=height,
@@ -162,7 +166,13 @@ def build_media_composition_plan(
         metadata={
             "content_generation": False,
             "narration_extended_timeline": total_ms > original_planned_total_ms,
+            "narration_time_stretched": any(
+                clip.playback_rate > 1.0 for clip in narration_clips
+            ),
             "planned_duration_ms": original_planned_total_ms,
+            "requested_target_duration_ms": original_planned_total_ms,
+            "resolved_duration_ms": total_ms,
+            "target_duration_authoritative": False,
             "reconciled_scene_count": len(scene_timings),
             "video_adaptations": _video_adaptations(video_clips, assets),
             "renderer_neutral": True,
@@ -194,7 +204,6 @@ def _video_clips(
             raise MediaCompositionPlanError("video asset duration is missing")
         source_frames = _ms_to_frames(asset.duration_ms, frame_rate)
         timeline_frames = end - start
-        loop_count = max(1, (timeline_frames + source_frames - 1) // source_frames)
         clips.append(
             CompositionClip(
                 clip_id=f"clip-video-{shot.shot_id}",
@@ -208,8 +217,8 @@ def _video_clips(
                 timeline_start_ms=_frames_to_ms(start, frame_rate),
                 timeline_end_ms=_frames_to_ms(end, frame_rate),
                 source_out_frame=min(source_frames, timeline_frames),
-                playback_mode="loop" if loop_count > 1 else "once",
-                loop_count=loop_count,
+                playback_mode="once",
+                loop_count=1,
             )
         )
         previous_end = end
@@ -223,10 +232,21 @@ def _narration_clips(
     total_ms: int,
 ) -> tuple[CompositionClip, ...]:
     clips = []
+    scene_ends = {
+        shot.scene_id: max(
+            candidate.shot_end_ms
+            for candidate in source.shots
+            if candidate.scene_id == shot.scene_id
+        )
+        for shot in source.shots
+    }
     for item in source.narration:
-        end_ms = item.timeline_start_ms + item.duration_ms
-        if end_ms > total_ms:
-            raise MediaCompositionPlanError("narration extends beyond the timeline")
+        available_ms = min(scene_ends[item.scene_id], total_ms) - item.timeline_start_ms
+        if available_ms <= 0:
+            raise MediaCompositionPlanError("narration has no available scene duration")
+        rendered_duration_ms = min(item.duration_ms, available_ms)
+        end_ms = item.timeline_start_ms + rendered_duration_ms
+        playback_rate = item.duration_ms / rendered_duration_ms
         start = _ms_to_frames(item.timeline_start_ms, frame_rate)
         end = _ms_to_frames(end_ms, frame_rate)
         clips.append(
@@ -240,6 +260,7 @@ def _narration_clips(
                 timeline_end_frame=end,
                 timeline_start_ms=_frames_to_ms(start, frame_rate),
                 timeline_end_ms=_frames_to_ms(end, frame_rate),
+                playback_rate=playback_rate,
                 volume_envelope=VolumeEnvelope(base_gain_db=configuration.narration_gain_db),
             )
         )
@@ -408,6 +429,7 @@ def _transitions(
 
 def _ducking(
     source: MediaCompositionSource,
+    narration_clips: tuple[CompositionClip, ...],
     configuration: MediaCompositionConfiguration,
 ) -> tuple[DuckingInstruction, ...]:
     if source.music is None or not source.music.duck_under_narration:
@@ -416,12 +438,12 @@ def _ducking(
         DuckingInstruction(
             instruction_id=f"duck-{index + 1:04d}",
             start_ms=item.timeline_start_ms,
-            end_ms=item.timeline_start_ms + item.duration_ms,
+            end_ms=item.timeline_end_ms,
             target_gain_db=configuration.music_duck_gain_db,
-            attack_ms=min(100, item.duration_ms // 4),
-            release_ms=min(200, item.duration_ms // 4),
+            attack_ms=min(100, (item.timeline_end_ms - item.timeline_start_ms) // 4),
+            release_ms=min(200, (item.timeline_end_ms - item.timeline_start_ms) // 4),
         )
-        for index, item in enumerate(source.narration)
+        for index, item in enumerate(narration_clips)
     )
 
 
@@ -444,10 +466,10 @@ def _video_adaptations(
         if not isinstance(asset_duration, int):
             raise MediaCompositionPlanError("video asset duration is missing")
         timeline_duration = clip.timeline_end_ms - clip.timeline_start_ms
-        if clip.playback_mode == "loop":
-            adaptation = "loop"
-        elif asset_duration > timeline_duration:
+        if asset_duration > timeline_duration:
             adaptation = "trim"
+        elif asset_duration < timeline_duration:
+            adaptation = "freeze"
         else:
             adaptation = "none"
         adaptations[clip.clip_id] = adaptation

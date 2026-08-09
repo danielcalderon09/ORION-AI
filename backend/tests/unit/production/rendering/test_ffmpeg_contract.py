@@ -293,7 +293,7 @@ def test_ffmpeg_request_and_execution_plan_are_deterministic(tmp_path: Path) -> 
         build_ffmpeg_execution_plan(ffmpeg, unsupported, context, configuration)
 
 
-def test_ffmpeg_plan_trims_looped_video_to_fifteen_second_timeline() -> None:
+def test_ffmpeg_plan_freezes_short_video_without_replay() -> None:
     verified = make_verified_source(composition_source=_fifteen_second_looping_source())
     configuration = RenderingConfiguration(renderer=RendererKind.FFMPEG)
     request = build_local_render_request(verified, configuration)
@@ -304,10 +304,51 @@ def test_ffmpeg_plan_trims_looped_video_to_fifteen_second_timeline() -> None:
 
     assert request.expected_duration_ms == 15_000
     assert request.expected_duration_frames == 360
-    assert plan.argument_vector.count("-stream_loop") == 2
-    assert filters.count("trim=start=0:duration=7.5") == 2
-    assert "trim=start=0:end=4" not in filters
+    assert plan.argument_vector.count("-stream_loop") == 0
+    assert filters.count("trim=start=0:duration=4") == 2
+    assert filters.count("tpad=stop_mode=clone:stop_duration=3.5") == 2
     assert plan.argument_vector[plan.argument_vector.index("-t") + 1] == "15"
+
+
+def test_ffmpeg_preserves_natural_narration_and_freezes_last_video_frame() -> None:
+    source = make_source()
+    assets = tuple(
+        item.model_copy(
+            update={"duration_ms": 4_500, "frame_count": 108_000}
+        )
+        if item.kind is CompositionAssetKind.NARRATION
+        else item
+        for item in source.assets
+        if item.kind in {CompositionAssetKind.VIDEO, CompositionAssetKind.NARRATION}
+    )
+    asset_ids = {item.asset_id for item in assets}
+    source = source.model_copy(
+        update={
+            "assets": tuple(sorted(assets, key=lambda item: item.asset_id)),
+            "asset_validation": tuple(
+                item for item in source.asset_validation if item.asset_id in asset_ids
+            ),
+            "narration": (
+                source.narration[0].model_copy(update={"duration_ms": 4_500}),
+            ),
+            "music": None,
+            "sound_effects": (),
+        }
+    )
+    verified = make_verified_source(composition_source=source)
+    configuration = RenderingConfiguration(renderer=RendererKind.FFMPEG)
+    request = build_local_render_request(verified, configuration)
+    _, context = make_render_command_context()
+
+    plan = build_ffmpeg_execution_plan(request, verified.plan, context, configuration)
+    filters = plan.argument_vector[plan.argument_vector.index("-filter_complex") + 1]
+
+    assert request.expected_duration_ms == 4_500
+    assert "atrim=duration=4.5" in filters
+    assert "atempo=" not in filters
+    assert "tpad=stop_mode=clone:stop_duration=0.5" in filters
+    assert plan.argument_vector.count("-stream_loop") == 0
+    assert plan.argument_vector[plan.argument_vector.index("-t") + 1] == "4.5"
 
 
 @pytest.mark.asyncio
@@ -395,7 +436,8 @@ async def test_real_jpeg_vertical_clip_normalizes_range_for_render(
         if identity == "ffmpeg" and "-filter_complex" in arguments
     )
     filters = ffmpeg_arguments[ffmpeg_arguments.index("-filter_complex") + 1]
-    assert "trim=start=0:duration=15" in filters
+    assert "trim=start=0:duration=4" in filters
+    assert "tpad=stop_mode=clone:stop_duration=11" in filters
     assert "scale=768:1376:force_original_aspect_ratio=decrease:out_range=tv" in filters
     assert "format=yuv420p" in filters
 

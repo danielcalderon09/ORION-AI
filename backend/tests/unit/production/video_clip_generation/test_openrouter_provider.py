@@ -183,6 +183,72 @@ def multi_scene_requests() -> tuple[VideoClipProviderRequest, ...]:
     )
 
 
+def audio_first_two_scene_requests() -> tuple[VideoClipProviderRequest, ...]:
+    return tuple(
+        request.model_copy(update={"duration_seconds": duration})
+        for request, duration in zip(
+            multi_scene_requests()[:2],
+            (4.25, 5.0),
+            strict=True,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_audio_first_aggregate_budget_rejects_before_first_video_post() -> None:
+    observations: list[tuple[str, str]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        observations.append((request.method, request.url.path))
+        assert request.method == "GET"
+        return response(request, 200, multi_scene_models_body())
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://openrouter.ai",
+    ) as client:
+        provider, jobs, _ = provider_for(
+            client,
+            max_requests_per_job=2,
+            max_estimated_job_cost_usd=Decimal("0.25"),
+        )
+        with pytest.raises(OpenRouterVideoCostPolicyError) as captured:
+            await provider.preflight_job(audio_first_two_scene_requests())
+
+    assert captured.value.diagnostic_code == "aggregate_cost_limit_exceeded"
+    assert captured.value.diagnostic_metadata["estimated_job_cost_usd"] == "0.36"
+    assert not jobs.records
+    assert all(method != "POST" for method, _ in observations)
+
+
+@pytest.mark.asyncio
+async def test_audio_first_accepted_budget_selects_six_second_clips() -> None:
+    observations: list[tuple[str, str]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        observations.append((request.method, request.url.path))
+        assert request.method == "GET"
+        return response(request, 200, multi_scene_models_body())
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://openrouter.ai",
+    ) as client:
+        provider, jobs, _ = provider_for(
+            client,
+            max_requests_per_job=2,
+            max_estimated_job_cost_usd=Decimal("0.40"),
+        )
+        planned = await provider.preflight_job(audio_first_two_scene_requests())
+
+    assert tuple(request.duration_seconds for request in planned) == (6.0, 6.0)
+    assert Decimal("0.03") * sum(
+        Decimal(str(request.duration_seconds)) for request in planned
+    ) == Decimal("0.36")
+    assert not jobs.records
+    assert observations == [("GET", "/api/v1/videos/models")]
+
+
 @pytest.mark.asyncio
 async def test_multi_scene_preflight_selects_durations_and_authorizes_aggregate() -> None:
     observations: list[tuple[str, str]] = []
@@ -361,6 +427,39 @@ async def test_mock_multi_scene_generation_reaches_three_unique_prepared_records
         method == "POST" and path == "/api/v1/videos"
         for method, path, _ in observations
     ) == 3
+
+
+@pytest.mark.asyncio
+async def test_audio_first_accepted_budget_creates_two_six_second_remote_jobs() -> None:
+    observations: list[tuple[str, str, dict[str, Any] | None]] = []
+    async with httpx.AsyncClient(
+        transport=successful_transport(
+            observations,
+            models_payload=multi_scene_models_body(),
+        ),
+        base_url="https://openrouter.ai",
+        follow_redirects=False,
+    ) as client:
+        provider, jobs, _ = provider_for(
+            client,
+            max_requests_per_job=2,
+            max_estimated_job_cost_usd=Decimal("0.40"),
+        )
+        planned = await provider.preflight_job(audio_first_two_scene_requests())
+        for request in planned:
+            await provider.generate_clip(request)
+
+    records = tuple(jobs.records.values())
+    assert len(records) == 2
+    assert tuple(record.requested_duration_seconds for record in records) == (6, 6)
+    assert tuple(record.estimated_cost_usd for record in records) == (
+        Decimal("0.18"),
+        Decimal("0.18"),
+    )
+    assert sum(
+        method == "POST" and path == "/api/v1/videos"
+        for method, path, _ in observations
+    ) == 2
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ from pydantic import Field, field_validator, model_validator
 
 from backend.src.production.application.sanitization import validate_safe_json
 from backend.src.production.domain.base import ContractModel
+from backend.src.production.domain.duration_resolution import DurableDurationResolution
 from backend.src.production.domain.enums import ArtifactType
 from backend.src.production.image_acquisition.models import (
     ProductionImageAcquisitionManifest,
@@ -90,6 +91,8 @@ class VerifiedSourceImage(ContractModel):
     shot_number: int
     role: str
     planned_duration_seconds: float | None = Field(default=None, gt=0, le=600)
+    resolved_duration_seconds: float | None = Field(default=None, gt=0, le=600)
+    actual_narration_duration_ms: int | None = Field(default=None, ge=0, le=600_000)
     content: bytes = Field(repr=False, exclude=True)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -118,6 +121,7 @@ class ReadImageAcquisitionManifest(ContractModel):
     size_bytes: int
     schema_version: str
     source_images: tuple[VerifiedSourceImage, ...]
+    duration_resolution: DurableDurationResolution | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("metadata")
@@ -160,6 +164,10 @@ class ImageAcquisitionManifestReader(Protocol):
     async def read_for_video_clip_generation(
         self, *, context: StageContext
     ) -> ReadImageAcquisitionManifest: ...
+
+
+class VideoDurationResolutionReader(Protocol):
+    async def read_for_job(self, job_id: UUID) -> DurableDurationResolution | None: ...
 
 
 class VideoClipProviderRequest(ContractModel):

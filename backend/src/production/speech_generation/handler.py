@@ -10,6 +10,12 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from backend.src.production.application.commands import StageCommand
 from backend.src.production.application.results import StageOutcome, StageResult
 from backend.src.production.domain.artifact import Artifact
+from backend.src.production.domain.duration_resolution import (
+    DurationResolutionError,
+    DurationResolutionPolicy,
+    durable_duration_resolution,
+    resolve_audio_first_durations,
+)
 from backend.src.production.domain.enums import (
     ArtifactStatus,
     ArtifactType,
@@ -78,6 +84,7 @@ class SpeechGenerationHandler:
         manifest_writer: SpeechManifestWriter,
         configuration: SpeechGenerationConfiguration,
         clock: Callable[[], datetime],
+        duration_resolution_policy: DurationResolutionPolicy | None = None,
     ) -> None:
         self._reader = script_reader
         self._provider = provider
@@ -85,6 +92,9 @@ class SpeechGenerationHandler:
         self._writer = manifest_writer
         self._configuration = configuration
         self._clock = clock
+        self._duration_resolution_policy = (
+            duration_resolution_policy or DurationResolutionPolicy()
+        )
 
     async def execute(
         self,
@@ -310,9 +320,55 @@ class SpeechGenerationHandler:
                         "speech_segment_generation_failed",
                     )
 
+            scene_ids = tuple(entry.source_scene_id for entry in manifest.entries)
+            planned_durations = tuple(
+                entry.target_duration_ms or 0 for entry in manifest.entries
+            )
+            narration_durations = tuple(
+                entry.duration_ms or 0 for entry in manifest.entries
+            )
+            try:
+                resolution = resolve_audio_first_durations(
+                    requested_target_duration_ms=sum(planned_durations),
+                    planned_scene_durations_ms=planned_durations,
+                    narration_scene_durations_ms=narration_durations,
+                    policy=self._duration_resolution_policy,
+                )
+            except DurationResolutionError as exc:
+                rejected = durable_duration_resolution(
+                    scene_ids=scene_ids,
+                    planned_scene_durations_ms=planned_durations,
+                    narration_scene_durations_ms=narration_durations,
+                    resolution=exc.resolution,
+                )
+                failed = manifest.model_copy(
+                    update={
+                        "status": SpeechGenerationManifestStatus.FAILED,
+                        "duration_resolution": rejected,
+                        "updated_at": self._aware_now(),
+                    }
+                )
+                await self._writer.checkpoint(
+                    context=context,
+                    previous=manifest,
+                    current=failed,
+                )
+                return self._failure(
+                    command,
+                    started_at,
+                    StageOutcome.FAILED_PERMANENT,
+                    "duration_resolution_invalid",
+                )
+            durable_resolution = durable_duration_resolution(
+                scene_ids=scene_ids,
+                planned_scene_durations_ms=planned_durations,
+                narration_scene_durations_ms=narration_durations,
+                resolution=resolution,
+            )
             completed = manifest.model_copy(
                 update={
                     "status": SpeechGenerationManifestStatus.COMPLETED,
+                    "duration_resolution": durable_resolution,
                     "updated_at": self._aware_now(),
                 }
             )
@@ -676,6 +732,21 @@ class SpeechGenerationHandler:
                     "segment_count": manifest.summary.total,
                     "stored_count": manifest.summary.stored,
                     "total_duration_ms": manifest.summary.total_duration_ms,
+                    "requested_target_duration_ms": (
+                        manifest.duration_resolution.requested_target_duration_ms
+                        if manifest.duration_resolution is not None
+                        else None
+                    ),
+                    "resolved_duration_ms": (
+                        manifest.duration_resolution.resolved_duration_ms
+                        if manifest.duration_resolution is not None
+                        else None
+                    ),
+                    "maximum_allowed_duration_ms": (
+                        manifest.duration_resolution.maximum_allowed_duration_ms
+                        if manifest.duration_resolution is not None
+                        else None
+                    ),
                     "language": manifest.requested_language,
                     "voice": manifest.requested_voice,
                     "sample_rate_hz": self._configuration.sample_rate_hz,
@@ -700,6 +771,11 @@ class SpeechGenerationHandler:
                     "provider": self._configuration.provider,
                     "segment_count": manifest.summary.total,
                     "total_duration_ms": manifest.summary.total_duration_ms,
+                    "resolved_duration_ms": (
+                        manifest.duration_resolution.resolved_duration_ms
+                        if manifest.duration_resolution is not None
+                        else None
+                    ),
                     "language": manifest.requested_language,
                     "voice": manifest.requested_voice,
                     "sample_rate_hz": self._configuration.sample_rate_hz,

@@ -115,6 +115,54 @@ class VideoClipGenerationHandler:
             else:
                 self._validate_manifest_source(manifest, source)
 
+            stored_assets: dict[str, ProductionVideoClipAsset] = {}
+            initially_pending = tuple(
+                image
+                for image in source.source_images
+                if _entry_for(manifest, image.visual_asset_id).status
+                is VideoClipEntryStatus.PENDING
+            )
+            for image in initially_pending:
+                entry = _entry_for(manifest, image.visual_asset_id)
+                recovered = await self._recover_optional(entry, image, source)
+                if recovered is None:
+                    continue
+                recovered_requested_duration = recovered.metadata.attributes.get(
+                    "requested_duration_seconds"
+                )
+                recovering = entry.model_copy(
+                    update={
+                        "status": VideoClipEntryStatus.GENERATING,
+                        "requested_duration_seconds": (
+                            float(recovered_requested_duration)
+                            if isinstance(recovered_requested_duration, (int, float))
+                            else recovered.duration_seconds
+                        ),
+                        "error_code": None,
+                    }
+                )
+                current = replace_manifest_entry(manifest, recovering)
+                await self._writer.checkpoint(
+                    context=context,
+                    previous=manifest,
+                    current=current,
+                )
+                manifest = current
+                stored = self._stored_entry(
+                    entry=recovering,
+                    asset=recovered,
+                    response=None,
+                    recovered=True,
+                )
+                current = replace_manifest_entry(manifest, stored)
+                await self._writer.checkpoint(
+                    context=context,
+                    previous=manifest,
+                    current=current,
+                )
+                manifest = current
+                stored_assets[image.visual_asset_id] = recovered
+
             pending_images = tuple(
                 image
                 for image in source.source_images
@@ -151,7 +199,6 @@ class VideoClipGenerationHandler:
                         diagnostic_metadata=diagnostic,
                     )
 
-            stored_assets: dict[str, ProductionVideoClipAsset] = {}
             for image in source.source_images:
                 entry = _entry_for(manifest, image.visual_asset_id)
                 if entry.status is VideoClipEntryStatus.STORED:
@@ -495,6 +542,11 @@ class VideoClipGenerationHandler:
                 role=VisualAssetRole(image.role),
                 status=VideoClipEntryStatus.PENDING,
                 planned_duration_seconds=image.planned_duration_seconds,
+                resolved_scene_duration_ms=(
+                    round(image.resolved_duration_seconds * 1_000)
+                    if image.resolved_duration_seconds is not None
+                    else None
+                ),
                 attempt_number=attempt_number,
             )
             for image in sorted(
@@ -517,6 +569,16 @@ class VideoClipGenerationHandler:
                 "checkpointed": True,
                 "simulated": self._configuration.provider == "simulated",
                 "generation_mode": "still_image_to_video",
+                "requested_target_duration_ms": (
+                    source.duration_resolution.requested_target_duration_ms
+                    if source.duration_resolution is not None
+                    else None
+                ),
+                "resolved_duration_ms": (
+                    source.duration_resolution.resolved_duration_ms
+                    if source.duration_resolution is not None
+                    else None
+                ),
             },
         )
 
@@ -525,19 +587,36 @@ class VideoClipGenerationHandler:
         manifest: ProductionVideoClipManifest,
         source: ReadImageAcquisitionManifest,
     ) -> None:
+        ordered_images = tuple(
+            sorted(
+                source.source_images,
+                key=lambda item: (item.scene_number, item.shot_number, item.visual_asset_id),
+            )
+        )
+        manifest_resolved = tuple(
+            entry.resolved_scene_duration_ms for entry in manifest.entries
+        )
+        source_resolved = tuple(
+            round(image.resolved_duration_seconds * 1_000)
+            if image.resolved_duration_seconds is not None
+            else None
+            for image in ordered_images
+        )
+        legacy_completed_manifest = (
+            all(value is None for value in manifest_resolved)
+            and all(
+                entry.status is VideoClipEntryStatus.STORED
+                for entry in manifest.entries
+            )
+        )
         if (
             manifest.source_image_manifest_artifact_id != source.artifact_id
             or manifest.source_image_manifest_sha256 != source.sha256
             or manifest.source_image_manifest_schema_version != source.schema_version
             or manifest.configuration_fingerprint != self._configuration.fingerprint()
             or tuple(entry.visual_asset_id for entry in manifest.entries)
-            != tuple(
-                image.visual_asset_id
-                for image in sorted(
-                    source.source_images,
-                    key=lambda item: (item.scene_number, item.shot_number, item.visual_asset_id),
-                )
-            )
+            != tuple(image.visual_asset_id for image in ordered_images)
+            or (manifest_resolved != source_resolved and not legacy_completed_manifest)
         ):
             raise VideoClipIntegrityError("video clip manifest source or configuration changed")
 
@@ -584,11 +663,10 @@ class VideoClipGenerationHandler:
             or asset.shot_id != image.shot_id
             or asset.width != expected_width
             or asset.height != expected_height
-            or abs(
-                asset.duration_seconds
-                - (entry.requested_duration_seconds or self._configuration.duration_seconds)
+            or (
+                entry.requested_duration_seconds is not None
+                and abs(asset.duration_seconds - entry.requested_duration_seconds) > 0.08
             )
-            > 0.08
             or abs(asset.frame_rate - self._configuration.frame_rate) > 0.01
             or metadata.source_image_manifest_artifact_id != source.artifact_id
             or metadata.source_image_manifest_sha256 != source.sha256
@@ -633,7 +711,9 @@ class VideoClipGenerationHandler:
             source_metadata=image.metadata,
             source_image_content=image.content,
             duration_seconds=(
-                image.planned_duration_seconds or self._configuration.duration_seconds
+                image.resolved_duration_seconds
+                or image.planned_duration_seconds
+                or self._configuration.duration_seconds
             ),
             frame_rate=self._configuration.frame_rate,
             width=width,
@@ -712,7 +792,11 @@ class VideoClipGenerationHandler:
                 "audio_codec": None,
                 "has_audio": False,
                 "video_adaptation": _video_adaptation(
-                    entry.planned_duration_seconds,
+                    (
+                        entry.resolved_scene_duration_ms / 1_000
+                        if entry.resolved_scene_duration_ms is not None
+                        else entry.planned_duration_seconds
+                    ),
                     asset.duration_seconds,
                 ),
                 "provider": response.provider if response else asset.metadata.provider,
@@ -804,6 +888,7 @@ class VideoClipGenerationHandler:
                         "role": entry.role.value,
                         "generation_mode": entry.generation_mode.value,
                         "planned_duration_seconds": entry.planned_duration_seconds,
+                        "resolved_scene_duration_ms": entry.resolved_scene_duration_ms,
                         "requested_duration_seconds": entry.requested_duration_seconds,
                         "duration_seconds": entry.duration_seconds,
                         "video_adaptation": entry.video_adaptation,

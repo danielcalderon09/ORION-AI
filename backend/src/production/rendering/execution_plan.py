@@ -84,9 +84,22 @@ def build_ffmpeg_execution_plan(
         if kind is CompositionAssetKind.VIDEO:
             label = f"v{video_number}"
             source_start = clip.source_in_frame / request.frame_rate_numerator
-            trim = f"start={_decimal(source_start)}:duration={_decimal(duration)}"
+            asset = asset_by_id[clip.asset_id]
+            if asset.duration_ms is None:
+                raise RenderingRequestError("video duration is unavailable for adaptation")
+            available = max(0.0, asset.duration_ms / 1_000 - source_start)
+            source_duration = duration if clip.playback_mode == "loop" else min(duration, available)
+            if source_duration <= 0:
+                raise RenderingRequestError("video source interval is empty")
+            trim = f"start={_decimal(source_start)}:duration={_decimal(source_duration)}"
+            freeze = ""
+            if clip.playback_mode != "loop" and source_duration < duration:
+                freeze = (
+                    ",tpad=stop_mode=clone:stop_duration="
+                    f"{_decimal(duration - source_duration)}"
+                )
             video_filters.append(
-                f"[{input_index}:v]trim={trim},setpts=PTS-STARTPTS,"
+                f"[{input_index}:v]trim={trim},setpts=PTS-STARTPTS{freeze},"
                 f"scale={request.output_width}:{request.output_height}:"
                 "force_original_aspect_ratio=decrease:out_range=tv,"
                 f"pad={request.output_width}:{request.output_height}:(ow-iw)/2:(oh-ih)/2,"
@@ -105,10 +118,13 @@ def build_ffmpeg_execution_plan(
         label = f"a{audio_number}"
         envelope = clip.volume_envelope
         gain = envelope.base_gain_db if envelope is not None else 0
+        source_duration = duration * clip.playback_rate
         chain = (
-            f"[{input_index}:a]atrim=duration={_decimal(duration)},"
+            f"[{input_index}:a]atrim=duration={_decimal(source_duration)},"
             f"asetpts=PTS-STARTPTS,volume={gain}dB"
         )
+        if clip.playback_rate > 1.0:
+            chain += "," + ",".join(_atempo_filters(clip.playback_rate))
         if kind is CompositionAssetKind.MUSIC:
             if clip.fade_in_ms:
                 chain += f",afade=t=in:st=0:d={_decimal(clip.fade_in_ms / 1_000)}"
@@ -238,3 +254,15 @@ def execution_plan_fingerprint(plan: FFmpegExecutionPlan) -> str:
 
 def _decimal(value: float) -> str:
     return f"{value:.6f}".rstrip("0").rstrip(".") or "0"
+
+
+def _atempo_filters(playback_rate: float) -> tuple[str, ...]:
+    """Split a speed-up into conservative FFmpeg atempo factors."""
+
+    factors: list[float] = []
+    remaining = playback_rate
+    while remaining > 2.0:
+        factors.append(2.0)
+        remaining /= 2.0
+    factors.append(remaining)
+    return tuple(f"atempo={_decimal(value)}" for value in factors)

@@ -23,9 +23,9 @@ def serialize_media_composition_plan(plan: MediaCompositionPlan) -> bytes:
 
 def deserialize_media_composition_plan(content: bytes) -> MediaCompositionPlan:
     try:
-        plan = MediaCompositionPlan.model_validate(_deserialize(content))
-        _validate_plan_identities(plan)
-        return plan
+        payload = _deserialize(content)
+        _validate_serialized_plan_identities(payload)
+        return MediaCompositionPlan.model_validate(payload)
     except MediaCompositionCorruptError:
         raise
     except (TypeError, ValueError, UnicodeError) as exc:
@@ -65,6 +65,35 @@ def _validate_plan_identities(plan: MediaCompositionPlan) -> None:
         raise MediaCompositionCorruptError("composition timeline checksum differs")
     identity = plan.model_dump(mode="json", exclude={"plan_fingerprint"})
     if canonical_sha256(identity) != plan.plan_fingerprint:
+        raise MediaCompositionCorruptError("composition plan fingerprint differs")
+
+
+def _validate_serialized_plan_identities(payload: Any) -> None:
+    if not isinstance(payload, dict):
+        raise MediaCompositionCorruptError("media composition plan is invalid")
+    try:
+        source_payload = {
+            "assets": payload["assets"],
+            "manifests": payload["source_manifests"],
+        }
+        timeline_payload = {
+            "ducking": payload["ducking"],
+            "output": payload["output"],
+            "subtitle_cues": payload["subtitle_cues"],
+            "tracks": payload["tracks"],
+            "transitions": payload["transitions"],
+        }
+        source_fingerprint = payload["source_fingerprint"]
+        timeline_checksum = payload["timeline_checksum"]
+        plan_fingerprint = payload["plan_fingerprint"]
+    except KeyError as exc:
+        raise MediaCompositionCorruptError("media composition plan is invalid") from exc
+    if canonical_sha256(source_payload) != source_fingerprint:
+        raise MediaCompositionCorruptError("composition source fingerprint differs")
+    if canonical_sha256(timeline_payload) != timeline_checksum:
+        raise MediaCompositionCorruptError("composition timeline checksum differs")
+    identity = {key: value for key, value in payload.items() if key != "plan_fingerprint"}
+    if canonical_sha256(identity) != plan_fingerprint:
         raise MediaCompositionCorruptError("composition plan fingerprint differs")
 
 

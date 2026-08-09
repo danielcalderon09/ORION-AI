@@ -18,6 +18,14 @@ def test_selects_smallest_supported_covering_duration(planned: float, selected: 
     assert select_provider_duration(planned, (8, 4, 6)) == selected
 
 
+@pytest.mark.parametrize(("resolved", "selected"), ((4.25, 6), (5.0, 6), (6.5, 8)))
+def test_audio_first_duration_selects_covering_provider_clip(
+    resolved: float,
+    selected: int,
+) -> None:
+    assert select_provider_duration(resolved, (4, 6, 8)) == selected
+
+
 def test_fails_when_scene_exceeds_provider_maximum() -> None:
     with pytest.raises(OpenRouterVideoCapabilityError) as captured:
         select_provider_duration(8.1, (4, 6, 8))

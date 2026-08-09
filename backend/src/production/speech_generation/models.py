@@ -11,6 +11,7 @@ from pydantic import Field, field_validator, model_validator
 
 from backend.src.production.application.sanitization import validate_safe_json
 from backend.src.production.domain.base import ContractModel
+from backend.src.production.domain.duration_resolution import DurableDurationResolution
 from backend.src.production.domain.path_rules import validate_relative_path
 
 SUPPORTED_SPEECH_MANIFEST_VERSIONS = frozenset({"1.0.0"})
@@ -291,6 +292,7 @@ class SpeechGenerationManifest(ContractModel):
     entries: tuple[SpeechSegmentManifestEntry, ...] = Field(min_length=1, max_length=50)
     summary: SpeechGenerationSummary
     status: SpeechGenerationManifestStatus
+    duration_resolution: DurableDurationResolution | None = None
     created_at: datetime
     updated_at: datetime
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -332,10 +334,24 @@ class SpeechGenerationManifest(ContractModel):
             entry.status is SpeechSegmentStatus.UNCERTAIN for entry in self.entries
         ):
             raise ValueError("uncertain speech manifest requires an uncertain entry")
-        if self.status is SpeechGenerationManifestStatus.FAILED and not any(
-            entry.status is SpeechSegmentStatus.FAILED for entry in self.entries
+        if self.status is SpeechGenerationManifestStatus.FAILED:
+            has_failed_entry = any(
+                entry.status is SpeechSegmentStatus.FAILED for entry in self.entries
+            )
+            has_rejected_duration = (
+                self.duration_resolution is not None
+                and not self.duration_resolution.accepted
+            )
+            if not has_failed_entry and not has_rejected_duration:
+                raise ValueError(
+                    "failed speech manifest requires a failed entry or duration resolution"
+                )
+        if (
+            self.status is SpeechGenerationManifestStatus.COMPLETED
+            and self.duration_resolution is not None
+            and not self.duration_resolution.accepted
         ):
-            raise ValueError("failed speech manifest requires a failed entry")
+            raise ValueError("completed speech manifest cannot reject duration resolution")
         if self.status is SpeechGenerationManifestStatus.PARTIAL and not (
             self.summary.stored and self.summary.stored < self.summary.total
         ):
@@ -463,6 +479,11 @@ def validate_speech_manifest_transition(
     )
     if immutable_previous != immutable_current:
         raise ValueError("speech manifest immutable fields changed")
+    if (
+        previous.duration_resolution is not None
+        and current.duration_resolution != previous.duration_resolution
+    ):
+        raise ValueError("durable duration resolution changed")
     if current.updated_at < previous.updated_at:
         raise ValueError("speech manifest update time moved backward")
     allowed_manifest = {

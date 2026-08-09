@@ -93,6 +93,10 @@ from backend.src.production.binary_assets.validators import (
     AssetSizeValidator,
     BinaryAssetIntegrityValidator,
 )
+from backend.src.production.composition.audio_first_duration_reader import (
+    DurableSpeechDurationResolutionReader,
+)
+from backend.src.production.domain.duration_resolution import DurationResolutionPolicy
 from backend.src.production.domain.enums import ArtifactType
 from backend.src.production.image_acquisition.configuration import (
     ImageAcquisitionConfiguration,
@@ -708,6 +712,11 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         repository=SQLAlchemyImageAcquisitionManifestQueryRepository(sessions),
         binary_reader=filesystem_binary_asset_store,
         max_manifest_bytes=(settings.ORION_VIDEO_CLIP_GENERATION_MAX_SOURCE_MANIFEST_BYTES),
+        duration_resolution_reader=DurableSpeechDurationResolutionReader(
+            workspace_root=settings.PROJECTS_DIR,
+            inventory=SQLAlchemyMediaCompositionArtifactInventory(artifacts),
+            max_manifest_bytes=settings.ORION_SPEECH_GENERATION_MAX_MANIFEST_BYTES,
+        ),
     )
     video_clip_generation_handler = VideoClipGenerationHandler(
         manifest_reader=image_acquisition_manifest_reader,
@@ -811,6 +820,14 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         ),
         configuration=speech_configuration,
         clock=clock,
+        duration_resolution_policy=DurationResolutionPolicy(
+            maximum_absolute_extension_ms=(
+                settings.ORION_MEDIA_COMPOSITION_MAXIMUM_ABSOLUTE_EXTENSION_MS
+            ),
+            maximum_relative_extension_ratio=(
+                settings.ORION_MEDIA_COMPOSITION_MAXIMUM_RELATIVE_EXTENSION_RATIO
+            ),
+        ),
     )
     audio_design_configuration = AudioDesignConfiguration(
         music_provider=settings.ORION_MUSIC_GENERATION_PROVIDER,
@@ -877,6 +894,12 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         max_source_manifest_bytes=(settings.ORION_MEDIA_COMPOSITION_MAX_SOURCE_MANIFEST_BYTES),
         max_plan_bytes=settings.ORION_MEDIA_COMPOSITION_MAX_PLAN_BYTES,
         max_manifest_bytes=settings.ORION_MEDIA_COMPOSITION_MAX_MANIFEST_BYTES,
+        maximum_absolute_extension_ms=(
+            settings.ORION_MEDIA_COMPOSITION_MAXIMUM_ABSOLUTE_EXTENSION_MS
+        ),
+        maximum_relative_extension_ratio=(
+            settings.ORION_MEDIA_COMPOSITION_MAXIMUM_RELATIVE_EXTENSION_RATIO
+        ),
     )
     media_composition_store = LocalMediaCompositionStore(
         settings.PROJECTS_DIR,

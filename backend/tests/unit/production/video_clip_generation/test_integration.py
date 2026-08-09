@@ -46,17 +46,17 @@ def settings(tmp_path, **overrides):
     return Settings(**values)
 
 
-def test_stage_is_immediately_after_assets_and_before_audio() -> None:
+def test_stage_runs_after_audio_first_narration_resolution() -> None:
     stages = StageRegistry.active_stages(generate_clips_after_render=False)
     index = stages.index(ProductionStage.ACQUIRING_ASSETS)
-    assert stages[index + 1] is ProductionStage.GENERATING_VIDEO_CLIPS
-    assert stages[index + 2] is ProductionStage.GENERATING_NARRATION
+    assert stages[index + 1] is ProductionStage.GENERATING_NARRATION
+    assert stages[index + 2] is ProductionStage.GENERATING_VIDEO_CLIPS
     assert (
         StageRegistry.previous_stage(
             ProductionStage.GENERATING_VIDEO_CLIPS,
             generate_clips_after_render=False,
         )
-        is ProductionStage.ACQUIRING_ASSETS
+        is ProductionStage.GENERATING_NARRATION
     )
 
 

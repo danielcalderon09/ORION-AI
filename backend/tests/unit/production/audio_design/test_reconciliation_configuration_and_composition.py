@@ -204,10 +204,10 @@ async def test_composition_wires_only_simulated_audio_design_and_closes_it(
         )
 
 
-def test_stage_order_and_existing_speech_schema_are_unchanged() -> None:
+def test_audio_design_runs_after_audio_first_video_generation() -> None:
     pipeline = StageRegistry.PIPELINE
     assert pipeline.index(ProductionStage.PREPARING_MUSIC) == (
-        pipeline.index(ProductionStage.GENERATING_NARRATION) + 1
+        pipeline.index(ProductionStage.GENERATING_VIDEO_CLIPS) + 1
     )
     assert pipeline.index(ProductionStage.GENERATING_SUBTITLES) == (
         pipeline.index(ProductionStage.PREPARING_MUSIC) + 1

@@ -52,6 +52,7 @@ from backend.src.production.video_clip_generation.ports import (
     ImageManifestArtifactCandidate,
     ReadImageAcquisitionManifest,
     VerifiedSourceImage,
+    VideoDurationResolutionReader,
 )
 
 _SOURCE_METADATA_ALLOWLIST = frozenset(
@@ -100,6 +101,7 @@ class DurableImageAcquisitionManifestReader:
         repository: ImageAcquisitionManifestArtifactQueryRepository,
         binary_reader: BinaryAssetReader,
         max_manifest_bytes: int,
+        duration_resolution_reader: VideoDurationResolutionReader | None = None,
     ) -> None:
         if not 1 <= max_manifest_bytes <= 50_000_000:
             raise ValueError("maximum source manifest size is outside safe limits")
@@ -107,6 +109,7 @@ class DurableImageAcquisitionManifestReader:
         self._repository = repository
         self._binary_reader = binary_reader
         self._maximum = max_manifest_bytes
+        self._duration_resolution_reader = duration_resolution_reader
 
     async def read_for_video_clip_generation(
         self, *, context: StageContext
@@ -224,6 +227,30 @@ class DurableImageAcquisitionManifestReader:
                     },
                 )
             )
+        duration_resolution = (
+            await self._duration_resolution_reader.read_for_job(context.job_id)
+            if self._duration_resolution_reader is not None
+            else None
+        )
+        if duration_resolution is not None:
+            by_scene = {scene.scene_id: scene for scene in duration_resolution.scenes}
+            if set(by_scene) != {image.scene_id for image in images}:
+                raise ImageAcquisitionManifestSchemaException(
+                    "speech duration resolution differs from image scenes"
+                )
+            images = [
+                image.model_copy(
+                    update={
+                        "resolved_duration_seconds": (
+                            by_scene[image.scene_id].resolved_duration_ms / 1_000
+                        ),
+                        "actual_narration_duration_ms": (
+                            by_scene[image.scene_id].actual_narration_duration_ms
+                        ),
+                    }
+                )
+                for image in images
+            ]
         return ReadImageAcquisitionManifest(
             manifest=manifest,
             job_id=context.job_id,
@@ -232,6 +259,7 @@ class DurableImageAcquisitionManifestReader:
             size_bytes=len(content),
             schema_version=manifest.schema_version,
             source_images=tuple(images),
+            duration_resolution=duration_resolution,
             metadata=_safe_metadata(selected.metadata),
         )
 
@@ -363,9 +391,20 @@ class DurableImageAcquisitionManifestReader:
             raise ImageAcquisitionManifestAmbiguousException(
                 "multiple image acquisition manifests were supplied"
             )
-        if input_artifacts and not input_manifests:
+        allowed_audio_first_inputs = {
+            ArtifactType.NARRATION,
+            ArtifactType.PRODUCTION_SPEECH_GENERATION_MANIFEST,
+        }
+        if (
+            input_artifacts
+            and not input_manifests
+            and any(
+                artifact.artifact_type not in allowed_audio_first_inputs
+                for artifact in input_artifacts.values()
+            )
+        ):
             raise ImageAcquisitionManifestTypeException(
-                "input artifacts do not contain an image acquisition manifest"
+                "input artifacts are not valid audio-first video predecessors"
             )
         if not candidates:
             raise ImageAcquisitionManifestNotFoundException(

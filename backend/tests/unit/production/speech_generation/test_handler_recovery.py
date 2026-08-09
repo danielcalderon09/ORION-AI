@@ -4,18 +4,25 @@ from datetime import timedelta
 from pathlib import Path
 
 from backend.src.production.application.results import StageOutcome
+from backend.src.production.composition.audio_first_duration_reader import (
+    DurableSpeechDurationResolutionReader,
+)
 from backend.src.production.domain.enums import ArtifactType
 from backend.src.production.speech_generation.handler import SpeechGenerationHandler
 from backend.src.production.speech_generation.manifest_writer import (
     InMemorySpeechManifestWriter,
+    LocalSpeechManifestWriter,
 )
 from backend.src.production.speech_generation.models import (
     SpeechGenerationManifestStatus,
+    SpeechSegmentAudioMetadata,
     SpeechSegmentStatus,
 )
+from backend.src.production.speech_generation.ports import SpeechProviderResult
 from backend.src.production.speech_generation.providers import (
     SimulatedSpeechGenerationProvider,
 )
+from backend.src.production.speech_generation.providers.simulated_provider import _render_wav
 from backend.tests.unit.production.speech_generation.conftest import (
     NOW,
     FakeSourceReader,
@@ -64,6 +71,45 @@ class MutableClock:
         return self.value
 
 
+class ArtifactInventory:
+    def __init__(self, artifacts) -> None:
+        self.artifacts = artifacts
+
+    async def list_for_job(self, job_id):
+        return tuple(item for item in self.artifacts if item.job_id == job_id)
+
+
+class NaturalDurationProvider:
+    name = "openrouter"
+
+    def __init__(self, durations_ms: tuple[int, ...]) -> None:
+        self.durations = iter(durations_ms)
+        self.calls = 0
+
+    async def generate(self, request):
+        self.calls += 1
+        duration_ms = next(self.durations)
+        frame_count = round(duration_ms * request.configuration.sample_rate_hz / 1_000)
+        return SpeechProviderResult(
+            content=_render_wav(
+                request.segment.normalized_text_hash,
+                sample_rate_hz=request.configuration.sample_rate_hz,
+                frame_count=frame_count,
+            ),
+            provider="openrouter",
+            audio=SpeechSegmentAudioMetadata(
+                duration_ms=duration_ms,
+                sample_rate_hz=request.configuration.sample_rate_hz,
+                frame_count=frame_count,
+            ),
+            deterministic=False,
+            metadata={"network": False},
+        )
+
+    async def close(self) -> None:
+        return None
+
+
 def _handler(
     tmp_path: Path,
     *,
@@ -81,6 +127,109 @@ def _handler(
         configuration=configuration,
         clock=clock,
     )
+
+
+def _eight_second_source():
+    source = source_script()
+    scenes = tuple(
+        scene.model_copy(update={"estimated_duration_seconds": 4.0})
+        for scene in source.script.scenes
+    )
+    return source.model_copy(
+        update={"script": source.script.model_copy(update={"target_duration_seconds": 8.0, "scenes": scenes})}
+    )
+
+
+async def test_natural_durations_are_checkpointed_before_video(tmp_path: Path) -> None:
+    configuration = speech_configuration(
+        provider="openrouter",
+        max_segment_duration_ms=6_000,
+        max_audio_bytes=300_000,
+    )
+    provider = NaturalDurationProvider((4_250, 5_000))
+    writer = InMemorySpeechManifestWriter()
+    command, context = command_context()
+    result = await SpeechGenerationHandler(
+        script_reader=FakeSourceReader(_eight_second_source()),
+        provider=provider,
+        audio_store=audio_store(tmp_path, configuration),
+        manifest_writer=writer,
+        configuration=configuration,
+        clock=lambda: NOW,
+    ).execute(command, context)
+
+    manifest = await writer.read_existing(context=context)
+    assert result.result.outcome is StageOutcome.SUCCEEDED
+    assert manifest is not None and manifest.duration_resolution is not None
+    assert manifest.duration_resolution.resolved_duration_ms == 9_250
+    assert tuple(
+        scene.resolved_duration_ms for scene in manifest.duration_resolution.scenes
+    ) == (4_250, 5_000)
+    assert provider.calls == 2
+
+
+async def test_completed_speech_resolution_is_readable_by_video_integration(
+    tmp_path: Path,
+) -> None:
+    configuration = speech_configuration()
+    writer = LocalSpeechManifestWriter(tmp_path, max_manifest_bytes=200_000)
+    command, context = command_context()
+    output = await SpeechGenerationHandler(
+        script_reader=FakeSourceReader(source_script()),
+        provider=SimulatedSpeechGenerationProvider(),
+        audio_store=audio_store(tmp_path, configuration),
+        manifest_writer=writer,
+        configuration=configuration,
+        clock=lambda: NOW,
+    ).execute(command, context)
+    manifest_artifact = next(
+        artifact
+        for artifact in output.artifacts
+        if artifact.artifact_type is ArtifactType.PRODUCTION_SPEECH_GENERATION_MANIFEST
+    )
+    reader = DurableSpeechDurationResolutionReader(
+        workspace_root=tmp_path,
+        inventory=ArtifactInventory((manifest_artifact,)),
+        max_manifest_bytes=200_000,
+    )
+
+    resolution = await reader.read_for_job(command.job_id)
+
+    assert resolution is not None
+    assert resolution.requested_target_duration_ms == 1_250
+    assert resolution.resolved_duration_ms == 1_250
+
+
+async def test_excessive_narration_fails_durably_and_retry_reuses_audio(
+    tmp_path: Path,
+) -> None:
+    configuration = speech_configuration(
+        provider="openrouter",
+        max_segment_duration_ms=6_000,
+        max_audio_bytes=300_000,
+    )
+    provider = NaturalDurationProvider((6_000, 6_000))
+    writer = InMemorySpeechManifestWriter()
+    command, context = command_context()
+    handler = SpeechGenerationHandler(
+        script_reader=FakeSourceReader(_eight_second_source()),
+        provider=provider,
+        audio_store=audio_store(tmp_path, configuration),
+        manifest_writer=writer,
+        configuration=configuration,
+        clock=lambda: NOW,
+    )
+
+    first = await handler.execute(command, context)
+    second = await handler.execute(command, context)
+    manifest = await writer.read_existing(context=context)
+
+    assert first.result.error_code == "duration_resolution_invalid"
+    assert second.result.error_code == "duration_resolution_invalid"
+    assert provider.calls == 2
+    assert manifest is not None and manifest.duration_resolution is not None
+    assert manifest.duration_resolution.resolved_duration_ms == 12_000
+    assert not manifest.duration_resolution.accepted
 
 
 async def test_successful_multi_segment_generation_and_duplicate_delivery(

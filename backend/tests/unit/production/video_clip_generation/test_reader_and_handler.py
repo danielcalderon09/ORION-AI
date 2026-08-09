@@ -74,6 +74,16 @@ class CountingProvider(SimulatedVideoClipGenerationProvider):
         return await super().generate_clip(request)
 
 
+class PreflightCountingProvider(CountingProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.preflight_calls = 0
+
+    async def preflight_job(self, requests):
+        self.preflight_calls += 1
+        return requests
+
+
 def video_store(tmp_path):
     integrity = VideoClipIntegrityValidator(
         probe=FFprobeMediaProbe(),
@@ -262,6 +272,57 @@ async def test_handler_success_artifacts_checkpoints_and_safe_metadata(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_handler_uses_resolved_narration_duration_for_provider_request(tmp_path) -> None:
+    source, _, _ = await durable_source(tmp_path)
+    image = source.source_images[0].model_copy(
+        update={
+            "resolved_duration_seconds": 1.5,
+            "actual_narration_duration_ms": 1_500,
+        }
+    )
+    source = source.model_copy(update={"source_images": (image,)})
+    provider = CountingProvider()
+    writer = LocalVideoClipManifestWriter(tmp_path, max_manifest_bytes=200_000)
+    command, context = command_context()
+
+    output = await handler(tmp_path, source, provider, writer=writer).execute(command, context)
+
+    assert output.result.outcome is StageOutcome.SUCCEEDED
+    manifest = await writer.read_existing(context=context)
+    assert manifest is not None
+    assert manifest.entries[0].resolved_scene_duration_ms == 1_500
+    assert manifest.entries[0].requested_duration_seconds == 1.5
+
+
+@pytest.mark.asyncio
+async def test_completed_legacy_clip_is_reused_when_audio_resolution_appears(
+    tmp_path,
+) -> None:
+    source, _, _ = await durable_source(tmp_path)
+    provider = CountingProvider()
+    writer = LocalVideoClipManifestWriter(tmp_path, max_manifest_bytes=200_000)
+    command, context = command_context()
+    first_handler = handler(tmp_path, source, provider, writer=writer)
+    assert (await first_handler.execute(command, context)).result.outcome is (
+        StageOutcome.SUCCEEDED
+    )
+
+    resolved_image = source.source_images[0].model_copy(
+        update={"resolved_duration_seconds": 1.5, "actual_narration_duration_ms": 1_500}
+    )
+    resolved_source = source.model_copy(update={"source_images": (resolved_image,)})
+    second = await handler(
+        tmp_path,
+        resolved_source,
+        provider,
+        writer=writer,
+    ).execute(command, context)
+
+    assert second.result.outcome is StageOutcome.SUCCEEDED
+    assert provider.calls == [VISUAL_ASSET_ID]
+
+
+@pytest.mark.asyncio
 async def test_handler_second_run_and_new_attempt_reuse_without_provider(
     tmp_path,
 ) -> None:
@@ -279,6 +340,24 @@ async def test_handler_second_run_and_new_attempt_reuse_without_provider(
     assert (
         await handler(tmp_path, source, provider).execute(second_command, second_context)
     ).result.outcome is StageOutcome.SUCCEEDED
+    assert provider.calls == [VISUAL_ASSET_ID]
+
+
+@pytest.mark.asyncio
+async def test_new_attempt_recovers_clip_before_paid_batch_preflight(tmp_path) -> None:
+    source, _, _ = await durable_source(tmp_path)
+    provider = PreflightCountingProvider()
+    first_command, first_context = command_context()
+    assert (
+        await handler(tmp_path, source, provider).execute(first_command, first_context)
+    ).result.outcome is StageOutcome.SUCCEEDED
+
+    second_command, second_context = command_context(attempt=2)
+    assert (
+        await handler(tmp_path, source, provider).execute(second_command, second_context)
+    ).result.outcome is StageOutcome.SUCCEEDED
+
+    assert provider.preflight_calls == 1
     assert provider.calls == [VISUAL_ASSET_ID]
 
 

@@ -176,8 +176,11 @@ async def test_composition_defaults_to_simulated_and_closes_provider(
     await container.aclose()
 
 
-def test_existing_stage_order_is_preserved() -> None:
+def test_audio_first_stage_order_runs_narration_before_video() -> None:
     pipeline = StageRegistry.PIPELINE
     assert pipeline.index(ProductionStage.GENERATING_NARRATION) == (
-        pipeline.index(ProductionStage.GENERATING_VIDEO_CLIPS) + 1
+        pipeline.index(ProductionStage.ACQUIRING_ASSETS) + 1
+    )
+    assert pipeline.index(ProductionStage.GENERATING_VIDEO_CLIPS) == (
+        pipeline.index(ProductionStage.GENERATING_NARRATION) + 1
     )

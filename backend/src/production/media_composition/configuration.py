@@ -1,5 +1,6 @@
 """Bounded, renderer-neutral media composition settings."""
 
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -20,6 +21,10 @@ class MediaCompositionConfiguration(ContractModel):
     sound_effect_gain_db: int = Field(default=-6, ge=-60, le=12)
     fade_duration_ms: int = Field(default=250, ge=0, le=5_000)
     crossfade_duration_ms: int = Field(default=250, ge=0, le=5_000)
+    maximum_absolute_extension_ms: int = Field(default=3_000, ge=0, le=60_000)
+    maximum_relative_extension_ratio: Decimal = Field(
+        default=Decimal("0.20"), ge=Decimal("0"), le=Decimal("1")
+    )
 
     @model_validator(mode="after")
     def validate_relationships(self) -> "MediaCompositionConfiguration":

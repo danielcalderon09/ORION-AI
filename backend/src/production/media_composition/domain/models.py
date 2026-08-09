@@ -157,6 +157,7 @@ class CompositionClip(ContractModel):
     source_out_frame: int | None = Field(default=None, gt=0)
     playback_mode: Literal["once", "loop"] = "once"
     loop_count: int = Field(default=1, ge=1, le=10_000)
+    playback_rate: float = Field(default=1.0, ge=1.0, le=1.05)
     fade_in_ms: int = Field(default=0, ge=0, le=10_000)
     fade_out_ms: int = Field(default=0, ge=0, le=10_000)
     volume_envelope: VolumeEnvelope | None = None

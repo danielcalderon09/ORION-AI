@@ -193,6 +193,8 @@ class Settings(BaseSettings):
     ORION_MEDIA_COMPOSITION_MAX_SOURCE_MANIFEST_BYTES: int = 4_000_000
     ORION_MEDIA_COMPOSITION_MAX_PLAN_BYTES: int = 4_000_000
     ORION_MEDIA_COMPOSITION_MAX_MANIFEST_BYTES: int = 4_000_000
+    ORION_MEDIA_COMPOSITION_MAXIMUM_ABSOLUTE_EXTENSION_MS: int = 3_000
+    ORION_MEDIA_COMPOSITION_MAXIMUM_RELATIVE_EXTENSION_RATIO: Decimal = Decimal("0.20")
     ORION_RENDERER: Literal["dry_run", "ffmpeg"] = "dry_run"
     ORION_FFMPEG_PATH: str | None = None
     ORION_FFPROBE_PATH: str | None = None
@@ -493,6 +495,14 @@ class Settings(BaseSettings):
                     "composition" if name.startswith("ORION_MEDIA_COMPOSITION_") else "rendering"
                 )
                 raise ValueError(f"{name} is outside safe {scope} limits")
+        if not 0 <= self.ORION_MEDIA_COMPOSITION_MAXIMUM_ABSOLUTE_EXTENSION_MS <= 60_000:
+            raise ValueError("media composition absolute duration extension is outside safe limits")
+        if not (
+            Decimal("0")
+            <= self.ORION_MEDIA_COMPOSITION_MAXIMUM_RELATIVE_EXTENSION_RATIO
+            <= Decimal("1")
+        ):
+            raise ValueError("media composition relative duration extension is outside safe limits")
         if not 1 <= self.ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES <= 100_000_000:
             raise ValueError("ORION_IMAGE_ACQUISITION_MAX_RESPONSE_BYTES is outside safe limits")
         if not 60 <= self.ORION_SPEECH_GENERATION_WORDS_PER_MINUTE <= 360:
