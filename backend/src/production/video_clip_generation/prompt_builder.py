@@ -7,6 +7,9 @@ from backend.src.production.video_clip_generation.ports import VideoClipProvider
 from backend.src.production.video_clip_generation.providers.openrouter_models import (
     VideoMotionPrompt,
 )
+from backend.src.production.visual_asset_planning.prompt_derivation import (
+    render_identity_constraints,
+)
 
 
 class VideoClipAnimationRecipeBuilder:
@@ -41,6 +44,11 @@ class VideoMotionPromptBuilder:
         action = _metadata_fragment(source, "video_action", maximum=240)
         movement = _metadata_fragment(source, "video_camera_movement", maximum=80)
         framing = _metadata_fragment(source, "video_camera_framing", maximum=80)
+        continuity = (
+            render_identity_constraints(source.video_identity)
+            if source.video_identity is not None
+            else ""
+        )
         context = " ".join(
             fragment
             for fragment in (
@@ -60,6 +68,13 @@ class VideoMotionPromptBuilder:
             "Do not introduce new subjects, text, logos, cuts, transitions, flicker, "
             "warping, or changes of scene. Generate no audio."
         )
+        if continuity:
+            text = (
+                "CONTINUITY CONSTRAINTS: "
+                + continuity
+                + "\nMOTION/SCENE CONTENT: "
+                + text
+            )
         text = text[: self._maximum].rstrip()
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         return VideoMotionPrompt(text=text, sha256=digest, version=self.version)

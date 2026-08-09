@@ -36,6 +36,7 @@ from backend.src.production.visual_asset_planning.exceptions import (
 )
 from backend.src.production.visual_asset_planning.models import (
     ProductionVisualAssetPlan,
+    derive_video_identity,
     validate_visual_asset_plan_against_scene_plan,
 )
 from backend.src.production.visual_asset_planning.ports import (
@@ -117,6 +118,8 @@ class VisualAssetPlanningHandler:
                     "source_scene_plan_sha256": source.sha256,
                 }
             )
+            if plan.video_identity is None:
+                plan = plan.model_copy(update={"video_identity": derive_video_identity(plan)})
             plan = validate_visual_asset_plan_against_scene_plan(
                 plan,
                 source.scene_plan,

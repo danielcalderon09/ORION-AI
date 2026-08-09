@@ -121,6 +121,77 @@ class VisualConsistencyProfile(ContractModel):
         return self
 
 
+class RecurringCharacter(ContractModel):
+    """Stable, prompt-safe identity contract for a recurring character."""
+
+    character_id: str = Field(pattern=r"^character_[0-9]{2}$")
+    role: str | None = Field(default=None, max_length=300)
+    appearance: str = Field(min_length=1, max_length=1200)
+    wardrobe: str | None = Field(default=None, max_length=600)
+    continuity_notes: tuple[str, ...] = Field(default=(), max_length=20)
+
+    @field_validator("role", "appearance", "wardrobe")
+    @classmethod
+    def validate_text(cls, value: str | None) -> str | None:
+        return None if value is None else validate_visual_instruction(value)
+
+    @field_validator("continuity_notes")
+    @classmethod
+    def validate_notes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(validate_visual_instruction(item) for item in value)
+
+
+class VideoIdentity(ContractModel):
+    """The durable visual/story bible shared by every scene prompt."""
+
+    schema_version: str = Field(default="1.0.0", pattern=r"^\d+\.\d+\.\d+$")
+    subject: str | None = Field(default=None, max_length=1000)
+    topic: str | None = Field(default=None, max_length=500)
+    narrative_premise: str | None = Field(default=None, max_length=1500)
+    visual_style: str = Field(min_length=1, max_length=1200)
+    color_palette: tuple[str, ...] = Field(default=(), max_length=20)
+    lighting: str | None = Field(default=None, max_length=1000)
+    environment: str | None = Field(default=None, max_length=1000)
+    camera_language: str | None = Field(default=None, max_length=1000)
+    realism_level: str | None = Field(default=None, max_length=300)
+    period: str | None = Field(default=None, max_length=300)
+    recurring_characters: tuple[RecurringCharacter, ...] = Field(default=(), max_length=50)
+    recurring_objects: tuple[str, ...] = Field(default=(), max_length=50)
+    location_continuity: str | None = Field(default=None, max_length=1000)
+    mood: str | None = Field(default=None, max_length=500)
+    visual_restrictions: tuple[str, ...] = Field(default=(), max_length=50)
+    negative_constraints: tuple[str, ...] = Field(default=(), max_length=50)
+
+    @field_validator(
+        "subject",
+        "topic",
+        "narrative_premise",
+        "visual_style",
+        "lighting",
+        "environment",
+        "camera_language",
+        "realism_level",
+        "period",
+        "location_continuity",
+        "mood",
+    )
+    @classmethod
+    def validate_text(cls, value: str | None) -> str | None:
+        return None if value is None else validate_visual_instruction(value)
+
+    @field_validator("color_palette", "recurring_objects", "visual_restrictions", "negative_constraints")
+    @classmethod
+    def validate_collections(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(validate_visual_instruction(item) for item in value)
+
+    @model_validator(mode="after")
+    def validate_characters(self) -> VideoIdentity:
+        identifiers = tuple(item.character_id for item in self.recurring_characters)
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("recurring character IDs must be unique")
+        return self
+
+
 class VisualComposition(ContractModel):
     layout: str = Field(min_length=1, max_length=1000)
     focal_point: str = Field(min_length=1, max_length=500)
@@ -218,6 +289,9 @@ class ProductionVisualAssetPlan(ContractModel):
     global_visual_direction: str = Field(min_length=1, max_length=3000)
     global_negative_prompt: str | None = Field(default=None, max_length=3000)
     consistency_profile: VisualConsistencyProfile
+    # Optional keeps pre-identity durable plans readable. New plans receive a
+    # derived identity in the handler before they are persisted.
+    video_identity: VideoIdentity | None = None
     assets: tuple[ProductionVisualAssetSpec, ...] = Field(
         min_length=1,
         max_length=5000,
@@ -252,6 +326,52 @@ class ProductionVisualAssetPlan(ContractModel):
         if any(asset.aspect_ratio != self.aspect_ratio for asset in self.assets):
             raise ValueError("every asset must use the plan aspect ratio")
         return self
+
+
+def derive_video_identity(plan: ProductionVisualAssetPlan) -> VideoIdentity:
+    """Derive one deterministic identity from the approved visual plan."""
+
+    entities = plan.consistency_profile.entities
+    characters = tuple(
+        RecurringCharacter(
+            character_id=entity.entity_id,
+            role="recurring visual subject",
+            appearance=entity.description,
+            continuity_notes=plan.consistency_profile.continuity_rules,
+        )
+        for entity in entities
+        if entity.kind is ContinuityEntityKind.CHARACTER
+    )
+    locations = tuple(
+        entity.description
+        for entity in entities
+        if entity.kind is ContinuityEntityKind.LOCATION
+    )
+    objects = tuple(
+        entity.description
+        for entity in entities
+        if entity.kind is ContinuityEntityKind.PROP
+    )
+    negative = (plan.global_negative_prompt,) if plan.global_negative_prompt else ()
+    return VideoIdentity(
+        # Scene-specific subjects stay in the asset intent; they must not
+        # mutate the global identity when one scene is edited.
+        subject=plan.title,
+        topic=plan.title,
+        narrative_premise=plan.global_visual_direction,
+        visual_style=plan.consistency_profile.visual_identity,
+        color_palette=plan.consistency_profile.palette,
+        lighting=plan.consistency_profile.lighting_direction,
+        environment=", ".join(locations) if locations else None,
+        camera_language="Preserve the approved camera language across scenes",
+        realism_level=plan.consistency_profile.style_direction,
+        period=plan.consistency_profile.period,
+        recurring_characters=characters,
+        recurring_objects=objects,
+        location_continuity="; ".join(plan.consistency_profile.continuity_rules) or None,
+        visual_restrictions=plan.consistency_profile.continuity_rules,
+        negative_constraints=negative,
+    )
 
 
 def validate_asset_identity_and_order(

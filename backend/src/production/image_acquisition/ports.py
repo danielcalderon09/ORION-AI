@@ -21,6 +21,7 @@ from backend.src.production.image_acquisition.models import (
 from backend.src.production.visual_asset_planning.models import (
     ProductionVisualAssetPlan,
     ProductionVisualAssetSpec,
+    VideoIdentity,
 )
 
 if TYPE_CHECKING:
@@ -91,6 +92,7 @@ class ImageAcquisitionProviderRequest(ContractModel):
     correlation_id: UUID
     attempt_number: int = Field(ge=1)
     visual_asset: ProductionVisualAssetSpec
+    video_identity: VideoIdentity | None = None
     configuration: ImageAcquisitionConfiguration
 
 

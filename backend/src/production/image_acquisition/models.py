@@ -18,6 +18,7 @@ from backend.src.production.image_acquisition.diagnostics import (
 )
 from backend.src.production.visual_asset_planning.models import (
     GenerationMode,
+    VideoIdentity,
     VisualAssetRole,
 )
 
@@ -201,6 +202,9 @@ class ProductionImageAcquisitionManifest(ContractModel):
         min_length=1,
         max_length=500,
     )
+    # Snapshot of the identity used for downstream prompt derivation. Optional
+    # for manifests written before the identity contract existed.
+    video_identity: VideoIdentity | None = None
     summary: ProductionImageAcquisitionSummary
     metadata: dict[str, Any] = Field(default_factory=dict)
 

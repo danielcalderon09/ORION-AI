@@ -101,6 +101,7 @@ from backend.src.production.visual_asset_planning.models import (
     AssetKind,
     GenerationMode,
     ProductionVisualAssetSpec,
+    VideoIdentity,
     VisualAssetRole,
 )
 
@@ -324,7 +325,12 @@ class ImageAcquisitionHandler:
                             "image_acquisition_result_uncertain",
                         )
                     prompt = self._prompt_builder.build(
-                        self._provider_request(command, context, asset_spec)
+                        self._provider_request(
+                            command,
+                            context,
+                            asset_spec,
+                            source.visual_asset_plan.video_identity,
+                        )
                     )
                     fingerprint = self._remote_fingerprint(asset_spec, prompt.sha256)
                     prepared = entry.model_copy(
@@ -363,7 +369,12 @@ class ImageAcquisitionHandler:
                 manifest = current
                 try:
                     response = await self._provider.generate_image(
-                        self._provider_request(command, context, asset_spec)
+                        self._provider_request(
+                            command,
+                            context,
+                            asset_spec,
+                            source.visual_asset_plan.video_identity,
+                        )
                     )
                     if self._provider_name == "openrouter":
                         responded = generating.model_copy(
@@ -413,7 +424,12 @@ class ImageAcquisitionHandler:
                             ),
                         )
                     prompt = self._prompt_builder.build(
-                        self._provider_request(command, context, asset_spec)
+                        self._provider_request(
+                            command,
+                            context,
+                            asset_spec,
+                            source.visual_asset_plan.video_identity,
+                        )
                     )
                     binary = await self._binary_writer.write(
                         request=BinaryAssetWriteRequest(
@@ -889,6 +905,7 @@ class ImageAcquisitionHandler:
             requested_model=self._requested_model,
             status=ImageAcquisitionManifestStatus.IN_PROGRESS,
             entries=entries,
+            video_identity=source.visual_asset_plan.video_identity,
             summary=summarize_entries(entries),
             metadata={
                 "sequential": True,
@@ -936,6 +953,7 @@ class ImageAcquisitionHandler:
         command: StageCommand,
         context: StageContext,
         asset: ProductionVisualAssetSpec,
+        video_identity: VideoIdentity | None,
     ) -> ImageAcquisitionProviderRequest:
         return ImageAcquisitionProviderRequest(
             job_id=command.job_id,
@@ -943,6 +961,7 @@ class ImageAcquisitionHandler:
             correlation_id=context.correlation_id,
             attempt_number=command.attempt_number,
             visual_asset=asset,
+            video_identity=video_identity,
             configuration=self._configuration,
         )
 

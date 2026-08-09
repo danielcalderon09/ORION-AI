@@ -11,6 +11,9 @@ from backend.src.production.image_acquisition.exceptions import (
 from backend.src.production.image_acquisition.ports import (
     ImageAcquisitionProviderRequest,
 )
+from backend.src.production.visual_asset_planning.prompt_derivation import (
+    build_scene_visual_prompt,
+)
 
 
 class BuiltImageGenerationPrompt(ContractModel):
@@ -34,6 +37,24 @@ class ImageGenerationPromptBuilder:
         request: ImageAcquisitionProviderRequest,
     ) -> BuiltImageGenerationPrompt:
         asset = request.visual_asset
+        if request.video_identity is not None:
+            text = build_scene_visual_prompt(request.video_identity, asset)
+            text += (
+                f"\nOUTPUT: preserve aspect ratio {asset.aspect_ratio} at "
+                f"{asset.width}x{asset.height}; generate exactly one raster image."
+            )
+            content = text.encode("utf-8")
+            if len(content) > self._max_bytes:
+                raise ImageAcquisitionValidationError(
+                    "image generation prompt exceeds the configured limit"
+                )
+            return BuiltImageGenerationPrompt(
+                version="2.0.0",
+                text=text,
+                size_bytes=len(content),
+                sha256=hashlib.sha256(content).hexdigest(),
+                visual_asset_id=asset.asset_id,
+            )
         composition = asset.composition
         camera = asset.camera_intent
         sections = (

@@ -71,7 +71,10 @@ from backend.src.production.video_clip_generation.prompt_builder import (
 from backend.src.production.video_clip_generation.serialization import (
     serialize_video_clip_manifest,
 )
-from backend.src.production.visual_asset_planning.models import VisualAssetRole
+from backend.src.production.visual_asset_planning.models import (
+    VideoIdentity,
+    VisualAssetRole,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +173,9 @@ class VideoClipGenerationHandler:
                 is VideoClipEntryStatus.PENDING
             )
             prepared_requests = {
-                image.visual_asset_id: self._provider_request(command, context, image)
+                image.visual_asset_id: self._provider_request(
+                    command, context, image, source.video_identity
+                )
                 for image in pending_images
             }
             preflight = getattr(self._provider, "preflight_job", None)
@@ -306,7 +311,9 @@ class VideoClipGenerationHandler:
                 try:
                     provider_request = prepared_requests.get(
                         image.visual_asset_id
-                    ) or self._provider_request(command, context, image)
+                    ) or self._provider_request(
+                        command, context, image, source.video_identity
+                    )
                 except (TypeError, ValueError, ValidationError):
                     diagnostic = self._request_diagnostic_metadata(
                         image=image,
@@ -693,6 +700,7 @@ class VideoClipGenerationHandler:
         command: StageCommand,
         context: StageContext,
         image: VerifiedSourceImage,
+        video_identity: VideoIdentity | None,
     ) -> VideoClipProviderRequest:
         width, height = self._configuration.output_dimensions(image.width, image.height)
         return VideoClipProviderRequest(
@@ -709,6 +717,7 @@ class VideoClipGenerationHandler:
             source_image_height=image.height,
             source_role=image.role,
             source_metadata=image.metadata,
+            video_identity=video_identity,
             source_image_content=image.content,
             duration_seconds=(
                 image.resolved_duration_seconds

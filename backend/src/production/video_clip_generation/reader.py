@@ -259,6 +259,7 @@ class DurableImageAcquisitionManifestReader:
             size_bytes=len(content),
             schema_version=manifest.schema_version,
             source_images=tuple(images),
+            video_identity=manifest.video_identity,
             duration_resolution=duration_resolution,
             metadata=_safe_metadata(selected.metadata),
         )

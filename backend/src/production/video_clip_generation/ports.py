@@ -25,6 +25,7 @@ from backend.src.production.video_clip_generation.models import (
     ReadProductionVideoClipAsset,
     VideoClipWriteRequest,
 )
+from backend.src.production.visual_asset_planning.models import VideoIdentity
 
 if TYPE_CHECKING:
     from backend.src.production.runtime.context import StageContext
@@ -121,6 +122,7 @@ class ReadImageAcquisitionManifest(ContractModel):
     size_bytes: int
     schema_version: str
     source_images: tuple[VerifiedSourceImage, ...]
+    video_identity: VideoIdentity | None = None
     duration_resolution: DurableDurationResolution | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -184,6 +186,7 @@ class VideoClipProviderRequest(ContractModel):
     source_image_height: int = Field(gt=0, le=16_384)
     source_role: str = Field(min_length=1, max_length=100)
     source_metadata: dict[str, Any] = Field(default_factory=dict)
+    video_identity: VideoIdentity | None = None
     source_image_content: bytes = Field(repr=False, exclude=True, min_length=1)
     duration_seconds: float = Field(gt=0, le=600)
     frame_rate: int = Field(gt=0, le=120)
