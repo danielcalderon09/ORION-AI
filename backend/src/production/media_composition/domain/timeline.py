@@ -48,12 +48,16 @@ def build_media_composition_plan(
     width = _single_value("video width", tuple(item[0] for item in video_metadata))
     height = _single_value("video height", tuple(item[1] for item in video_metadata))
     frame_rate = _single_value("video frame rate", tuple(item[2] for item in video_metadata))
-    total_ms = source.shots[-1].shot_end_ms
+    planned_total_ms = source.shots[-1].shot_end_ms
+    narration_total_ms = max(
+        item.timeline_start_ms + item.duration_ms for item in source.narration
+    )
+    total_ms = max(planned_total_ms, narration_total_ms)
     total_frames = _ms_to_frames(total_ms, frame_rate)
     if total_frames <= 0:
         raise MediaCompositionPlanError("timeline duration must be positive")
 
-    video_clips = _video_clips(source, frame_rate)
+    video_clips = _video_clips(source, frame_rate, total_ms)
     narration_clips = _narration_clips(source, configuration, frame_rate, total_ms)
     music_clips = _music_clips(source, configuration, frame_rate, total_ms)
     sound_effect_clips = _sound_effect_clips(
@@ -145,6 +149,8 @@ def build_media_composition_plan(
         subtitle_cues=subtitle_cues,
         metadata={
             "content_generation": False,
+            "narration_extended_timeline": total_ms > planned_total_ms,
+            "planned_duration_ms": planned_total_ms,
             "renderer_neutral": True,
             "subtitle_text_embedded": False,
         },
@@ -158,6 +164,7 @@ def build_media_composition_plan(
 def _video_clips(
     source: MediaCompositionSource,
     frame_rate: int,
+    total_ms: int,
 ) -> tuple[CompositionClip, ...]:
     assets = {item.asset_id: item for item in source.assets}
     clips: list[CompositionClip] = []
@@ -165,7 +172,8 @@ def _video_clips(
     for index, shot in enumerate(source.shots):
         asset = assets[shot.video_asset_id]
         start = _ms_to_frames(shot.shot_start_ms, frame_rate)
-        end = _ms_to_frames(shot.shot_end_ms, frame_rate)
+        timeline_end_ms = total_ms if index == len(source.shots) - 1 else shot.shot_end_ms
+        end = _ms_to_frames(timeline_end_ms, frame_rate)
         if start != previous_end:
             raise MediaCompositionPlanError("video timeline contains a gap or overlap")
         if asset.duration_ms is None:

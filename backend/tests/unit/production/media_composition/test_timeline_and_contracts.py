@@ -26,6 +26,8 @@ from backend.src.production.media_composition.exceptions import (
     MediaCompositionPlanError,
 )
 from backend.src.production.media_composition.ports import (
+    CompositionNarrationSource,
+    CompositionShotSource,
     CompositionSubtitleSource,
     MediaCompositionSource,
 )
@@ -122,6 +124,44 @@ def test_short_video_is_explicitly_looped_without_changing_timeline(
     assert clip.timeline_end_frame == 48
 
 
+def test_real_narration_extends_short_video_timeline_without_regeneration(
+    composition_source: MediaCompositionSource,
+) -> None:
+    source = _one_scene_real_media_source(composition_source, narration_duration_ms=6_275)
+
+    plan = build_media_composition_plan(source, MediaCompositionConfiguration())
+
+    video = plan.tracks[0].clips[0]
+    narration = plan.tracks[1].clips[0]
+    assert plan.output.width == 720
+    assert plan.output.height == 1_280
+    assert plan.output.expected_duration_frames == 151
+    assert plan.output.expected_duration_ms == 6_292
+    assert plan.metadata["planned_duration_ms"] == 4_000
+    assert plan.metadata["narration_extended_timeline"] is True
+    assert video.timeline_end_frame == 151
+    assert video.playback_mode == "loop"
+    assert video.loop_count == 2
+    assert narration.timeline_end_frame == 151
+    assert narration.timeline_end_ms == 6_292
+    assert plan.subtitle_cues[0].start_ms == 0
+    assert plan.subtitle_cues[0].end_ms == 4_000
+
+
+def test_narration_within_video_keeps_planned_timeline(
+    composition_source: MediaCompositionSource,
+) -> None:
+    source = _one_scene_real_media_source(composition_source, narration_duration_ms=3_500)
+
+    plan = build_media_composition_plan(source, MediaCompositionConfiguration())
+
+    assert plan.output.expected_duration_frames == 96
+    assert plan.output.expected_duration_ms == 4_000
+    assert plan.metadata["narration_extended_timeline"] is False
+    assert plan.tracks[0].clips[0].playback_mode == "once"
+    assert plan.tracks[1].clips[0].timeline_end_ms == 3_500
+
+
 def test_existing_subtitles_are_aligned_without_copying_text(
     composition_source: MediaCompositionSource,
 ) -> None:
@@ -166,6 +206,89 @@ def test_existing_subtitles_are_aligned_without_copying_text(
     assert len(plan.subtitle_cues) == 2
     assert plan.subtitle_cues[0].placement == "bottom_center"
     assert "text" not in plan.subtitle_cues[0].model_dump()
+
+
+def _one_scene_real_media_source(
+    source: MediaCompositionSource,
+    *,
+    narration_duration_ms: int,
+) -> MediaCompositionSource:
+    video = next(item for item in source.assets if item.kind is CompositionAssetKind.VIDEO)
+    narration = next(
+        item for item in source.assets if item.kind is CompositionAssetKind.NARRATION
+    )
+    real_video = video.model_copy(
+        update={
+            "duration_ms": 4_000,
+            "frame_count": 96,
+            "height": 1_280,
+            "width": 720,
+        }
+    )
+    real_narration = narration.model_copy(
+        update={
+            "duration_ms": narration_duration_ms,
+            "frame_count": narration_duration_ms * 24,
+        }
+    )
+    subtitle = CompositionAssetReference(
+        asset_id="subtitles-real-short-aaaaaaaaaaaa",
+        artifact_id="50000000-0000-4000-8000-000000000902",
+        kind=CompositionAssetKind.SUBTITLES,
+        relative_path=(f"production/{source.job_id}/generating_subtitles/attempt-1/subtitles.srt"),
+        mime_type="application/x-subrip",
+        sha256="e" * 64,
+        fingerprint="f" * 64,
+        size_bytes=134,
+    )
+    assets = tuple(sorted((real_video, real_narration, subtitle), key=lambda item: item.asset_id))
+    validation = tuple(
+        CompositionAssetValidation(
+            asset_id=item.asset_id,
+            availability=CompositionAssetAvailability.AVAILABLE,
+            relative_path=item.relative_path,
+            expected_sha256=item.sha256,
+            actual_sha256=item.sha256,
+        )
+        for item in assets
+    )
+    return source.model_copy(
+        update={
+            "asset_validation": validation,
+            "assets": assets,
+            "music": None,
+            "narration": (
+                CompositionNarrationSource(
+                    scene_id="scene-001",
+                    sequence_index=0,
+                    timeline_start_ms=0,
+                    duration_ms=narration_duration_ms,
+                    asset_id=real_narration.asset_id,
+                ),
+            ),
+            "shots": (
+                CompositionShotSource(
+                    scene_id="scene-001",
+                    shot_id="scene-001-shot-001",
+                    scene_number=1,
+                    shot_number=1,
+                    scene_start_ms=0,
+                    shot_start_ms=0,
+                    shot_end_ms=4_000,
+                    transition_kind="none",
+                    transition_duration_ms=0,
+                    video_asset_id=real_video.asset_id,
+                ),
+            ),
+            "sound_effects": (),
+            "subtitles": CompositionSubtitleSource(
+                asset_id=subtitle.asset_id,
+                cue_start_ms=(0,),
+                cue_end_ms=(4_000,),
+                cue_text_sha256=("a" * 64,),
+            ),
+        }
+    )
 
 
 def test_gap_and_duration_mismatch_fail_closed(
