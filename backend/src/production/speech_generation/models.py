@@ -13,6 +13,10 @@ from backend.src.production.application.sanitization import validate_safe_json
 from backend.src.production.domain.base import ContractModel
 from backend.src.production.domain.duration_resolution import DurableDurationResolution
 from backend.src.production.domain.path_rules import validate_relative_path
+from backend.src.production.speech_generation.narration_fitting import (
+    NarrationFittingRecord,
+    NarrationFittingStatus,
+)
 
 SUPPORTED_SPEECH_MANIFEST_VERSIONS = frozenset({"1.0.0"})
 SUPPORTED_SPEECH_ASSET_VERSIONS = frozenset({"1.0.0"})
@@ -180,6 +184,11 @@ class ReadSpeechBinaryAsset(ContractModel):
 
 class SpeechSegmentManifestEntry(ContractModel):
     segment_id: str = Field(pattern=r"^segment-[a-f0-9]{32}$")
+    source_segment_id: str | None = Field(
+        default=None,
+        pattern=r"^segment-[a-f0-9]{32}$",
+    )
+    fitting_revision: int = Field(default=0, ge=0, le=5)
     sequence_index: int = Field(ge=0, le=49)
     source_scene_id: str = Field(pattern=r"^scene-[0-9]{3}$")
     source_shot_id: str | None = Field(
@@ -293,6 +302,10 @@ class SpeechGenerationManifest(ContractModel):
     summary: SpeechGenerationSummary
     status: SpeechGenerationManifestStatus
     duration_resolution: DurableDurationResolution | None = None
+    fitting_records: tuple[NarrationFittingRecord, ...] = Field(
+        default=(),
+        max_length=250,
+    )
     created_at: datetime
     updated_at: datetime
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -324,6 +337,13 @@ class SpeechGenerationManifest(ContractModel):
             raise ValueError("speech manifest entries must be unique")
         if indexes != tuple(range(len(self.entries))):
             raise ValueError("speech manifest entries must use deterministic ordering")
+        fitting_keys = tuple(
+            (record.scene_id, record.attempt_number) for record in self.fitting_records
+        )
+        if len(fitting_keys) != len(set(fitting_keys)):
+            raise ValueError("narration fitting records must be unique per scene and attempt")
+        if tuple(sorted(fitting_keys, key=lambda item: (item[1], item[0]))) != fitting_keys:
+            raise ValueError("narration fitting records must use deterministic ordering")
         if self.summary != summarize_speech_entries(self.entries):
             raise ValueError("speech manifest summary does not match entries")
         if self.status is SpeechGenerationManifestStatus.COMPLETED and any(
@@ -339,8 +359,7 @@ class SpeechGenerationManifest(ContractModel):
                 entry.status is SpeechSegmentStatus.FAILED for entry in self.entries
             )
             has_rejected_duration = (
-                self.duration_resolution is not None
-                and not self.duration_resolution.accepted
+                self.duration_resolution is not None and not self.duration_resolution.accepted
             )
             if not has_failed_entry and not has_rejected_duration:
                 raise ValueError(
@@ -382,8 +401,10 @@ def replace_speech_entry(
     status: SpeechGenerationManifestStatus | None = None,
     updated_at: datetime,
 ) -> SpeechGenerationManifest:
+    source_identity = entry.source_segment_id or entry.segment_id
     entries = tuple(
-        entry if current.segment_id == entry.segment_id else current for current in manifest.entries
+        entry if (current.source_segment_id or current.segment_id) == source_identity else current
+        for current in manifest.entries
     )
     return manifest.model_copy(
         update={
@@ -406,7 +427,10 @@ _ALLOWED_TRANSITIONS = {
         SpeechSegmentStatus.FAILED,
         SpeechSegmentStatus.UNCERTAIN,
     },
-    SpeechSegmentStatus.STORED: {SpeechSegmentStatus.STORED},
+    SpeechSegmentStatus.STORED: {
+        SpeechSegmentStatus.STORED,
+        SpeechSegmentStatus.PENDING,
+    },
     SpeechSegmentStatus.FAILED: {
         SpeechSegmentStatus.FAILED,
         SpeechSegmentStatus.GENERATING,
@@ -438,12 +462,10 @@ def validate_speech_manifest_transition(
         previous.created_at,
         tuple(
             (
-                entry.segment_id,
+                entry.source_segment_id or entry.segment_id,
                 entry.sequence_index,
                 entry.source_scene_id,
                 entry.source_shot_id,
-                entry.narration_text,
-                entry.normalized_text_hash,
                 entry.target_duration_ms,
                 entry.timing_provenance,
             )
@@ -465,12 +487,10 @@ def validate_speech_manifest_transition(
         current.created_at,
         tuple(
             (
-                entry.segment_id,
+                entry.source_segment_id or entry.segment_id,
                 entry.sequence_index,
                 entry.source_scene_id,
                 entry.source_shot_id,
-                entry.narration_text,
-                entry.normalized_text_hash,
                 entry.target_duration_ms,
                 entry.timing_provenance,
             )
@@ -481,9 +501,10 @@ def validate_speech_manifest_transition(
         raise ValueError("speech manifest immutable fields changed")
     if (
         previous.duration_resolution is not None
+        and previous.duration_resolution.accepted
         and current.duration_resolution != previous.duration_resolution
     ):
-        raise ValueError("durable duration resolution changed")
+        raise ValueError("accepted durable duration resolution changed")
     if current.updated_at < previous.updated_at:
         raise ValueError("speech manifest update time moved backward")
     allowed_manifest = {
@@ -524,3 +545,71 @@ def validate_speech_manifest_transition(
             raise ValueError(
                 f"invalid speech transition: {before.status.value} -> {after.status.value}"
             )
+        changed_text = (
+            before.segment_id != after.segment_id
+            or before.narration_text != after.narration_text
+            or before.normalized_text_hash != after.normalized_text_hash
+        )
+        if changed_text:
+            matching = next(
+                (
+                    record
+                    for record in current.fitting_records
+                    if record.scene_id == before.source_scene_id
+                    and record.attempt_number == after.fitting_revision
+                    and record.status is NarrationFittingStatus.COMPLETED
+                    and record.previous_text_hash == before.normalized_text_hash
+                    and record.revised_text_hash == after.normalized_text_hash
+                    and record.revised_narration == after.narration_text
+                ),
+                None,
+            )
+            if matching is None or after.fitting_revision != before.fitting_revision + 1:
+                raise ValueError("speech narration changed without completed fitting record")
+        elif after.fitting_revision != before.fitting_revision:
+            raise ValueError("speech fitting revision changed without narration")
+    _validate_fitting_record_transitions(previous.fitting_records, current.fitting_records)
+
+
+def _validate_fitting_record_transitions(
+    previous: tuple[NarrationFittingRecord, ...],
+    current: tuple[NarrationFittingRecord, ...],
+) -> None:
+    if len(current) < len(previous) or current[: len(previous) - 1] != previous[:-1]:
+        raise ValueError("narration fitting record history changed")
+    for before, after in zip(previous, current, strict=False):
+        if before == after:
+            continue
+        allowed = {
+            NarrationFittingStatus.PREPARED: {NarrationFittingStatus.SUBMITTING},
+            NarrationFittingStatus.SUBMITTING: {
+                NarrationFittingStatus.COMPLETED,
+                NarrationFittingStatus.FAILED,
+                NarrationFittingStatus.UNCERTAIN,
+            },
+            NarrationFittingStatus.COMPLETED: {NarrationFittingStatus.COMPLETED},
+            NarrationFittingStatus.FAILED: {NarrationFittingStatus.FAILED},
+            NarrationFittingStatus.UNCERTAIN: {NarrationFittingStatus.UNCERTAIN},
+        }
+        if after.status not in allowed[before.status]:
+            raise ValueError("invalid narration fitting record transition")
+        identity_before = before.model_copy(
+            update={
+                "status": after.status,
+                "fresh_submission_permitted": after.fresh_submission_permitted,
+                "submission_started_at": after.submission_started_at,
+                "terminal_at": after.terminal_at,
+                "revised_text_hash": after.revised_text_hash,
+                "revised_narration": after.revised_narration,
+                "http_status": after.http_status,
+                "provider_request_id": after.provider_request_id,
+                "input_tokens": after.input_tokens,
+                "output_tokens": after.output_tokens,
+                "total_tokens": after.total_tokens,
+                "reported_cost_usd": after.reported_cost_usd,
+                "finish_reason": after.finish_reason,
+                "safe_error_code": after.safe_error_code,
+            }
+        )
+        if identity_before != after:
+            raise ValueError("narration fitting record immutable fields changed")

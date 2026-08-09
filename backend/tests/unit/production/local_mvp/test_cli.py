@@ -38,6 +38,17 @@ def test_cli_accepts_one_scene_for_controlled_provider_test() -> None:
     assert args.scene_count == 1
 
 
+def test_cli_accepts_explicit_failed_job_retry() -> None:
+    args = generate_video._parser().parse_args(  # noqa: SLF001 - CLI contract test
+        [
+            "--resume-job-id",
+            "1abbd29b-66c0-4544-ba32-b2cf9afd4dba",
+            "--retry-failed",
+        ]
+    )
+    assert args.retry_failed
+
+
 def test_local_mvp_settings_forwards_only_explicit_scripting_environment(
     monkeypatch, tmp_path
 ) -> None:
@@ -86,3 +97,30 @@ def test_local_mvp_settings_forwards_explicit_openrouter_video_environment(
     assert Decimal("0.20") == configured.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD
     assert configured.ORION_VIDEO_CLIP_GENERATION_MAX_REQUESTS_PER_JOB == 1
     assert configured.ORION_ASSET_PUBLISHING_PUBLISHER == "filesystem"
+
+
+def test_local_mvp_settings_forwards_narration_fitting_authorization(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ORION_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setenv("PROJECTS_DIR", str(tmp_path / "projects"))
+    monkeypatch.setenv("TEMP_DIR", str(tmp_path / "temp"))
+    monkeypatch.setenv("ORION_NARRATION_FITTING_PROVIDER", "openrouter")
+    monkeypatch.setenv("ORION_NARRATION_FITTING_ALLOW_BILLABLE_REQUESTS", "true")
+    monkeypatch.setenv(
+        "ORION_NARRATION_FITTING_ESTIMATED_COST_USD_PER_ATTEMPT", "0.001"
+    )
+    monkeypatch.setenv(
+        "ORION_NARRATION_FITTING_MAX_ESTIMATED_COST_USD_PER_ATTEMPT", "0.002"
+    )
+    monkeypatch.setenv("ORION_NARRATION_FITTING_MAX_ESTIMATED_JOB_COST_USD", "0.008")
+
+    configured = generate_video.local_mvp_settings()
+
+    assert configured.ORION_NARRATION_FITTING_PROVIDER == "openrouter"
+    assert configured.ORION_NARRATION_FITTING_MAX_ATTEMPTS == 2
+    assert Decimal("0.008") == (
+        configured.ORION_NARRATION_FITTING_MAX_ESTIMATED_JOB_COST_USD
+    )

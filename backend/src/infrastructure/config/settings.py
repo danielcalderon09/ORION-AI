@@ -173,6 +173,19 @@ class Settings(BaseSettings):
     ORION_SPEECH_GENERATION_REMOTE_MAX_POLL_ATTEMPTS: int = 120
     ORION_SPEECH_GENERATION_REMOTE_POLL_INTERVAL_SECONDS: float = 5
     ORION_SPEECH_GENERATION_REMOTE_JOB_MAX_BYTES: int = 1_000_000
+    ORION_NARRATION_FITTING_PROVIDER: Literal["disabled", "openrouter"] = "disabled"
+    ORION_NARRATION_FITTING_MODEL: str = "google/gemini-2.5-flash-lite"
+    ORION_NARRATION_FITTING_ALLOW_BILLABLE_REQUESTS: bool = False
+    ORION_NARRATION_FITTING_MAX_ATTEMPTS: int = 2
+    ORION_NARRATION_FITTING_ESTIMATED_COST_USD_PER_ATTEMPT: Decimal | None = None
+    ORION_NARRATION_FITTING_MAX_ESTIMATED_COST_USD_PER_ATTEMPT: Decimal | None = None
+    ORION_NARRATION_FITTING_MAX_ESTIMATED_JOB_COST_USD: Decimal | None = None
+    ORION_NARRATION_FITTING_OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    ORION_NARRATION_FITTING_TIMEOUT_SECONDS: float = 60
+    ORION_NARRATION_FITTING_MAX_TRANSPORT_ATTEMPTS: Literal[1] = 1
+    ORION_NARRATION_FITTING_MAX_OUTPUT_TOKENS: int = 512
+    ORION_NARRATION_FITTING_TEMPERATURE: float = 0.1
+    ORION_NARRATION_FITTING_MAX_RESPONSE_BYTES: int = 200_000
     ORION_MUSIC_GENERATION_PROVIDER: Literal["simulated"] = "simulated"
     ORION_MUSIC_GENERATION_MODEL: str = "google/lyria-3-clip-preview"
     ORION_VIDEO_FUTURE_PRIMARY_MODEL: str = "google/veo-3.1-lite"
@@ -580,10 +593,7 @@ class Settings(BaseSettings):
                 or speech_estimate > speech_maximum
             ):
                 raise ValueError("OpenRouter speech cost authorization is invalid")
-            if (
-                speech_estimate * self.ORION_SPEECH_GENERATION_MAX_REQUESTS_PER_JOB
-                > speech_maximum
-            ):
+            if speech_estimate * self.ORION_SPEECH_GENERATION_MAX_REQUESTS_PER_JOB > speech_maximum:
                 raise ValueError("OpenRouter speech job cost authorization is invalid")
         elif (
             self.ORION_SPEECH_GENERATION_ALLOW_BILLABLE_REQUESTS
@@ -592,7 +602,39 @@ class Settings(BaseSettings):
             or self.ORION_SPEECH_GENERATION_REMOTE_ESTIMATED_COST is not None
             or self.ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST is not None
         ):
-            raise ValueError("disabled remote speech cannot configure billing, model, voice, or cost")
+            raise ValueError(
+                "disabled remote speech cannot configure billing, model, voice, or cost"
+            )
+        fitting_enabled = self.ORION_NARRATION_FITTING_PROVIDER == "openrouter"
+        if not 0 <= self.ORION_NARRATION_FITTING_MAX_ATTEMPTS <= 5:
+            raise ValueError("narration fitting attempts are outside safe limits")
+        if self.ORION_NARRATION_FITTING_MAX_TRANSPORT_ATTEMPTS != 1:
+            raise ValueError("narration fitting does not permit automatic transport retries")
+        if fitting_enabled:
+            fitting_values = (
+                self.ORION_NARRATION_FITTING_ESTIMATED_COST_USD_PER_ATTEMPT,
+                self.ORION_NARRATION_FITTING_MAX_ESTIMATED_COST_USD_PER_ATTEMPT,
+                self.ORION_NARRATION_FITTING_MAX_ESTIMATED_JOB_COST_USD,
+            )
+            if (
+                not self.ORION_NARRATION_FITTING_ALLOW_BILLABLE_REQUESTS
+                or self.ORION_NARRATION_FITTING_MAX_ATTEMPTS < 1
+                or not self.ORION_NARRATION_FITTING_MODEL.strip()
+                or any(value is None for value in fitting_values)
+            ):
+                raise ValueError("OpenRouter narration fitting configuration is incomplete")
+            estimate, per_attempt_maximum, job_maximum = fitting_values
+            assert estimate is not None and per_attempt_maximum is not None
+            assert job_maximum is not None
+            if estimate <= 0 or estimate > per_attempt_maximum or estimate > job_maximum:
+                raise ValueError("OpenRouter narration fitting cost authorization is invalid")
+        elif (
+            self.ORION_NARRATION_FITTING_ALLOW_BILLABLE_REQUESTS
+            or self.ORION_NARRATION_FITTING_ESTIMATED_COST_USD_PER_ATTEMPT is not None
+            or self.ORION_NARRATION_FITTING_MAX_ESTIMATED_COST_USD_PER_ATTEMPT is not None
+            or self.ORION_NARRATION_FITTING_MAX_ESTIMATED_JOB_COST_USD is not None
+        ):
+            raise ValueError("disabled narration fitting cannot authorize billing")
         if (
             self.ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS
             > self.ORION_VIDEO_CLIP_GENERATION_MAX_DURATION_SECONDS

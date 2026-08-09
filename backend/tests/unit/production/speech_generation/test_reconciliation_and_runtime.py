@@ -176,6 +176,25 @@ async def test_composition_defaults_to_simulated_and_closes_provider(
     await container.aclose()
 
 
+async def test_composition_builds_explicit_openrouter_narration_fitter(
+    tmp_path: Path,
+) -> None:
+    container = build_production_container(
+        _settings(
+            tmp_path,
+            ORION_OPENROUTER_API_KEY="fake-shared-key",
+            ORION_NARRATION_FITTING_PROVIDER="openrouter",
+            ORION_NARRATION_FITTING_ALLOW_BILLABLE_REQUESTS=True,
+            ORION_NARRATION_FITTING_ESTIMATED_COST_USD_PER_ATTEMPT="0.001",
+            ORION_NARRATION_FITTING_MAX_ESTIMATED_COST_USD_PER_ATTEMPT="0.002",
+            ORION_NARRATION_FITTING_MAX_ESTIMATED_JOB_COST_USD="0.008",
+        )
+    )
+    assert container.narration_fitting_provider.name == "openrouter"
+    assert container.narration_fitting_provider.model == "google/gemini-2.5-flash-lite"
+    await container.aclose()
+
+
 def test_audio_first_stage_order_runs_narration_before_video() -> None:
     pipeline = StageRegistry.PIPELINE
     assert pipeline.index(ProductionStage.GENERATING_NARRATION) == (

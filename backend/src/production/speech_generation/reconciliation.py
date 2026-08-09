@@ -186,6 +186,9 @@ class SpeechGenerationReconciler:
                         "completed speech manifest has incomplete entries",
                     )
                 )
+            referenced_audio.update(
+                record.previous_audio_storage_path for record in manifest.fitting_records
+            )
             for entry in manifest.entries:
                 if entry.status is not SpeechSegmentStatus.STORED:
                     continue

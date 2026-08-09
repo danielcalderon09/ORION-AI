@@ -14,6 +14,7 @@ from backend.src.infrastructure.config.settings import Settings
 from backend.src.production.application.services.exceptions import ProductionApplicationError
 from backend.src.production.composition import build_production_container
 from backend.src.production.composition.schema import ensure_production_schema
+from backend.src.production.domain.enums import ProductionJobStatus
 from backend.src.production.infrastructure.persistence.session import sqlite_url_from_path
 from backend.src.production.local_mvp import (
     LOCAL_MVP_MODE,
@@ -49,6 +50,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--project-id", help="Optional safe local project identifier")
     parser.add_argument("--resume-job-id", type=UUID, help="Resume an existing durable job")
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Explicitly retry a failed durable job before resuming it",
+    )
     parser.add_argument("--mode", choices=(LOCAL_MVP_MODE,), default=LOCAL_MVP_MODE)
     parser.add_argument(
         "--output-summary",
@@ -102,19 +108,13 @@ def local_mvp_settings() -> Settings:
         ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB=(
             discovered.ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB
         ),
-        ORION_VIDEO_CLIP_GENERATION_PROVIDER=(
-            discovered.ORION_VIDEO_CLIP_GENERATION_PROVIDER
-        ),
+        ORION_VIDEO_CLIP_GENERATION_PROVIDER=(discovered.ORION_VIDEO_CLIP_GENERATION_PROVIDER),
         ORION_VIDEO_CLIP_GENERATION_MODEL=discovered.ORION_VIDEO_CLIP_GENERATION_MODEL,
-        ORION_VIDEO_CLIP_GENERATION_RESOLUTION=(
-            discovered.ORION_VIDEO_CLIP_GENERATION_RESOLUTION
-        ),
+        ORION_VIDEO_CLIP_GENERATION_RESOLUTION=(discovered.ORION_VIDEO_CLIP_GENERATION_RESOLUTION),
         ORION_VIDEO_CLIP_GENERATION_GENERATE_AUDIO=(
             discovered.ORION_VIDEO_CLIP_GENERATION_GENERATE_AUDIO
         ),
-        ORION_VIDEO_CLIP_GENERATION_FRAME_RATE=(
-            discovered.ORION_VIDEO_CLIP_GENERATION_FRAME_RATE
-        ),
+        ORION_VIDEO_CLIP_GENERATION_FRAME_RATE=(discovered.ORION_VIDEO_CLIP_GENERATION_FRAME_RATE),
         ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS=(
             discovered.ORION_VIDEO_CLIP_GENERATION_DURATION_SECONDS
         ),
@@ -152,12 +152,8 @@ def local_mvp_settings() -> Settings:
             discovered.ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER
         ),
         ORION_ASSET_PUBLISHING_PUBLISHER=discovered.ORION_ASSET_PUBLISHING_PUBLISHER,
-        ORION_ASSET_PUBLISHING_PUBLIC_ROOT=(
-            discovered.ORION_ASSET_PUBLISHING_PUBLIC_ROOT
-        ),
-        ORION_ASSET_PUBLISHING_PUBLIC_BASE_URL=(
-            discovered.ORION_ASSET_PUBLISHING_PUBLIC_BASE_URL
-        ),
+        ORION_ASSET_PUBLISHING_PUBLIC_ROOT=(discovered.ORION_ASSET_PUBLISHING_PUBLIC_ROOT),
+        ORION_ASSET_PUBLISHING_PUBLIC_BASE_URL=(discovered.ORION_ASSET_PUBLISHING_PUBLIC_BASE_URL),
         ORION_ASSET_PUBLISHING_LIFETIME_SECONDS=(
             discovered.ORION_ASSET_PUBLISHING_LIFETIME_SECONDS
         ),
@@ -170,12 +166,8 @@ def local_mvp_settings() -> Settings:
         ORION_SPEECH_GENERATION_REMOTE_PROVIDER=(
             discovered.ORION_SPEECH_GENERATION_REMOTE_PROVIDER
         ),
-        ORION_SPEECH_GENERATION_REMOTE_MODEL=(
-            discovered.ORION_SPEECH_GENERATION_REMOTE_MODEL
-        ),
-        ORION_SPEECH_GENERATION_REMOTE_VOICE=(
-            discovered.ORION_SPEECH_GENERATION_REMOTE_VOICE
-        ),
+        ORION_SPEECH_GENERATION_REMOTE_MODEL=(discovered.ORION_SPEECH_GENERATION_REMOTE_MODEL),
+        ORION_SPEECH_GENERATION_REMOTE_VOICE=(discovered.ORION_SPEECH_GENERATION_REMOTE_VOICE),
         ORION_SPEECH_GENERATION_REMOTE_ESTIMATED_COST=(
             discovered.ORION_SPEECH_GENERATION_REMOTE_ESTIMATED_COST
         ),
@@ -184,6 +176,37 @@ def local_mvp_settings() -> Settings:
         ),
         ORION_SPEECH_GENERATION_MAX_REQUESTS_PER_JOB=(
             discovered.ORION_SPEECH_GENERATION_MAX_REQUESTS_PER_JOB
+        ),
+        ORION_NARRATION_FITTING_PROVIDER=discovered.ORION_NARRATION_FITTING_PROVIDER,
+        ORION_NARRATION_FITTING_MODEL=discovered.ORION_NARRATION_FITTING_MODEL,
+        ORION_NARRATION_FITTING_ALLOW_BILLABLE_REQUESTS=(
+            discovered.ORION_NARRATION_FITTING_ALLOW_BILLABLE_REQUESTS
+        ),
+        ORION_NARRATION_FITTING_MAX_ATTEMPTS=(discovered.ORION_NARRATION_FITTING_MAX_ATTEMPTS),
+        ORION_NARRATION_FITTING_ESTIMATED_COST_USD_PER_ATTEMPT=(
+            discovered.ORION_NARRATION_FITTING_ESTIMATED_COST_USD_PER_ATTEMPT
+        ),
+        ORION_NARRATION_FITTING_MAX_ESTIMATED_COST_USD_PER_ATTEMPT=(
+            discovered.ORION_NARRATION_FITTING_MAX_ESTIMATED_COST_USD_PER_ATTEMPT
+        ),
+        ORION_NARRATION_FITTING_MAX_ESTIMATED_JOB_COST_USD=(
+            discovered.ORION_NARRATION_FITTING_MAX_ESTIMATED_JOB_COST_USD
+        ),
+        ORION_NARRATION_FITTING_OPENROUTER_BASE_URL=(
+            discovered.ORION_NARRATION_FITTING_OPENROUTER_BASE_URL
+        ),
+        ORION_NARRATION_FITTING_TIMEOUT_SECONDS=(
+            discovered.ORION_NARRATION_FITTING_TIMEOUT_SECONDS
+        ),
+        ORION_NARRATION_FITTING_MAX_TRANSPORT_ATTEMPTS=(
+            discovered.ORION_NARRATION_FITTING_MAX_TRANSPORT_ATTEMPTS
+        ),
+        ORION_NARRATION_FITTING_MAX_OUTPUT_TOKENS=(
+            discovered.ORION_NARRATION_FITTING_MAX_OUTPUT_TOKENS
+        ),
+        ORION_NARRATION_FITTING_TEMPERATURE=(discovered.ORION_NARRATION_FITTING_TEMPERATURE),
+        ORION_NARRATION_FITTING_MAX_RESPONSE_BYTES=(
+            discovered.ORION_NARRATION_FITTING_MAX_RESPONSE_BYTES
         ),
         ORION_MUSIC_GENERATION_PROVIDER="simulated",
         ORION_SOUND_EFFECT_GENERATION_PROVIDER="simulated",
@@ -203,10 +226,19 @@ def _print_progress(item: LocalMvpProgress) -> None:
 
 
 async def _run(args: argparse.Namespace) -> int:
+    if args.retry_failed and args.resume_job_id is None:
+        raise ValueError("--retry-failed requires --resume-job-id")
     settings = local_mvp_settings()
     container = build_production_container(settings)
     try:
         await ensure_production_schema(settings, container.engine)
+        if args.retry_failed and args.resume_job_id is not None:
+            current = await container.get_job.execute(args.resume_job_id)
+            if current.job.status in {
+                ProductionJobStatus.FAILED,
+                ProductionJobStatus.NEEDS_USER_ACTION,
+            }:
+                await container.retry_job.execute(args.resume_job_id)
         application = LocalMvpApplication(
             create_job=container.create_job,
             get_job=container.get_job,

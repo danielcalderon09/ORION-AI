@@ -5,6 +5,7 @@ import hashlib
 import logging
 from collections.abc import Callable
 from datetime import datetime
+from decimal import Decimal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from backend.src.production.application.commands import StageCommand
@@ -53,6 +54,19 @@ from backend.src.production.speech_generation.models import (
     replace_speech_entry,
     summarize_speech_entries,
 )
+from backend.src.production.speech_generation.narration_fitting import (
+    DisabledNarrationFittingProvider,
+    NarrationFittingConfiguration,
+    NarrationFittingProvider,
+    NarrationFittingProviderError,
+    NarrationFittingRecord,
+    NarrationFittingRequest,
+    NarrationFittingStatus,
+    NarrationFittingUncertainError,
+    narration_fitting_fingerprint,
+    narration_text_hash,
+    validate_narration_revision,
+)
 from backend.src.production.speech_generation.ports import (
     ReadSpeechSourceScript,
     SpeechAudioStore,
@@ -85,6 +99,8 @@ class SpeechGenerationHandler:
         configuration: SpeechGenerationConfiguration,
         clock: Callable[[], datetime],
         duration_resolution_policy: DurationResolutionPolicy | None = None,
+        narration_fitter: NarrationFittingProvider | None = None,
+        narration_fitting_configuration: NarrationFittingConfiguration | None = None,
     ) -> None:
         self._reader = script_reader
         self._provider = provider
@@ -92,8 +108,10 @@ class SpeechGenerationHandler:
         self._writer = manifest_writer
         self._configuration = configuration
         self._clock = clock
-        self._duration_resolution_policy = (
-            duration_resolution_policy or DurationResolutionPolicy()
+        self._duration_resolution_policy = duration_resolution_policy or DurationResolutionPolicy()
+        self._narration_fitter = narration_fitter or DisabledNarrationFittingProvider()
+        self._fitting_configuration = (
+            narration_fitting_configuration or NarrationFittingConfiguration()
         )
 
     async def execute(
@@ -121,12 +139,13 @@ class SpeechGenerationHandler:
                 self._validate_existing(manifest, source, segments, command)
 
             stored_assets: dict[str, SpeechBinaryAsset] = {}
-            for segment in segments:
-                entry = _entry_for(manifest, segment.segment_id)
+            for source_segment in segments:
+                entry = _entry_for_source(manifest, source_segment.segment_id)
+                segment = _active_segment(source_segment, entry)
                 request = self._write_request(command, context, segment)
                 if entry.status is SpeechSegmentStatus.STORED:
                     asset = await self._recover_stored(entry, request)
-                    stored_assets[segment.segment_id] = asset
+                    stored_assets[entry.segment_id] = asset
                     continue
 
                 recovered = await self._store.recover(request=request)
@@ -172,7 +191,7 @@ class SpeechGenerationHandler:
                         current=current,
                     )
                     manifest = current
-                    stored_assets[segment.segment_id] = recovered
+                    stored_assets[entry.segment_id] = recovered
                     continue
 
                 if entry.status is SpeechSegmentStatus.GENERATING:
@@ -292,7 +311,7 @@ class SpeechGenerationHandler:
                         current=current,
                     )
                     manifest = current
-                    stored_assets[segment.segment_id] = verified.asset
+                    stored_assets[stored.segment_id] = verified.asset
                 except asyncio.CancelledError:
                     raise
                 except SpeechProviderUncertainError:
@@ -320,51 +339,23 @@ class SpeechGenerationHandler:
                         "speech_segment_generation_failed",
                     )
 
-            scene_ids = tuple(entry.source_scene_id for entry in manifest.entries)
-            planned_durations = tuple(
-                entry.target_duration_ms or 0 for entry in manifest.entries
+            manifest, stored_assets, fitting_error = await self._fit_until_accepted(
+                command=command,
+                context=context,
+                source=source,
+                source_segments=segments,
+                manifest=manifest,
+                stored_assets=stored_assets,
             )
-            narration_durations = tuple(
-                entry.duration_ms or 0 for entry in manifest.entries
-            )
-            try:
-                resolution = resolve_audio_first_durations(
-                    requested_target_duration_ms=sum(planned_durations),
-                    planned_scene_durations_ms=planned_durations,
-                    narration_scene_durations_ms=narration_durations,
-                    policy=self._duration_resolution_policy,
+            if fitting_error is not None:
+                outcome = (
+                    StageOutcome.NEEDS_USER_ACTION
+                    if fitting_error == "narration_fitting_uncertain"
+                    else StageOutcome.FAILED_PERMANENT
                 )
-            except DurationResolutionError as exc:
-                rejected = durable_duration_resolution(
-                    scene_ids=scene_ids,
-                    planned_scene_durations_ms=planned_durations,
-                    narration_scene_durations_ms=narration_durations,
-                    resolution=exc.resolution,
-                )
-                failed = manifest.model_copy(
-                    update={
-                        "status": SpeechGenerationManifestStatus.FAILED,
-                        "duration_resolution": rejected,
-                        "updated_at": self._aware_now(),
-                    }
-                )
-                await self._writer.checkpoint(
-                    context=context,
-                    previous=manifest,
-                    current=failed,
-                )
-                return self._failure(
-                    command,
-                    started_at,
-                    StageOutcome.FAILED_PERMANENT,
-                    "duration_resolution_invalid",
-                )
-            durable_resolution = durable_duration_resolution(
-                scene_ids=scene_ids,
-                planned_scene_durations_ms=planned_durations,
-                narration_scene_durations_ms=narration_durations,
-                resolution=resolution,
-            )
+                return self._failure(command, started_at, outcome, fitting_error)
+            durable_resolution = manifest.duration_resolution
+            assert durable_resolution is not None and durable_resolution.accepted
             completed = manifest.model_copy(
                 update={
                     "status": SpeechGenerationManifestStatus.COMPLETED,
@@ -410,6 +401,561 @@ class SpeechGenerationHandler:
                 "speech_generation_invalid",
             )
 
+    async def _fit_until_accepted(
+        self,
+        *,
+        command: StageCommand,
+        context: StageContext,
+        source: ReadSpeechSourceScript,
+        source_segments: tuple[SpeechSegmentRequest, ...],
+        manifest: SpeechGenerationManifest,
+        stored_assets: dict[str, SpeechBinaryAsset],
+    ) -> tuple[
+        SpeechGenerationManifest,
+        dict[str, SpeechBinaryAsset],
+        str | None,
+    ]:
+        if (
+            manifest.status is SpeechGenerationManifestStatus.COMPLETED
+            and manifest.duration_resolution is not None
+            and manifest.duration_resolution.accepted
+        ):
+            return manifest, stored_assets, None
+        while True:
+            scene_ids = tuple(entry.source_scene_id for entry in manifest.entries)
+            planned = tuple(entry.target_duration_ms or 0 for entry in manifest.entries)
+            narration = tuple(entry.duration_ms or 0 for entry in manifest.entries)
+            try:
+                resolution = resolve_audio_first_durations(
+                    requested_target_duration_ms=sum(planned),
+                    planned_scene_durations_ms=planned,
+                    narration_scene_durations_ms=narration,
+                    policy=self._duration_resolution_policy,
+                )
+            except DurationResolutionError as exc:
+                durable = durable_duration_resolution(
+                    scene_ids=scene_ids,
+                    planned_scene_durations_ms=planned,
+                    narration_scene_durations_ms=narration,
+                    resolution=exc.resolution,
+                )
+                rejected = manifest.model_copy(
+                    update={
+                        "status": SpeechGenerationManifestStatus.FAILED,
+                        "duration_resolution": durable,
+                        "updated_at": self._aware_now(),
+                    }
+                )
+                if rejected != manifest:
+                    await self._writer.checkpoint(
+                        context=context,
+                        previous=manifest,
+                        current=rejected,
+                    )
+                manifest = rejected
+            else:
+                durable = durable_duration_resolution(
+                    scene_ids=scene_ids,
+                    planned_scene_durations_ms=planned,
+                    narration_scene_durations_ms=narration,
+                    resolution=resolution,
+                )
+                accepted = manifest.model_copy(
+                    update={
+                        "status": SpeechGenerationManifestStatus.IN_PROGRESS,
+                        "duration_resolution": durable,
+                        "updated_at": self._aware_now(),
+                    }
+                )
+                if accepted != manifest:
+                    await self._writer.checkpoint(
+                        context=context,
+                        previous=manifest,
+                        current=accepted,
+                    )
+                return accepted, stored_assets, None
+
+            if self._fitting_configuration.provider == "disabled":
+                return manifest, stored_assets, "duration_resolution_invalid"
+            attempt = 1 + max((entry.fitting_revision for entry in manifest.entries), default=0)
+            if attempt > self._fitting_configuration.maximum_attempts:
+                return manifest, stored_assets, "narration_fitting_exhausted"
+            overrun_candidates = tuple(
+                entry
+                for entry in manifest.entries
+                if entry.duration_ms is not None
+                and entry.target_duration_ms is not None
+                and entry.duration_ms > entry.target_duration_ms
+            )
+            if not overrun_candidates:
+                return manifest, stored_assets, "narration_fitting_exhausted"
+            candidates = overrun_candidates
+            if attempt > 1:
+                assert manifest.duration_resolution is not None
+                excess = (
+                    manifest.duration_resolution.resolved_duration_ms
+                    - manifest.duration_resolution.maximum_allowed_duration_ms
+                )
+                selected: list[SpeechSegmentManifestEntry] = []
+                recoverable = 0
+                for item in sorted(
+                    overrun_candidates,
+                    key=lambda value: (
+                        -((value.duration_ms or 0) - (value.target_duration_ms or 0)),
+                        value.sequence_index,
+                    ),
+                ):
+                    selected.append(item)
+                    recoverable += (item.duration_ms or 0) - (item.target_duration_ms or 0)
+                    if recoverable >= excess:
+                        break
+                candidates = tuple(sorted(selected, key=lambda value: value.sequence_index))
+            for candidate in candidates:
+                manifest, record, error = await self._completed_fitting_record(
+                    command=command,
+                    context=context,
+                    source=source,
+                    manifest=manifest,
+                    entry=candidate,
+                    attempt=attempt,
+                )
+                if error is not None:
+                    return manifest, stored_assets, error
+                assert record.revised_narration is not None
+                assert record.revised_text_hash is not None
+                current_entry = next(
+                    item
+                    for item in manifest.entries
+                    if item.source_scene_id == candidate.source_scene_id
+                )
+                if current_entry.fitting_revision < attempt:
+                    old_segment_id = current_entry.segment_id
+                    revised_segment_id = _revised_segment_id(
+                        current_entry.source_segment_id or current_entry.segment_id,
+                        attempt,
+                        record.revised_text_hash,
+                    )
+                    revised_entry = current_entry.model_copy(
+                        update={
+                            "segment_id": revised_segment_id,
+                            "source_segment_id": (
+                                current_entry.source_segment_id or current_entry.segment_id
+                            ),
+                            "fitting_revision": attempt,
+                            "narration_text": record.revised_narration,
+                            "normalized_text_hash": record.revised_text_hash,
+                            "status": SpeechSegmentStatus.PENDING,
+                            "audio_binary_asset_id": None,
+                            "audio_artifact_id": None,
+                            "storage_path": None,
+                            "mime_type": None,
+                            "extension": None,
+                            "sha256": None,
+                            "size_bytes": None,
+                            "duration_ms": None,
+                            "sample_rate_hz": None,
+                            "channel_count": None,
+                            "sample_width_bytes": None,
+                            "frame_count": None,
+                            "provider": None,
+                            "generation_started_at": None,
+                            "created_at": None,
+                            "error_code": None,
+                            "metadata": {
+                                "fitting_attempt": attempt,
+                                "previous_duration_ms": record.previous_duration_ms,
+                            },
+                        }
+                    )
+                    revised = replace_speech_entry(
+                        manifest,
+                        revised_entry,
+                        status=SpeechGenerationManifestStatus.IN_PROGRESS,
+                        updated_at=self._aware_now(),
+                    )
+                    await self._writer.checkpoint(
+                        context=context,
+                        previous=manifest,
+                        current=revised,
+                    )
+                    manifest = revised
+                    stored_assets.pop(old_segment_id, None)
+            for candidate in candidates:
+                current_entry = next(
+                    item
+                    for item in manifest.entries
+                    if item.source_scene_id == candidate.source_scene_id
+                )
+                source_segment = next(
+                    item
+                    for item in source_segments
+                    if item.scene_id == current_entry.source_scene_id
+                )
+                active_segment = _active_segment(source_segment, current_entry)
+                if current_entry.status is not SpeechSegmentStatus.STORED:
+                    manifest, asset, error = await self._generate_fitted_audio(
+                        command=command,
+                        context=context,
+                        manifest=manifest,
+                        segment=active_segment,
+                    )
+                    if error is not None:
+                        return manifest, stored_assets, error
+                    assert asset is not None
+                    stored_assets[active_segment.segment_id] = asset
+
+    async def _completed_fitting_record(
+        self,
+        *,
+        command: StageCommand,
+        context: StageContext,
+        source: ReadSpeechSourceScript,
+        manifest: SpeechGenerationManifest,
+        entry: SpeechSegmentManifestEntry,
+        attempt: int,
+    ) -> tuple[SpeechGenerationManifest, NarrationFittingRecord, str | None]:
+        existing = next(
+            (
+                record
+                for record in manifest.fitting_records
+                if record.scene_id == entry.source_scene_id and record.attempt_number == attempt
+            ),
+            None,
+        )
+        if existing is not None:
+            if existing.status is NarrationFittingStatus.COMPLETED:
+                return manifest, existing, None
+            if existing.status in {
+                NarrationFittingStatus.SUBMITTING,
+                NarrationFittingStatus.UNCERTAIN,
+            }:
+                if existing.status is NarrationFittingStatus.SUBMITTING:
+                    uncertain = existing.model_copy(
+                        update={
+                            "status": NarrationFittingStatus.UNCERTAIN,
+                            "terminal_at": self._aware_now(),
+                            "safe_error_code": "interrupted_submission",
+                        }
+                    )
+                    manifest = await self._replace_fitting_record(
+                        context=context,
+                        manifest=manifest,
+                        record=uncertain,
+                    )
+                    existing = uncertain
+                return manifest, existing, "narration_fitting_uncertain"
+            return manifest, existing, "narration_fitting_provider_error"
+        configuration = self._fitting_configuration
+        assert configuration.estimated_cost_usd_per_attempt is not None
+        assert configuration.maximum_estimated_cost_usd_per_attempt is not None
+        assert configuration.maximum_estimated_job_cost_usd is not None
+        projected = (
+            sum(
+                (record.estimated_cost_usd for record in manifest.fitting_records),
+                Decimal(0),
+            )
+            + configuration.estimated_cost_usd_per_attempt
+        )
+        if projected > configuration.maximum_estimated_job_cost_usd:
+            placeholder = self._prepared_fitting_record(
+                command=command,
+                source=source,
+                entry=entry,
+                attempt=attempt,
+            )
+            return manifest, placeholder, "narration_fitting_cost_policy"
+        request = self._fitting_request(command, source, entry, attempt)
+        prepared = self._prepared_fitting_record(
+            command=command,
+            source=source,
+            entry=entry,
+            attempt=attempt,
+        )
+        prepared_manifest = manifest.model_copy(
+            update={
+                "fitting_records": (*manifest.fitting_records, prepared),
+                "status": SpeechGenerationManifestStatus.IN_PROGRESS,
+                "updated_at": self._aware_now(),
+            }
+        )
+        await self._writer.checkpoint(
+            context=context,
+            previous=manifest,
+            current=prepared_manifest,
+        )
+        submitting = prepared.model_copy(
+            update={
+                "status": NarrationFittingStatus.SUBMITTING,
+                "fresh_submission_permitted": False,
+                "submission_started_at": self._aware_now(),
+            }
+        )
+        manifest = await self._replace_fitting_record(
+            context=context,
+            manifest=prepared_manifest,
+            record=submitting,
+        )
+        logger.info(
+            "fitting narration text",
+            extra={
+                "job_id": str(command.job_id),
+                "scene_id": entry.source_scene_id,
+                "fitting_attempt": attempt,
+            },
+        )
+        try:
+            result = await self._narration_fitter.revise(request)
+        except asyncio.CancelledError:
+            raise
+        except NarrationFittingUncertainError:
+            uncertain = submitting.model_copy(
+                update={
+                    "status": NarrationFittingStatus.UNCERTAIN,
+                    "terminal_at": self._aware_now(),
+                    "safe_error_code": "uncertain_transport",
+                }
+            )
+            manifest = await self._replace_fitting_record(
+                context=context,
+                manifest=manifest,
+                record=uncertain,
+            )
+            return manifest, uncertain, "narration_fitting_uncertain"
+        except NarrationFittingProviderError:
+            failed = submitting.model_copy(
+                update={
+                    "status": NarrationFittingStatus.FAILED,
+                    "terminal_at": self._aware_now(),
+                    "safe_error_code": "provider_error",
+                }
+            )
+            manifest = await self._replace_fitting_record(
+                context=context,
+                manifest=manifest,
+                record=failed,
+            )
+            return manifest, failed, "narration_fitting_provider_error"
+        try:
+            revised_narration = validate_narration_revision(
+                entry.narration_text,
+                result.revised_narration,
+            )
+        except NarrationFittingProviderError:
+            failed = submitting.model_copy(
+                update={
+                    "status": NarrationFittingStatus.FAILED,
+                    "terminal_at": self._aware_now(),
+                    "safe_error_code": "revision_contract",
+                }
+            )
+            manifest = await self._replace_fitting_record(
+                context=context,
+                manifest=manifest,
+                record=failed,
+            )
+            return manifest, failed, "narration_fitting_provider_error"
+        completed = submitting.model_copy(
+            update={
+                "status": NarrationFittingStatus.COMPLETED,
+                "terminal_at": self._aware_now(),
+                "revised_narration": revised_narration,
+                "revised_text_hash": narration_text_hash(revised_narration),
+                "http_status": result.http_status,
+                "provider_request_id": result.provider_request_id,
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+                "total_tokens": result.total_tokens,
+                "reported_cost_usd": result.reported_cost_usd,
+                "finish_reason": result.finish_reason,
+            }
+        )
+        manifest = await self._replace_fitting_record(
+            context=context,
+            manifest=manifest,
+            record=completed,
+        )
+        return manifest, completed, None
+
+    def _fitting_request(
+        self,
+        command: StageCommand,
+        source: ReadSpeechSourceScript,
+        entry: SpeechSegmentManifestEntry,
+        attempt: int,
+    ) -> NarrationFittingRequest:
+        assert entry.duration_ms is not None and entry.target_duration_ms is not None
+        return NarrationFittingRequest(
+            job_id=command.job_id,
+            scene_id=entry.source_scene_id,
+            sequence_index=entry.sequence_index,
+            attempt_number=attempt,
+            current_narration=entry.narration_text,
+            current_duration_ms=entry.duration_ms,
+            target_duration_ms=entry.target_duration_ms,
+            language=source.script.language,
+            tone=source.script.tone,
+        )
+
+    def _prepared_fitting_record(
+        self,
+        *,
+        command: StageCommand,
+        source: ReadSpeechSourceScript,
+        entry: SpeechSegmentManifestEntry,
+        attempt: int,
+    ) -> NarrationFittingRecord:
+        request = self._fitting_request(command, source, entry, attempt)
+        configuration = self._fitting_configuration
+        assert configuration.estimated_cost_usd_per_attempt is not None
+        assert configuration.maximum_estimated_cost_usd_per_attempt is not None
+        assert entry.duration_ms is not None and entry.target_duration_ms is not None
+        assert entry.audio_binary_asset_id is not None
+        assert entry.storage_path is not None
+        assert entry.sha256 is not None
+        overrun = entry.duration_ms - entry.target_duration_ms
+        return NarrationFittingRecord(
+            scene_id=entry.source_scene_id,
+            sequence_index=entry.sequence_index,
+            attempt_number=attempt,
+            previous_text_hash=entry.normalized_text_hash,
+            previous_duration_ms=entry.duration_ms,
+            previous_audio_binary_asset_id=entry.audio_binary_asset_id,
+            previous_audio_storage_path=entry.storage_path,
+            previous_audio_sha256=entry.sha256,
+            target_duration_ms=entry.target_duration_ms,
+            overrun_ms=overrun,
+            overrun_ratio=(Decimal(overrun) / Decimal(entry.target_duration_ms)),
+            provider=self._narration_fitter.name,
+            model=self._narration_fitter.model,
+            estimated_cost_usd=configuration.estimated_cost_usd_per_attempt,
+            maximum_authorized_cost_usd=(configuration.maximum_estimated_cost_usd_per_attempt),
+            request_fingerprint=narration_fitting_fingerprint(
+                request,
+                self._narration_fitter.model,
+            ),
+            status=NarrationFittingStatus.PREPARED,
+            fresh_submission_permitted=True,
+            prepared_at=self._aware_now(),
+        )
+
+    async def _replace_fitting_record(
+        self,
+        *,
+        context: StageContext,
+        manifest: SpeechGenerationManifest,
+        record: NarrationFittingRecord,
+    ) -> SpeechGenerationManifest:
+        records = tuple(
+            record
+            if item.scene_id == record.scene_id and item.attempt_number == record.attempt_number
+            else item
+            for item in manifest.fitting_records
+        )
+        current = manifest.model_copy(
+            update={
+                "fitting_records": records,
+                "updated_at": self._aware_now(),
+            }
+        )
+        await self._writer.checkpoint(
+            context=context,
+            previous=manifest,
+            current=current,
+        )
+        return current
+
+    async def _generate_fitted_audio(
+        self,
+        *,
+        command: StageCommand,
+        context: StageContext,
+        manifest: SpeechGenerationManifest,
+        segment: SpeechSegmentRequest,
+    ) -> tuple[SpeechGenerationManifest, SpeechBinaryAsset | None, str | None]:
+        entry = _entry_for(manifest, segment.segment_id)
+        request = self._write_request(command, context, segment)
+        recovered = await self._store.recover(request=request)
+        if recovered is not None:
+            stored = self._stored_entry(entry=entry, asset=recovered, recovered=True)
+            current = replace_speech_entry(
+                manifest,
+                stored,
+                status=SpeechGenerationManifestStatus.IN_PROGRESS,
+                updated_at=self._aware_now(),
+            )
+            await self._writer.checkpoint(
+                context=context,
+                previous=manifest,
+                current=current,
+            )
+            return current, recovered, None
+        generating = entry.model_copy(
+            update={
+                "status": SpeechSegmentStatus.GENERATING,
+                "generation_attempt_count": entry.generation_attempt_count + 1,
+                "generation_started_at": self._aware_now(),
+                "error_code": None,
+            }
+        )
+        current = replace_speech_entry(
+            manifest,
+            generating,
+            status=SpeechGenerationManifestStatus.IN_PROGRESS,
+            updated_at=self._aware_now(),
+        )
+        await self._writer.checkpoint(
+            context=context,
+            previous=manifest,
+            current=current,
+        )
+        manifest = current
+        logger.info(
+            "fitting narration audio",
+            extra={
+                "job_id": str(command.job_id),
+                "scene_id": entry.source_scene_id,
+                "fitting_attempt": entry.fitting_revision,
+            },
+        )
+        try:
+            response = await self._provider.generate(
+                self._provider_request(command, context, segment)
+            )
+            self._validate_response(response, request.expected)
+            if self._configuration.provider == "openrouter":
+                request = request.model_copy(update={"expected": response.audio})
+            asset = await self._store.write(request=request, content=response.content)
+            verified = await self._store.read(asset=asset)
+        except asyncio.CancelledError:
+            raise
+        except SpeechProviderUncertainError:
+            await self._checkpoint_uncertain(
+                context=context,
+                manifest=manifest,
+                entry=generating,
+            )
+            return manifest, None, "speech_submission_uncertain"
+        except (SpeechProviderError, SpeechAudioStoreError):
+            await self._checkpoint_failed(
+                context=context,
+                manifest=manifest,
+                entry=generating,
+            )
+            return manifest, None, "speech_segment_generation_failed"
+        stored = self._stored_entry(entry=generating, asset=verified.asset, recovered=False)
+        current = replace_speech_entry(
+            manifest,
+            stored,
+            status=SpeechGenerationManifestStatus.IN_PROGRESS,
+            updated_at=self._aware_now(),
+        )
+        await self._writer.checkpoint(
+            context=context,
+            previous=manifest,
+            current=current,
+        )
+        return current, verified.asset, None
+
     def _initial_manifest(
         self,
         *,
@@ -420,6 +966,7 @@ class SpeechGenerationHandler:
         entries = tuple(
             SpeechSegmentManifestEntry(
                 segment_id=segment.segment_id,
+                source_segment_id=segment.segment_id,
                 sequence_index=segment.sequence_index,
                 source_scene_id=segment.scene_id,
                 source_shot_id=segment.shot_id,
@@ -471,10 +1018,8 @@ class SpeechGenerationHandler:
             or manifest.source_script_sha256 != source.sha256
             or manifest.source_script_schema_version != source.schema_version
             or manifest.configuration_fingerprint != self._configuration.fingerprint()
-            or tuple(entry.segment_id for entry in manifest.entries)
+            or tuple(entry.source_segment_id or entry.segment_id for entry in manifest.entries)
             != tuple(segment.segment_id for segment in segments)
-            or tuple(entry.normalized_text_hash for entry in manifest.entries)
-            != tuple(segment.normalized_text_hash for segment in segments)
         ):
             raise SpeechManifestError("speech manifest source or configuration changed")
 
@@ -837,6 +1382,42 @@ def _entry_for(
     segment_id: str,
 ) -> SpeechSegmentManifestEntry:
     return next(entry for entry in manifest.entries if entry.segment_id == segment_id)
+
+
+def _entry_for_source(
+    manifest: SpeechGenerationManifest,
+    source_segment_id: str,
+) -> SpeechSegmentManifestEntry:
+    return next(
+        entry
+        for entry in manifest.entries
+        if (entry.source_segment_id or entry.segment_id) == source_segment_id
+    )
+
+
+def _active_segment(
+    source: SpeechSegmentRequest,
+    entry: SpeechSegmentManifestEntry,
+) -> SpeechSegmentRequest:
+    if (
+        source.segment_id == entry.segment_id
+        and source.normalized_text_hash == entry.normalized_text_hash
+    ):
+        return source
+    return source.model_copy(
+        update={
+            "segment_id": entry.segment_id,
+            "narration_text": entry.narration_text,
+            "normalized_text_hash": entry.normalized_text_hash,
+        }
+    )
+
+
+def _revised_segment_id(source_segment_id: str, attempt: int, revised_hash: str) -> str:
+    digest = hashlib.sha256(f"{source_segment_id}:{attempt}:{revised_hash}".encode()).hexdigest()[
+        :32
+    ]
+    return f"segment-{digest}"
 
 
 def _audio_artifact_id(job_id: UUID, segment_id: str) -> UUID:

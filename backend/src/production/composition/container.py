@@ -301,6 +301,11 @@ from backend.src.production.speech_generation.handler import (
 from backend.src.production.speech_generation.manifest_writer import (
     LocalSpeechManifestWriter,
 )
+from backend.src.production.speech_generation.narration_fitting import (
+    DisabledNarrationFittingProvider,
+    NarrationFittingConfiguration,
+    NarrationFittingProvider,
+)
 from backend.src.production.speech_generation.ports import (
     SpeechAudioStore,
     SpeechGenerationProvider,
@@ -308,6 +313,9 @@ from backend.src.production.speech_generation.ports import (
 from backend.src.production.speech_generation.providers import (
     OpenRouterSpeechGenerationProvider,
     SimulatedSpeechGenerationProvider,
+)
+from backend.src.production.speech_generation.providers.openrouter_narration_fitter import (
+    OpenRouterNarrationFittingProvider,
 )
 from backend.src.production.speech_generation.reconciliation import (
     SpeechGenerationReconciler,
@@ -419,6 +427,7 @@ class ProductionContainer:
     image_acquisition_provider: ImageAcquisitionProvider
     video_clip_generation_provider: VideoClipGenerationProvider
     speech_generation_provider: SpeechGenerationProvider
+    narration_fitting_provider: NarrationFittingProvider
     music_generation_provider: MusicGenerationProvider
     sound_effect_generation_provider: SoundEffectGenerationProvider
     speech_capability_source: SpeechCapabilitySource
@@ -611,18 +620,12 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         clock=clock,
         billable_policy=(
             OpenRouterImageBillablePolicy(
-                allow_billable_requests=(
-                    settings.ORION_IMAGE_ACQUISITION_ALLOW_BILLABLE_REQUESTS
-                ),
-                estimated_cost_usd=(
-                    settings.ORION_IMAGE_ACQUISITION_ESTIMATED_COST_USD
-                ),
+                allow_billable_requests=(settings.ORION_IMAGE_ACQUISITION_ALLOW_BILLABLE_REQUESTS),
+                estimated_cost_usd=(settings.ORION_IMAGE_ACQUISITION_ESTIMATED_COST_USD),
                 maximum_authorized_cost_usd=(
                     settings.ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD
                 ),
-                maximum_requests_per_job=(
-                    settings.ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB
-                ),
+                maximum_requests_per_job=(settings.ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB),
             )
             if settings.ORION_IMAGE_ACQUISITION_PROVIDER == "openrouter"
             else None
@@ -656,8 +659,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         clock=clock,
     )
     publication_root = validate_dedicated_publication_root(
-        settings.ORION_ASSET_PUBLISHING_PUBLIC_ROOT
-        or settings.PROJECTS_DIR / ".published-assets",
+        settings.ORION_ASSET_PUBLISHING_PUBLIC_ROOT or settings.PROJECTS_DIR / ".published-assets",
         forbidden_roots=(settings.ORION_HOME, settings.PROJECTS_DIR),
     )
     asset_publishing_configuration = AssetPublishingConfiguration(
@@ -782,9 +784,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             model=speech_remote_configuration.remote_model,
             voice=speech_remote_configuration.remote_voice,
             estimated_cost_usd=speech_remote_configuration.estimated_cost,
-            maximum_authorized_cost_usd=(
-                speech_remote_configuration.maximum_estimated_cost
-            ),
+            maximum_authorized_cost_usd=(speech_remote_configuration.maximum_estimated_cost),
             allow_billable_requests=speech_remote_configuration.allow_billable_requests,
             remote_job_store=remote_speech_job_store,
             maximum_requests_per_job=settings.ORION_SPEECH_GENERATION_MAX_REQUESTS_PER_JOB,
@@ -810,6 +810,37 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         max_audio_bytes=speech_configuration.max_audio_bytes,
         clock=clock,
     )
+    narration_fitting_configuration = NarrationFittingConfiguration(
+        provider=settings.ORION_NARRATION_FITTING_PROVIDER,
+        model=settings.ORION_NARRATION_FITTING_MODEL,
+        allow_billable_requests=(settings.ORION_NARRATION_FITTING_ALLOW_BILLABLE_REQUESTS),
+        maximum_attempts=settings.ORION_NARRATION_FITTING_MAX_ATTEMPTS,
+        estimated_cost_usd_per_attempt=(
+            settings.ORION_NARRATION_FITTING_ESTIMATED_COST_USD_PER_ATTEMPT
+        ),
+        maximum_estimated_cost_usd_per_attempt=(
+            settings.ORION_NARRATION_FITTING_MAX_ESTIMATED_COST_USD_PER_ATTEMPT
+        ),
+        maximum_estimated_job_cost_usd=(
+            settings.ORION_NARRATION_FITTING_MAX_ESTIMATED_JOB_COST_USD
+        ),
+    )
+    narration_fitting_provider: NarrationFittingProvider
+    if narration_fitting_configuration.provider == "disabled":
+        narration_fitting_provider = DisabledNarrationFittingProvider()
+    else:
+        fitting_api_key = _openrouter_api_key(settings, settings.ORION_SCRIPTING_API_KEY)
+        if fitting_api_key is None:
+            raise ValueError("OpenRouter narration fitting credential is missing")
+        narration_fitting_provider = OpenRouterNarrationFittingProvider(
+            api_key=fitting_api_key,
+            model=narration_fitting_configuration.model,
+            base_url=settings.ORION_NARRATION_FITTING_OPENROUTER_BASE_URL,
+            timeout_seconds=settings.ORION_NARRATION_FITTING_TIMEOUT_SECONDS,
+            max_output_tokens=settings.ORION_NARRATION_FITTING_MAX_OUTPUT_TOKENS,
+            temperature=settings.ORION_NARRATION_FITTING_TEMPERATURE,
+            max_response_bytes=settings.ORION_NARRATION_FITTING_MAX_RESPONSE_BYTES,
+        )
     speech_generation_handler = SpeechGenerationHandler(
         script_reader=speech_source_reader,
         provider=speech_generation_provider,
@@ -828,6 +859,8 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                 settings.ORION_MEDIA_COMPOSITION_MAXIMUM_RELATIVE_EXTENSION_RATIO
             ),
         ),
+        narration_fitter=narration_fitting_provider,
+        narration_fitting_configuration=narration_fitting_configuration,
     )
     audio_design_configuration = AudioDesignConfiguration(
         music_provider=settings.ORION_MUSIC_GENERATION_PROVIDER,
@@ -1187,6 +1220,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         image_acquisition_provider=image_acquisition_provider,
         video_clip_generation_provider=video_clip_generation_provider,
         speech_generation_provider=speech_generation_provider,
+        narration_fitting_provider=narration_fitting_provider,
         music_generation_provider=music_generation_provider,
         sound_effect_generation_provider=sound_effect_generation_provider,
         speech_capability_source=speech_capability_source,
@@ -1224,6 +1258,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             scripting_provider,
             planning_provider,
             speech_generation_provider,
+            narration_fitting_provider,
             music_generation_provider,
             sound_effect_generation_provider,
             speech_capability_source,
@@ -1567,39 +1602,23 @@ def _build_video_clip_generation_provider(
             base_url=settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_BASE_URL,
             model=settings.ORION_VIDEO_CLIP_GENERATION_MODEL,
             resolution=settings.ORION_VIDEO_CLIP_GENERATION_RESOLUTION,
-            timeout_seconds=(
-                settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_TIMEOUT_SECONDS
-            ),
+            timeout_seconds=(settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_TIMEOUT_SECONDS),
             poll_interval_seconds=(
                 settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_POLL_INTERVAL_SECONDS
             ),
-            max_poll_seconds=(
-                settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_SECONDS
-            ),
-            max_poll_attempts=(
-                settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_ATTEMPTS
-            ),
-            max_response_bytes=(
-                settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_RESPONSE_BYTES
-            ),
-            max_video_bytes=(
-                settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_VIDEO_BYTES
-            ),
+            max_poll_seconds=(settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_SECONDS),
+            max_poll_attempts=(settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_POLL_ATTEMPTS),
+            max_response_bytes=(settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_RESPONSE_BYTES),
+            max_video_bytes=(settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_MAX_VIDEO_BYTES),
             capability_cache_ttl_seconds=(
                 settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_CAPABILITY_CACHE_TTL_SECONDS
             ),
-            max_estimated_cost_usd=(
-                settings.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD
-            ),
+            max_estimated_cost_usd=(settings.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD),
             max_estimated_job_cost_usd=(
                 settings.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_JOB_COST_USD
             ),
-            max_requests_per_job=(
-                settings.ORION_VIDEO_CLIP_GENERATION_MAX_REQUESTS_PER_JOB
-            ),
-            allow_billable_requests=(
-                settings.ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS
-            ),
+            max_requests_per_job=(settings.ORION_VIDEO_CLIP_GENERATION_MAX_REQUESTS_PER_JOB),
+            allow_billable_requests=(settings.ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS),
         ),
         frame_publisher=PublishedAssetVideoFrameImagePublisher(
             publisher=asset_publisher,

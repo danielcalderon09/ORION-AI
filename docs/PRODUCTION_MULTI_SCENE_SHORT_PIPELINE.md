@@ -42,6 +42,38 @@ For the 8-second reference, narration resolves to 4.25 s and 5.00 s. Capabilitie
 A USD 0.25 job ceiling rejects the batch before the first POST; authorization is
 never increased automatically.
 
+## Phase 7B.4 narration fitting loop
+
+When measured narration exceeds the existing duration tolerance, ORION now keeps
+video blocked and performs a bounded fitting loop inside `generating_narration`.
+There is no additional production stage. On the first fitting round, only scenes
+whose measured WAV exceeds their planned slot are revised. On a later round, ORION
+selects the smallest set of largest remaining overruns that can remove the global
+excess.
+
+Each scene revision is a small structured OpenRouter request using the configured
+scripting model. Its prepared/submitting/completed/failed/uncertain lifecycle,
+text hashes, measured and target durations, cost authorization, safe provider
+metadata, and revised text are checkpointed in the speech manifest. A completed
+revision is reused after restart. Revised speech uses a new deterministic segment
+identity, so the previous paid WAV remains intact while only changed scenes receive
+new TTS.
+
+The default allows at most two fitting rounds after the original narration. If
+duration still exceeds the same unchanged tolerance, the stage fails permanently
+with `narration_fitting_exhausted`; video has not run. Fitting, TTS, and video keep
+separate cost gates. No limit is increased automatically.
+
+The sequence is therefore:
+
+`TTS -> MEASURE -> RESOLVE -> [FIT TEXT -> RE-TTS -> MEASURE -> RESOLVE] -> VIDEO`
+
+OpenRouter fitting is disabled and non-billable in committed defaults. Activation
+requires explicit per-attempt and aggregate-job cost authorization through the
+`ORION_NARRATION_FITTING_*` settings. Because revised scenes create additional TTS
+requests, the speech request-count and aggregate speech-cost limits must also cover
+the explicitly authorized worst case.
+
 Phase 7A validates ORION's first 2–5 scene short-form architecture completely
 offline. Simulated providers and `httpx.MockTransport` remain the test boundary;
 the feature does not activate billable providers.
