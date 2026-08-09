@@ -94,6 +94,37 @@ async def test_publish_is_idempotent(tmp_path: Path, publishable_asset) -> None:
     assert len(list(tmp_path.glob("*.png"))) == 1
 
 
+async def test_publish_refreshes_temporary_base_url_without_rewriting_bytes(
+    tmp_path: Path, publishable_asset
+) -> None:
+    first_publisher = FilesystemPublisher(
+        public_root=tmp_path,
+        public_base_url="https://first.trycloudflare.com",
+        max_asset_bytes=1_000_000,
+        clock=lambda: NOW,
+    )
+    first = await first_publisher.publish(
+        asset=publishable_asset,
+        expires_at=NOW + timedelta(minutes=5),
+    )
+    binary = tmp_path / f"{first.publication_id}.png"
+    original = binary.read_bytes()
+    second_publisher = FilesystemPublisher(
+        public_root=tmp_path,
+        public_base_url="https://second.trycloudflare.com",
+        max_asset_bytes=1_000_000,
+        clock=lambda: NOW + timedelta(minutes=1),
+    )
+    second = await second_publisher.publish(
+        asset=publishable_asset,
+        expires_at=NOW + timedelta(minutes=10),
+    )
+    assert second.public_url.startswith("https://second.trycloudflare.com/assets/")
+    assert second.expires_at == NOW + timedelta(minutes=10)
+    assert binary.read_bytes() == original
+    assert len(list(tmp_path.glob("*.png"))) == 1
+
+
 @pytest.mark.parametrize("missing", ["binary", "sidecar"])
 async def test_publish_recovers_interrupted_atomic_pair(
     tmp_path: Path, publishable_asset, missing: str
@@ -174,9 +205,12 @@ async def test_cleanup_removes_only_expired(tmp_path: Path, publishable_asset) -
         expires_at=NOW + timedelta(minutes=5),
     )
     assert await publisher.cleanup_expired(now=NOW) == ()
+    unrelated = tmp_path / "unrelated.txt"
+    unrelated.write_text("retain", encoding="utf-8")
     assert await publisher.cleanup_expired(
         now=NOW + timedelta(minutes=6)
     ) == (receipt.publication_id,)
+    assert unrelated.read_text(encoding="utf-8") == "retain"
 
 
 @pytest.mark.parametrize("mutation", ["binary", "sidecar", "missing_binary"])

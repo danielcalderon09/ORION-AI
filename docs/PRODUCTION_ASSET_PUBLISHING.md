@@ -73,8 +73,9 @@ Implementations in this phase:
   managed, trusted development gateway.
 - `FutureCloudPublisher` always reports that no cloud publisher exists.
 
-There is no S3, Cloudflare R2, Google Cloud Storage, Azure Blob, CDN, tunnel, or improvised public
-server.
+There is no S3, Cloudflare R2, Google Cloud Storage, Azure Blob, CDN, or embedded tunnel.
+Phase 6F.2 adds a separate explicit loopback-only static server for temporary
+operator sessions; it is not imported or started by this bounded context.
 
 ## URL and metadata security
 
@@ -205,6 +206,13 @@ duplicate prevention, and read-only reconciliation.
 Rollback is configuration-only: set `ORION_ASSET_PUBLISHING_PUBLISHER=null`. Existing manifests
 and publication files are retained for audit and explicit cleanup; reconciliation never deletes
 them.
+
+## Phase 6F.2 local exposure
+
+`backend.src.local_tools.temporary_publication` can serve only active image
+publication pairs from the dedicated root on `127.0.0.1`. Cloudflare Quick
+Tunnel may expose that loopback origin temporarily, but remains manually
+installed and operated. See `PRODUCTION_TEMPORARY_PUBLICATION.md`.
 
 ## Current limits
 

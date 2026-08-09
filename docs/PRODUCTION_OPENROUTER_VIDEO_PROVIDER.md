@@ -140,7 +140,11 @@ Future candidates only, with no fallback execution:
 - fast: `bytedance/seedance-2.0-fast`;
 - quality: `bytedance/seedance-2.0`.
 
-Known limitations: public HTTPS hosting is external to ORION; no text-to-video,
+Phase 6F.2 adds an explicit loopback static server and readiness/cleanup tools;
+Cloudflare Quick Tunnel remains a separately installed and operated external
+process. See `PRODUCTION_TEMPORARY_PUBLICATION.md`.
+
+Known limitations: temporary HTTPS ingress remains external to ORION; no text-to-video,
 last frame, multiple references, provider fallback, provider audio, webhooks,
 or remote cancellation is implemented. Video Generation is not advertised by
 OpenRouter as Zero Data Retention eligible.

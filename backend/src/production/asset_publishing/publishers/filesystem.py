@@ -132,6 +132,9 @@ class FilesystemPublisher:
                 if target.exists() and sidecar.exists():
                     existing = self._read_receipt(sidecar)
                     self._validate_existing(target, existing, asset)
+                    if existing != receipt:
+                        self._atomic_replace(sidecar, _serialize_receipt(receipt))
+                        return receipt
                     return existing
                 if target.exists():
                     self._validate_file(
@@ -144,6 +147,9 @@ class FilesystemPublisher:
                 existing = self._read_receipt(sidecar)
                 self._validate_receipt_source(existing, asset)
                 self._atomic_write(target, asset.content)
+                if existing != receipt:
+                    self._atomic_replace(sidecar, _serialize_receipt(receipt))
+                    return receipt
                 return existing
             self._atomic_write(target, asset.content)
             try:
@@ -315,6 +321,25 @@ class FilesystemPublisher:
                 os.fsync(stream.fileno())
             if target.exists() or target.is_symlink():
                 raise AssetPublicationConflictError("publication target appeared concurrently")
+            os.replace(temporary, target)
+            _fsync_directory(target.parent)
+            self._confinement.reject_unsafe_file(target)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _atomic_replace(self, target: Path, content: bytes) -> None:
+        self._confinement.reject_unsafe_file(target)
+        descriptor, name = tempfile.mkstemp(
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            dir=target.parent,
+        )
+        temporary = Path(name)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
             os.replace(temporary, target)
             _fsync_directory(target.parent)
             self._confinement.reject_unsafe_file(target)

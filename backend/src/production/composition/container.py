@@ -29,6 +29,7 @@ from backend.src.production.asset_publishing.cleanup import (
 )
 from backend.src.production.asset_publishing.configuration import (
     AssetPublishingConfiguration,
+    validate_dedicated_publication_root,
 )
 from backend.src.production.asset_publishing.manifest_store import (
     LocalPublishedAssetManifestStore,
@@ -650,12 +651,14 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         max_video_bytes=settings.ORION_VIDEO_CLIP_GENERATION_MAX_VIDEO_BYTES,
         clock=clock,
     )
+    publication_root = validate_dedicated_publication_root(
+        settings.ORION_ASSET_PUBLISHING_PUBLIC_ROOT
+        or settings.PROJECTS_DIR / ".published-assets",
+        forbidden_roots=(settings.ORION_HOME, settings.PROJECTS_DIR),
+    )
     asset_publishing_configuration = AssetPublishingConfiguration(
         publisher=settings.ORION_ASSET_PUBLISHING_PUBLISHER,
-        public_root=(
-            settings.ORION_ASSET_PUBLISHING_PUBLIC_ROOT
-            or settings.PROJECTS_DIR / ".published-assets"
-        ),
+        public_root=publication_root,
         public_base_url=settings.ORION_ASSET_PUBLISHING_PUBLIC_BASE_URL,
         lifetime_seconds=settings.ORION_ASSET_PUBLISHING_LIFETIME_SECONDS,
         max_asset_bytes=settings.ORION_ASSET_PUBLISHING_MAX_ASSET_BYTES,

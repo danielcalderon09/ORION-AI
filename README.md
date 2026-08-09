@@ -105,6 +105,10 @@ durables, publicación del primer frame mediante el boundary existente y descarg
 La URL configurada debe servir realmente el publication root por HTTPS. Consulta
 [`docs/PRODUCTION_VIDEO_CLIP_GENERATION.md`](docs/PRODUCTION_VIDEO_CLIP_GENERATION.md) y
 [`docs/PRODUCTION_OPENROUTER_VIDEO_PROVIDER.md`](docs/PRODUCTION_OPENROUTER_VIDEO_PROVIDER.md).
+Fase 6F.2 proporciona un servidor estático explícito en loopback, readiness
+pública manual y cleanup para exponer temporalmente ese root mediante un Quick
+Tunnel externo; consulta
+[`docs/PRODUCTION_TEMPORARY_PUBLICATION.md`](docs/PRODUCTION_TEMPORARY_PUBLICATION.md).
 
 GENERATING_NARRATION consume el `ProductionScript` durable y crea un WAV PCM
 por escena, con manifest CAS, sidecars, checksum, recovery e idempotencia. El
