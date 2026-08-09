@@ -3,6 +3,7 @@
 from backend.src.production.scripting.models import (
     ProductionScript,
     ProductionScriptScene,
+    ensure_narrative_progression,
     validate_script_against_plan,
 )
 from backend.src.production.scripting.ports import (
@@ -54,6 +55,7 @@ class SimulatedScriptingProvider:
             scenes=scenes,
             metadata={"simulated": True},
         )
+        script = ensure_narrative_progression(script)
         validate_script_against_plan(script, request.plan)
         return ScriptingProviderResponse(
             script=script,

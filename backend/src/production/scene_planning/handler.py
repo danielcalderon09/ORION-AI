@@ -96,7 +96,18 @@ class ScenePlanningHandler:
                 )
             response = await self._provider.generate_scene_plan(source.script)
             scene_plan = response.scene_plan.model_copy(
-                update={"source_script_sha256": source.sha256}
+                update={
+                    "source_script_sha256": source.sha256,
+                    "scenes": tuple(
+                        scene.model_copy(
+                            update={
+                                "story_beat": scene.story_beat
+                                or source.script.scenes[index].story_beat
+                            }
+                        )
+                        for index, scene in enumerate(response.scene_plan.scenes)
+                    ),
+                }
             )
             scene_plan = validate_scene_plan_against_script(
                 scene_plan,

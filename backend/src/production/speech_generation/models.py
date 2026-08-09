@@ -13,6 +13,7 @@ from backend.src.production.application.sanitization import validate_safe_json
 from backend.src.production.domain.base import ContractModel
 from backend.src.production.domain.duration_resolution import DurableDurationResolution
 from backend.src.production.domain.path_rules import validate_relative_path
+from backend.src.production.scripting.models import NarrativeArc, StoryBeat
 from backend.src.production.speech_generation.narration_fitting import (
     NarrationFittingRecord,
     NarrationFittingStatus,
@@ -60,6 +61,8 @@ class SpeechSegmentRequest(ContractModel):
     requested_speaking_rate: int = Field(ge=60, le=360)
     target_duration_ms: int | None = Field(default=None, ge=1, le=600_000)
     timing_provenance: SpeechTimingProvenance
+    narrative_arc: NarrativeArc | None = None
+    story_beat: StoryBeat | None = None
 
     @model_validator(mode="after")
     def validate_provenance(self) -> SpeechSegmentRequest:

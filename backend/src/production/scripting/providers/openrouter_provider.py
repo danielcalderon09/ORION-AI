@@ -42,6 +42,8 @@ from backend.src.production.scripting.exceptions import (
 )
 from backend.src.production.scripting.models import (
     ProductionScript,
+    ensure_narrative_progression,
+    validate_narration_repetition,
     validate_script_against_plan,
 )
 from backend.src.production.scripting.openrouter_billable_gate import (
@@ -414,6 +416,20 @@ class OpenRouterScriptingProvider:
                 ),
                 cause=exc,
             )
+        try:
+            validate_narration_repetition(script)
+        except ValueError as exc:
+            await self._raise_structured_output_failure(
+                submitting,
+                response_metadata=response_metadata,
+                failure=_ValidationFailure(
+                    code=OpenRouterScriptingValidationErrorCode.PRODUCTION_SCRIPT_CONTRACT,
+                    path="scenes",
+                    message="consecutive scenes repeat narration",
+                ),
+                cause=exc,
+            )
+        script = ensure_narrative_progression(script)
         completed = submitting.model_copy(
             update={
                 "status": OpenRouterScriptingRequestStatus.COMPLETED,

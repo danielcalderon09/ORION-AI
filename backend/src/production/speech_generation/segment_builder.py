@@ -4,6 +4,7 @@ import hashlib
 import re
 import unicodedata
 
+from backend.src.production.scripting.models import derive_narrative_arc
 from backend.src.production.speech_generation.configuration import (
     SpeechGenerationConfiguration,
 )
@@ -27,6 +28,7 @@ def build_speech_segments(
 ) -> tuple[SpeechSegmentRequest, ...]:
     language = source.script.language or configuration.language
     segments: list[SpeechSegmentRequest] = []
+    narrative_arc = source.script.narrative_arc or derive_narrative_arc(source.script)
     for index, scene in enumerate(source.script.scenes):
         text = normalize_narration_text(scene.narration)
         if not text:
@@ -60,6 +62,8 @@ def build_speech_segments(
                 requested_speaking_rate=configuration.words_per_minute,
                 target_duration_ms=target_duration_ms,
                 timing_provenance=SpeechTimingProvenance.SCRIPT_SCENE_ESTIMATE,
+                narrative_arc=narrative_arc,
+                story_beat=scene.story_beat,
             )
         )
     return tuple(segments)

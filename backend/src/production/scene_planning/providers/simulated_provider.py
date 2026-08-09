@@ -27,6 +27,7 @@ class SimulatedScenePlanningProvider:
                 title=source.heading,
                 narration=source.narration,
                 objective=source.visual_intent,
+                story_beat=source.story_beat,
                 estimated_duration_seconds=source.estimated_duration_seconds,
                 shots=(
                     ProductionShot(

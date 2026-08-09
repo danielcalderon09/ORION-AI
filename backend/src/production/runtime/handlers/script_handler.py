@@ -44,7 +44,10 @@ from backend.src.production.scripting.exceptions import (
     ScriptingProviderUnavailableError,
     ScriptingProviderUncertainError,
 )
-from backend.src.production.scripting.models import validate_script_against_plan
+from backend.src.production.scripting.models import (
+    ensure_narrative_progression,
+    validate_script_against_plan,
+)
 from backend.src.production.scripting.ports import (
     ProductionPlanReader,
     ScriptingProvider,
@@ -101,7 +104,8 @@ class ScriptingHandler:
                     target_duration_seconds=source.plan.target_duration_seconds,
                 )
             )
-            script = validate_script_against_plan(response.script, source.plan)
+            script = ensure_narrative_progression(response.script)
+            script = validate_script_against_plan(script, source.plan)
             written = await self._writer.write_script(context=context, script=script)
         except (
             ProductionPlanTransientReadError,

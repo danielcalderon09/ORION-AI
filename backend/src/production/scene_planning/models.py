@@ -7,7 +7,7 @@ from pydantic import Field, field_validator, model_validator
 
 from backend.src.production.domain.base import ContractModel
 from backend.src.production.planning.validation import validate_planning_text
-from backend.src.production.scripting.models import ProductionScript
+from backend.src.production.scripting.models import ProductionScript, StoryBeat
 
 Framing = Literal[
     "extreme_wide",
@@ -88,6 +88,7 @@ class ProductionScene(ContractModel):
     title: str = Field(min_length=1, max_length=300)
     narration: str = Field(min_length=1, max_length=6000)
     objective: str = Field(min_length=1, max_length=1000)
+    story_beat: StoryBeat | None = None
     estimated_duration_seconds: float = Field(gt=0, le=600)
     shots: tuple[ProductionShot, ...] = Field(min_length=1, max_length=100)
 
@@ -206,4 +207,6 @@ def validate_scene_plan_against_script(
             abs_tol=0.1,
         ):
             raise ValueError("scene duration does not match its script scene")
+        if scene.story_beat is not None and scene.story_beat != source.story_beat:
+            raise ValueError("scene story beat does not match its approved script")
     return plan
