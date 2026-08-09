@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
@@ -74,7 +74,10 @@ class OpenRouterVideoModelCapability(ContractModel):
     def parse_prices(cls, value: Any) -> Any:
         if not isinstance(value, dict):
             raise ValueError("pricing_skus must be an object")
-        return {key: Decimal(str(item)) for key, item in value.items()}
+        try:
+            return {key: Decimal(str(item)) for key, item in value.items()}
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ValueError("pricing_skus contains an invalid price") from exc
 
     @model_validator(mode="after")
     def validate_capability(self) -> OpenRouterVideoModelCapability:

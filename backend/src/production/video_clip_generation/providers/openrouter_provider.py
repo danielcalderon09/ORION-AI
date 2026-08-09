@@ -144,11 +144,26 @@ class OpenRouterVideoClipGenerationProvider:
             )
         if request.configuration.generate_audio:
             raise OpenRouterVideoConfigurationError("video audio must remain disabled")
-        duration = _integer_duration(request.duration_seconds)
-        aspect_ratio = request.configuration.aspect_ratio(
-            request.source_image_width, request.source_image_height
-        )
-        prompt = self._prompt_builder.build(request)
+        try:
+            duration = _integer_duration(request.duration_seconds)
+            aspect_ratio = request.configuration.aspect_ratio(
+                request.source_image_width, request.source_image_height
+            )
+            prompt = self._prompt_builder.build(request)
+        except OpenRouterVideoError as exc:
+            exc.add_diagnostic(
+                phase="request_construction",
+                code="request_invalid",
+                metadata={"source_image_sha256": request.source_image_sha256},
+            )
+            raise
+        except (TypeError, ValueError) as exc:
+            raise OpenRouterVideoConfigurationError(
+                "OpenRouter video request construction failed",
+                diagnostic_phase="request_construction",
+                diagnostic_code="request_invalid",
+                diagnostic_metadata={"source_image_sha256": request.source_image_sha256},
+            ) from exc
         started = self._monotonic()
         existing = await self._jobs.read(
             job_id=request.job_id,
@@ -197,26 +212,74 @@ class OpenRouterVideoClipGenerationProvider:
                 >= self._config.max_requests_per_job
             ):
                 raise OpenRouterVideoCostPolicyError(
-                    "OpenRouter video paid submission limit was reached"
+                    "OpenRouter video paid submission limit was reached",
+                    diagnostic_phase="cost_authorization",
+                    diagnostic_code="request_limit_exceeded",
+                    diagnostic_metadata={
+                        "max_estimated_cost_usd": str(
+                            self._config.max_estimated_cost_usd
+                        ),
+                    },
                 )
-            publication = await self._publisher.publish_first_frame(request)
-            validate_public_frame_url(publication.url)
-            self._validate_publication(publication, request)
-            capability = await self._resolver.resolve(
-                model=self._config.model,
-                duration=duration,
-                resolution=self._config.resolution,
-                aspect_ratio=aspect_ratio,
-            )
-            estimated, pricing_sku = self._cost_policy.authorize(
-                provider="openrouter",
-                capability=capability,
-                duration_seconds=duration,
-                resolution=self._config.resolution,
-                output_count=1,
-                has_remote_job=False,
-                has_recoverable_clip=False,
-            )
+            try:
+                publication = await self._publisher.publish_first_frame(request)
+                validate_public_frame_url(publication.url)
+                self._validate_publication(publication, request)
+            except OpenRouterVideoError as exc:
+                self._add_pre_submission_diagnostic(
+                    exc,
+                    request=request,
+                    duration=duration,
+                    aspect_ratio=aspect_ratio,
+                    phase="publication",
+                    code="publication_invalid",
+                )
+                raise
+            try:
+                capability = await self._resolver.resolve(
+                    model=self._config.model,
+                    duration=duration,
+                    resolution=self._config.resolution,
+                    aspect_ratio=aspect_ratio,
+                )
+            except OpenRouterVideoError as exc:
+                self._add_pre_submission_diagnostic(
+                    exc,
+                    request=request,
+                    duration=duration,
+                    aspect_ratio=aspect_ratio,
+                    publication=publication,
+                    phase="capability_discovery",
+                    code="capability_error",
+                )
+                raise
+            try:
+                estimated, pricing_sku = self._cost_policy.authorize(
+                    provider="openrouter",
+                    capability=capability,
+                    duration_seconds=duration,
+                    resolution=self._config.resolution,
+                    output_count=1,
+                    has_remote_job=False,
+                    has_recoverable_clip=False,
+                )
+            except OpenRouterVideoError as exc:
+                exc.add_diagnostic(
+                    metadata={
+                        "capability_endpoint_status": 200,
+                        "capability_model_found": True,
+                    }
+                )
+                self._add_pre_submission_diagnostic(
+                    exc,
+                    request=request,
+                    duration=duration,
+                    aspect_ratio=aspect_ratio,
+                    publication=publication,
+                    phase="cost_authorization",
+                    code="cost_policy_error",
+                )
+                raise
             fingerprint = _request_fingerprint(
                 request=request,
                 prompt_sha256=prompt.sha256,
@@ -279,6 +342,30 @@ class OpenRouterVideoClipGenerationProvider:
             finish_reason="completed",
             metadata=metadata,
         )
+
+    def _add_pre_submission_diagnostic(
+        self,
+        error: OpenRouterVideoError,
+        *,
+        request: VideoClipProviderRequest,
+        duration: int,
+        aspect_ratio: str,
+        phase: str,
+        code: str,
+        publication: PublishedVideoFrameImage | None = None,
+    ) -> None:
+        metadata: dict[str, object] = {
+            "requested_model": self._config.model,
+            "requested_duration_seconds": duration,
+            "requested_resolution": self._config.resolution,
+            "requested_aspect_ratio": aspect_ratio,
+            "generate_audio": False,
+            "max_estimated_cost_usd": str(self._config.max_estimated_cost_usd),
+            "source_image_sha256": request.source_image_sha256,
+        }
+        if publication is not None:
+            metadata["publication_id"] = publication.publication_id
+        error.add_diagnostic(phase=phase, code=code, metadata=metadata)
 
     async def _submit_prepared(
         self,

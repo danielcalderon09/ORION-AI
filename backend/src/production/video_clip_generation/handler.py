@@ -7,6 +7,8 @@ from collections.abc import Callable
 from datetime import datetime
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from pydantic import ValidationError
+
 from backend.src.production.application.commands import StageCommand
 from backend.src.production.application.results import StageOutcome, StageResult
 from backend.src.production.domain.artifact import Artifact
@@ -22,6 +24,7 @@ from backend.src.production.video_clip_generation.configuration import (
 )
 from backend.src.production.video_clip_generation.exceptions import (
     ImageAcquisitionManifestReadError,
+    OpenRouterVideoError,
     OpenRouterVideoRateLimitError,
     OpenRouterVideoServerError,
     OpenRouterVideoTransportError,
@@ -226,9 +229,51 @@ class VideoClipGenerationHandler:
                 await self._writer.checkpoint(context=context, previous=manifest, current=current)
                 manifest = current
                 try:
-                    response = await self._provider.generate_clip(
-                        self._provider_request(command, context, image)
+                    provider_request = self._provider_request(command, context, image)
+                except (TypeError, ValueError, ValidationError):
+                    diagnostic = self._request_diagnostic_metadata(
+                        image=image,
+                        phase="request_construction",
+                        diagnostic_code="request_model_validation",
                     )
+                    await self._checkpoint_error(
+                        context=context,
+                        manifest=manifest,
+                        entry=generating,
+                        status=VideoClipEntryStatus.FAILED_PERMANENT,
+                        error_code="video_clip_request_invalid",
+                        diagnostic_metadata=diagnostic,
+                    )
+                    return self._failure(
+                        command,
+                        started_at,
+                        StageOutcome.FAILED_PERMANENT,
+                        "video_clip_request_invalid",
+                        diagnostic_metadata=diagnostic,
+                    )
+                try:
+                    try:
+                        response = await self._provider.generate_clip(provider_request)
+                    except OpenRouterVideoError as exc:
+                        error_code = _pre_submission_error_code(exc)
+                        if error_code is None:
+                            raise
+                        diagnostic = self._provider_diagnostic_metadata(exc, image=image)
+                        await self._checkpoint_error(
+                            context=context,
+                            manifest=manifest,
+                            entry=generating,
+                            status=VideoClipEntryStatus.FAILED_PERMANENT,
+                            error_code=error_code,
+                            diagnostic_metadata=diagnostic,
+                        )
+                        return self._failure(
+                            command,
+                            started_at,
+                            StageOutcome.FAILED_PERMANENT,
+                            error_code,
+                            diagnostic_metadata=diagnostic,
+                        )
                     payload = response.clips[0]
                     if len(response.clips) != 1 or payload.mime_type != "video/mp4":
                         raise VideoClipProviderResponseException(
@@ -638,8 +683,15 @@ class VideoClipGenerationHandler:
         entry: ProductionVideoClipEntry,
         status: VideoClipEntryStatus,
         error_code: str,
+        diagnostic_metadata: dict[str, object] | None = None,
     ) -> None:
-        failed = entry.model_copy(update={"status": status, "error_code": error_code})
+        failed = entry.model_copy(
+            update={
+                "status": status,
+                "error_code": error_code,
+                "metadata": {**entry.metadata, **(diagnostic_metadata or {})},
+            }
+        )
         current = replace_manifest_entry(
             manifest,
             failed,
@@ -789,6 +841,7 @@ class VideoClipGenerationHandler:
         error_code: str,
         *,
         retry_after_seconds: float | None = None,
+        diagnostic_metadata: dict[str, object] | None = None,
     ) -> StageExecutionOutput:
         logger.warning(
             "video clip generation stage did not complete",
@@ -815,9 +868,61 @@ class VideoClipGenerationHandler:
                 metadata={
                     "handler": type(self).__name__,
                     "error_category": error_code,
+                    **(diagnostic_metadata or {}),
                 },
             )
         )
+
+    def _request_diagnostic_metadata(
+        self,
+        *,
+        image: VerifiedSourceImage,
+        phase: str,
+        diagnostic_code: str,
+    ) -> dict[str, object]:
+        return {
+            "phase": phase,
+            "diagnostic_code": diagnostic_code,
+            "requested_model": self._configuration.model,
+            "requested_duration_seconds": self._configuration.duration_seconds,
+            "requested_resolution": self._configuration.resolution,
+            "requested_aspect_ratio": self._configuration.aspect_ratio(
+                image.width, image.height
+            ),
+            "generate_audio": self._configuration.generate_audio,
+            "source_image_sha256": image.sha256,
+        }
+
+    def _provider_diagnostic_metadata(
+        self,
+        error: OpenRouterVideoError,
+        *,
+        image: VerifiedSourceImage,
+    ) -> dict[str, object]:
+        metadata = self._request_diagnostic_metadata(
+            image=image,
+            phase=error.diagnostic_phase or "pre_submission",
+            diagnostic_code=error.diagnostic_code or "unknown_pre_submission_error",
+        )
+        allowed = {
+            "capability_endpoint_status",
+            "capability_model_found",
+            "pricing_sku",
+            "estimated_cost_usd",
+            "max_estimated_cost_usd",
+            "publication_id",
+        }
+        metadata.update(
+            {
+                key: value
+                for key, value in error.diagnostic_metadata.items()
+                if key in allowed
+                and (value is None or isinstance(value, (str, int, float, bool)))
+            }
+        )
+        if error.http_status is not None:
+            metadata["capability_endpoint_status"] = error.http_status
+        return metadata
 
     def _aware_now(self) -> datetime:
         value = self._clock()
@@ -830,6 +935,23 @@ def _entry_for(
     manifest: ProductionVideoClipManifest, visual_asset_id: str
 ) -> ProductionVideoClipEntry:
     return next(entry for entry in manifest.entries if entry.visual_asset_id == visual_asset_id)
+
+
+def _pre_submission_error_code(error: OpenRouterVideoError) -> str | None:
+    phase = error.diagnostic_phase
+    if phase == "publication":
+        return "video_clip_publication_error"
+    if phase == "pricing_discovery":
+        return "video_clip_pricing_error"
+    if phase in {"cost_estimation", "cost_authorization"}:
+        return "video_clip_cost_policy"
+    if phase in {"capability_discovery", "capability_contract"}:
+        return "video_clip_capability_error"
+    if phase in {"request_construction", "configuration"}:
+        return "video_clip_request_invalid"
+    if phase == "pre_submission":
+        return "video_clip_provider_contract"
+    return None
 
 
 def _video_artifact_id(job_id: UUID, visual_asset_id: str) -> UUID:

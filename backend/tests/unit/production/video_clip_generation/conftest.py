@@ -96,9 +96,9 @@ def command_context(
     return command, context
 
 
-def png_bytes(color: str = "navy") -> bytes:
+def png_bytes(color: str = "navy", *, width: int = 64, height: int = 64) -> bytes:
     stream = BytesIO()
-    Image.new("RGB", (64, 64), color).save(stream, "PNG")
+    Image.new("RGB", (width, height), color).save(stream, "PNG")
     return stream.getvalue()
 
 
@@ -146,8 +146,8 @@ class FakeImageManifestRepository:
         )
 
 
-async def durable_source(root: Path):
-    content = png_bytes()
+async def durable_source(root: Path, *, width: int = 64, height: int = 64):
+    content = png_bytes(width=width, height=height)
     store = image_store(root)
     binary = await store.write(
         request=BinaryAssetWriteRequest(
@@ -158,8 +158,8 @@ async def durable_source(root: Path):
             asset_role=BinaryAssetRole.PRIMARY,
             mime_type="image/png",
             extension="png",
-            expected_width=64,
-            expected_height=64,
+            expected_width=width,
+            expected_height=height,
             metadata=ProductionBinaryAssetMetadata(
                 source_visual_asset_id=VISUAL_ASSET_ID,
                 source_visual_asset_plan_artifact_id=VISUAL_PLAN_ID,
@@ -267,8 +267,8 @@ async def durable_source(root: Path):
                 sha256=binary.sha256,
                 size_bytes=binary.size_bytes,
                 mime_type=binary.mime_type,
-                width=64,
-                height=64,
+                width=width,
+                height=height,
                 scene_id="scene-001",
                 shot_id="scene-001-shot-001",
                 scene_number=1,

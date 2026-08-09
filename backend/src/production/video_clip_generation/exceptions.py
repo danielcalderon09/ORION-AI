@@ -146,6 +146,39 @@ class OpenRouterVideoError(VideoClipProviderError):
     """Base typed OpenRouter video failure."""
 
     http_status: int | None = None
+    diagnostic_phase: str | None = None
+    diagnostic_code: str | None = None
+    diagnostic_metadata: dict[str, object]
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostic_phase: str | None = None,
+        diagnostic_code: str | None = None,
+        diagnostic_metadata: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.diagnostic_phase = diagnostic_phase
+        self.diagnostic_code = diagnostic_code
+        self.diagnostic_metadata = dict(diagnostic_metadata or {})
+
+    def add_diagnostic(
+        self,
+        *,
+        phase: str | None = None,
+        code: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> None:
+        """Add adapter-owned safe context without replacing more specific context."""
+
+        if self.diagnostic_phase is None:
+            self.diagnostic_phase = phase
+        if self.diagnostic_code is None:
+            self.diagnostic_code = code
+        if metadata:
+            for key, value in metadata.items():
+                self.diagnostic_metadata.setdefault(key, value)
 
 
 class OpenRouterVideoConfigurationError(OpenRouterVideoError):
@@ -189,7 +222,7 @@ class OpenRouterVideoTransportError(OpenRouterVideoError):
 
 
 class OpenRouterVideoTimeoutError(
-    VideoClipProviderTimeoutException, OpenRouterVideoError
+    OpenRouterVideoError, VideoClipProviderTimeoutException
 ):
     pass
 

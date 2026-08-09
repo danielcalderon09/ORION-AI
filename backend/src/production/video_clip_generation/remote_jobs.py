@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, DecimalException
 
 from backend.src.production.video_clip_generation.exceptions import (
     OpenRouterVideoCostPolicyError,
@@ -47,18 +47,55 @@ class BillableVideoGenerationPolicy:
             or has_remote_job
             or has_recoverable_clip
         ):
-            raise OpenRouterVideoCostPolicyError("billable video generation is not authorized")
+            raise OpenRouterVideoCostPolicyError(
+                "billable video generation is not authorized",
+                diagnostic_phase="cost_authorization",
+                diagnostic_code=(
+                    "billable_authorization_disabled"
+                    if not self._allowed
+                    else "cost_authorization_rejected"
+                ),
+                diagnostic_metadata={
+                    "max_estimated_cost_usd": str(self._maximum),
+                },
+            )
         sku = f"per-video-second-{resolution}"
         price = capability.pricing_skus.get(sku)
         if price is None:
             sku = "per-video-second"
             price = capability.pricing_skus.get(sku)
         if price is None:
-            raise OpenRouterVideoCostPolicyError("OpenRouter video cost cannot be estimated safely")
-        estimated = price * Decimal(duration_seconds)
+            raise OpenRouterVideoCostPolicyError(
+                "OpenRouter video cost cannot be estimated safely",
+                diagnostic_phase="pricing_discovery",
+                diagnostic_code="pricing_sku_missing",
+                diagnostic_metadata={
+                    "pricing_sku": None,
+                    "max_estimated_cost_usd": str(self._maximum),
+                },
+            )
+        try:
+            estimated = price * Decimal(duration_seconds)
+        except (DecimalException, TypeError, ValueError) as exc:
+            raise OpenRouterVideoCostPolicyError(
+                "OpenRouter video cost cannot be estimated safely",
+                diagnostic_phase="cost_estimation",
+                diagnostic_code="cost_estimation_failed",
+                diagnostic_metadata={
+                    "pricing_sku": sku,
+                    "max_estimated_cost_usd": str(self._maximum),
+                },
+            ) from exc
         if estimated > self._maximum:
             raise OpenRouterVideoCostPolicyError(
-                "estimated OpenRouter video cost exceeds the configured limit"
+                "estimated OpenRouter video cost exceeds the configured limit",
+                diagnostic_phase="cost_authorization",
+                diagnostic_code="cost_limit_exceeded",
+                diagnostic_metadata={
+                    "pricing_sku": sku,
+                    "estimated_cost_usd": str(estimated),
+                    "max_estimated_cost_usd": str(self._maximum),
+                },
             )
         return estimated, sku
 
