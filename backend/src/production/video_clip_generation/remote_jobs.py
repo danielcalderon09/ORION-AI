@@ -36,6 +36,7 @@ class BillableVideoGenerationPolicy:
         capability: OpenRouterVideoModelCapability,
         duration_seconds: int,
         resolution: str,
+        generate_audio: bool,
         output_count: int,
         has_remote_job: bool,
         has_recoverable_clip: bool,
@@ -59,11 +60,22 @@ class BillableVideoGenerationPolicy:
                     "max_estimated_cost_usd": str(self._maximum),
                 },
             )
-        sku = f"per-video-second-{resolution}"
-        price = capability.pricing_skus.get(sku)
-        if price is None:
-            sku = "per-video-second"
-            price = capability.pricing_skus.get(sku)
+        audio_mode = "with_audio" if generate_audio else "without_audio"
+        candidates = (
+            f"duration_seconds_{audio_mode}_{resolution}",
+            f"duration_seconds_{audio_mode}",
+            f"per-video-second-{resolution}",
+            "per-video-second",
+        )
+        selected = next(
+            (
+                (candidate, capability.pricing_skus[candidate])
+                for candidate in candidates
+                if candidate in capability.pricing_skus
+            ),
+            None,
+        )
+        sku, price = selected if selected is not None else (None, None)
         if price is None:
             raise OpenRouterVideoCostPolicyError(
                 "OpenRouter video cost cannot be estimated safely",
@@ -82,7 +94,7 @@ class BillableVideoGenerationPolicy:
                 diagnostic_phase="cost_estimation",
                 diagnostic_code="cost_estimation_failed",
                 diagnostic_metadata={
-                    "pricing_sku": sku,
+                    "pricing_sku": None,
                     "max_estimated_cost_usd": str(self._maximum),
                 },
             ) from exc
@@ -97,6 +109,7 @@ class BillableVideoGenerationPolicy:
                     "max_estimated_cost_usd": str(self._maximum),
                 },
             )
+        assert sku is not None
         return estimated, sku
 
 

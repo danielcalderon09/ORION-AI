@@ -61,6 +61,27 @@ or `16:9`. ORION v1 fixes generated audio to `false`; narration remains Kokoro
 and music remains a separate stage. The first controlled test is 4 seconds,
 720p, portrait, and one source image.
 
+## Live capability and pricing snapshot — 2026-08-09
+
+A read-only query to `GET /api/v1/videos/models` found
+`google/veo-3.1-lite` with durations 4, 6, and 8 seconds; resolutions `720p`
+and `1080p`; aspect ratios `9:16` and `16:9`; and both `first_frame` and
+`last_frame` image conditioning. The catalog reports audio generation support,
+while ORION v1 deliberately requests `generate_audio=false`.
+
+The observed no-audio 720p pricing SKU is
+`duration_seconds_without_audio_720p` at USD 0.03 per second. The controlled
+4-second test therefore estimates USD 0.12, which is within its USD 0.20
+authorization ceiling. This is an observed pricing snapshot, not a guarantee
+of future availability or pricing; ORION discovers and authorizes the current
+catalog before every fresh paid submission.
+
+SKU selection prefers the current resolution-specific key, then the current
+generic audio-mode key. The older `per-video-second-<resolution>` and
+`per-video-second` keys remain last-resort compatibility fallbacks. A catalog
+without any compatible SKU fails closed with `pricing_sku_missing` before any
+submission.
+
 ## Durable lifecycle and recovery
 
 Each visual asset has one record at:

@@ -79,15 +79,29 @@ def capability(
 ) -> dict[str, object]:
     return {
         "id": MODEL,
-        "supported_durations": durations if durations is not None else [4],
-        "supported_resolutions": resolutions if resolutions is not None else ["720p"],
-        "supported_aspect_ratios": aspects if aspects is not None else ["9:16"],
-        "supported_frame_images": ["first_frame"],
-        "generate_audio": False,
-        "allowed_passthrough_parameters": [],
-        "pricing_skus": (
-            pricing if pricing is not None else {"per-video-second-720p": "0.03"}
+        "supported_durations": durations if durations is not None else [8, 4, 6],
+        "supported_resolutions": (
+            resolutions if resolutions is not None else ["720p", "1080p"]
         ),
+        "supported_aspect_ratios": (
+            aspects if aspects is not None else ["16:9", "9:16"]
+        ),
+        "supported_frame_images": ["first_frame", "last_frame"],
+        "generate_audio": True,
+        "allowed_passthrough_parameters": [
+            "personGeneration",
+            "aspectRatio",
+            "negativePrompt",
+            "conditioningScale",
+            "enhancePrompt",
+        ],
+        "pricing_skus": (
+            pricing
+            if pricing is not None
+            else {"duration_seconds_without_audio_720p": "0.03"}
+        ),
+        "hugging_face_id": None,
+        "provider_catalog_metadata": {"ignored": True},
     }
 
 
@@ -289,11 +303,13 @@ async def test_f_estimate_above_limit_is_durable_and_never_submits(
 ) -> None:
     _, entry, counts, _ = await execute_case(
         tmp_path,
-        capabilities=[capability(pricing={"per-video-second-720p": "0.06"})],
+        capabilities=[
+            capability(pricing={"duration_seconds_without_audio_720p": "0.06"})
+        ],
     )
     assert entry.error_code == "video_clip_cost_policy"
     assert entry.metadata["diagnostic_code"] == "cost_limit_exceeded"
-    assert entry.metadata["pricing_sku"] == "per-video-second-720p"
+    assert entry.metadata["pricing_sku"] == "duration_seconds_without_audio_720p"
     assert entry.metadata["estimated_cost_usd"] == "0.24"
     assert entry.metadata["max_estimated_cost_usd"] == "0.20"
     assert counts["post"] == 0
@@ -306,7 +322,9 @@ async def test_g_valid_contract_reaches_prepared_exactly_once(tmp_path) -> None:
     assert counts == {"discovery": 1, "post": 1}
     assert len(jobs.created) == 1
     assert jobs.created[0].request_status is OpenRouterVideoRequestStatus.PREPARED
+    assert jobs.created[0].model == MODEL
     assert jobs.created[0].estimated_cost_usd == Decimal("0.12")
+    assert jobs.created[0].pricing_sku == "duration_seconds_without_audio_720p"
     assert jobs.created[0].requested_duration_seconds == 4
     assert jobs.created[0].requested_resolution == "720p"
     assert jobs.created[0].requested_aspect_ratio == "9:16"

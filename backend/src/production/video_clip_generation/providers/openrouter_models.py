@@ -10,7 +10,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from backend.src.production.application.sanitization import validate_safe_json
 from backend.src.production.domain.base import ContractModel
@@ -54,6 +54,14 @@ class OpenRouterVideoJob(ContractModel):
 
 
 class OpenRouterVideoModelCapability(ContractModel):
+    """Strict consumed catalog fields while ignoring unrelated provider metadata."""
+
+    model_config = ConfigDict(
+        extra="ignore",
+        frozen=True,
+        str_strip_whitespace=True,
+    )
+
     id: str = Field(min_length=1, max_length=300)
     canonical_slug: str | None = Field(default=None, max_length=300)
     name: str | None = Field(default=None, max_length=300)
@@ -68,6 +76,29 @@ class OpenRouterVideoModelCapability(ContractModel):
     seed: bool | None = None
     allowed_passthrough_parameters: tuple[str, ...] = ()
     pricing_skus: dict[str, Decimal] = Field(default_factory=dict)
+
+    @field_validator(
+        "supported_durations",
+        "supported_resolutions",
+        "supported_aspect_ratios",
+        "supported_frame_images",
+        "allowed_passthrough_parameters",
+        mode="before",
+    )
+    @classmethod
+    def normalize_catalog_arrays(cls, value: Any) -> Any:
+        if value is None:
+            return ()
+        if isinstance(value, list):
+            return tuple(value)
+        return value
+
+    @field_validator("supported_sizes", mode="before")
+    @classmethod
+    def normalize_optional_catalog_array(cls, value: Any) -> Any:
+        if isinstance(value, list):
+            return tuple(value)
+        return value
 
     @field_validator("pricing_skus", mode="before")
     @classmethod

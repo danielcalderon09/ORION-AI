@@ -112,6 +112,64 @@ def capability(**updates: object) -> OpenRouterVideoModelCapability:
     return OpenRouterVideoModelCapability.model_validate(values)
 
 
+def live_veo_catalog_item(**updates: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "id": "google/veo-3.1-lite",
+        "hugging_face_id": None,
+        "supported_durations": [8, 4, 6],
+        "supported_resolutions": ["720p", "1080p"],
+        "supported_aspect_ratios": ["16:9", "9:16"],
+        "supported_frame_images": ["first_frame", "last_frame"],
+        "generate_audio": True,
+        "allowed_passthrough_parameters": [
+            "personGeneration",
+            "aspectRatio",
+            "negativePrompt",
+            "conditioningScale",
+            "enhancePrompt",
+        ],
+        "pricing_skus": {
+            "duration_seconds_without_audio_720p": "0.03",
+            "duration_seconds_without_audio": "0.05",
+            "duration_seconds_with_audio_720p": "0.05",
+            "duration_seconds_with_audio": "0.08",
+        },
+        "provider_catalog_metadata": {"ignored": True},
+    }
+    values.update(updates)
+    return values
+
+
+def test_live_catalog_ignores_extras_and_normalizes_consumed_arrays() -> None:
+    response = OpenRouterVideoModelsResponse.model_validate(
+        {"data": [live_veo_catalog_item()]}
+    )
+    item = response.data[0]
+    assert item.id == "google/veo-3.1-lite"
+    assert item.supported_durations == (8, 4, 6)
+    assert item.supported_resolutions == ("720p", "1080p")
+    assert item.supported_aspect_ratios == ("16:9", "9:16")
+    assert item.supported_frame_images == ("first_frame", "last_frame")
+    assert item.allowed_passthrough_parameters == (
+        "personGeneration",
+        "aspectRatio",
+        "negativePrompt",
+        "conditioningScale",
+        "enhancePrompt",
+    )
+    assert item.generate_audio is True
+    assert "hugging_face_id" not in item.model_dump()
+    assert "provider_catalog_metadata" not in item.model_dump()
+
+
+def test_live_veo_capability_contains_controlled_request_contract() -> None:
+    item = OpenRouterVideoModelCapability.model_validate(live_veo_catalog_item())
+    assert 4 in item.supported_durations
+    assert "720p" in item.supported_resolutions
+    assert "9:16" in item.supported_aspect_ratios
+    assert "first_frame" in item.supported_frame_images
+
+
 @pytest.mark.parametrize("status", tuple(OpenRouterRemoteStatus))
 def test_all_official_remote_states_parse(status: OpenRouterRemoteStatus) -> None:
     job = OpenRouterVideoJob(
@@ -476,6 +534,7 @@ def test_cost_policy_rejects_closed_gates(
             capability=capability(),
             duration_seconds=4,
             resolution="720p",
+            generate_audio=False,
             output_count=outputs,
             has_remote_job=remote,
             has_recoverable_clip=clip,
@@ -511,11 +570,78 @@ def test_cost_policy_uses_decimal_and_resolution_sku(
         capability=capability(pricing_skus=prices),
         duration_seconds=4,
         resolution="720p",
+        generate_audio=False,
         output_count=1,
         has_remote_job=False,
         has_recoverable_clip=False,
     )
     assert type(estimate) is Decimal
+    assert estimate == expected
+    assert sku == expected_sku
+
+
+@pytest.mark.parametrize(
+    ("generate_audio", "resolution", "prices", "expected_sku", "expected"),
+    [
+        (
+            False,
+            "720p",
+            {
+                "duration_seconds_without_audio_720p": "0.03",
+                "duration_seconds_without_audio": "0.05",
+                "per-video-second-720p": "9.00",
+                "per-video-second": "9.00",
+            },
+            "duration_seconds_without_audio_720p",
+            Decimal("0.12"),
+        ),
+        (
+            False,
+            "720p",
+            {"duration_seconds_without_audio": "0.05"},
+            "duration_seconds_without_audio",
+            Decimal("0.20"),
+        ),
+        (
+            True,
+            "720p",
+            {
+                "duration_seconds_with_audio_720p": "0.05",
+                "duration_seconds_with_audio": "0.08",
+            },
+            "duration_seconds_with_audio_720p",
+            Decimal("0.20"),
+        ),
+        (
+            False,
+            "1080p",
+            {"duration_seconds_without_audio_1080p": "0.04"},
+            "duration_seconds_without_audio_1080p",
+            Decimal("0.16"),
+        ),
+    ],
+)
+def test_cost_policy_selects_live_audio_and_resolution_skus(
+    generate_audio: bool,
+    resolution: str,
+    prices: dict[str, str],
+    expected_sku: str,
+    expected: Decimal,
+) -> None:
+    policy = BillableVideoGenerationPolicy(
+        allow_billable_requests=True,
+        max_estimated_cost_usd=Decimal("0.20"),
+    )
+    estimate, sku = policy.authorize(
+        provider="openrouter",
+        capability=capability(pricing_skus=prices),
+        duration_seconds=4,
+        resolution=resolution,
+        generate_audio=generate_audio,
+        output_count=1,
+        has_remote_job=False,
+        has_recoverable_clip=False,
+    )
     assert estimate == expected
     assert sku == expected_sku
 
@@ -531,16 +657,18 @@ def test_cost_policy_rejects_unknown_pricing_units(
         allow_billable_requests=True,
         max_estimated_cost_usd=Decimal("10"),
     )
-    with pytest.raises(OpenRouterVideoCostPolicyError):
+    with pytest.raises(OpenRouterVideoCostPolicyError) as captured:
         policy.authorize(
             provider="openrouter",
             capability=capability(pricing_skus=prices),
             duration_seconds=4,
             resolution="720p",
+            generate_audio=False,
             output_count=1,
             has_remote_job=False,
             has_recoverable_clip=False,
         )
+    assert captured.value.diagnostic_code == "pricing_sku_missing"
 
 
 def test_cost_policy_rejects_estimate_above_limit() -> None:
@@ -554,6 +682,7 @@ def test_cost_policy_rejects_estimate_above_limit() -> None:
             capability=capability(),
             duration_seconds=4,
             resolution="720p",
+            generate_audio=False,
             output_count=1,
             has_remote_job=False,
             has_recoverable_clip=False,
