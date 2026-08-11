@@ -81,6 +81,33 @@ failures are terminal for that attempt. Durable fitting records retain the safe
 category, retryable flag, HTTP status, provider request ID, response/header receipt,
 and provider retry count; secrets and raw provider bodies are never persisted.
 
+### Explicit fitting recovery authorization
+
+Increasing `ORION_NARRATION_FITTING_MAX_ESTIMATED_JOB_COST_USD` does not silently
+reauthorize historical jobs. Existing fitting records retain their original
+estimated exposure, reported cost, request identity, terminal status, and
+authorization. An operator must first raise the current Settings ceiling and then
+persist a separate recovery authorization:
+
+```text
+python -m backend.src.production.cli.authorize_narration_fitting_recovery \
+  --job-id <job-id> \
+  --maximum-job-cost-usd 0.004
+```
+
+This local operation validates the failed narration stage, the compatible fitting
+failure, committed estimated exposure, current Settings ceiling, provider-retry
+policy, and source-manifest SHA-256. It creates one immutable, fingerprinted
+`narration-fitting-recovery-authorization.json` sidecar and never calls a provider.
+Repeating the exact command is idempotent; a different authorization or source
+manifest drift fails closed.
+
+On the next explicit stage retry, ORION creates a new speech stage attempt from the
+hash-pinned historical manifest. Completed scene fitting and original WAVs are
+reused. A failed logical fitting attempt remains immutable, while the next fitting
+attempt receives a new durable identity. Estimated authorization reservations stay
+separate from lower reported provider cost.
+
 Phase 7A validates ORION's first 2–5 scene short-form architecture completely
 offline. Simulated providers and `httpx.MockTransport` remain the test boundary;
 the feature does not activate billable providers.

@@ -146,6 +146,7 @@ def _handler(
     fitter=None,
     writer=None,
     fitting_configuration=None,
+    fitting_recovery_store=None,
 ):
     configuration = speech_configuration(
         provider="openrouter",
@@ -161,6 +162,7 @@ def _handler(
         clock=lambda: NOW,
         narration_fitter=fitter,
         narration_fitting_configuration=fitting_configuration,
+        fitting_recovery_store=fitting_recovery_store,
     )
 
 

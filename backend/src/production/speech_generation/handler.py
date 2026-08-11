@@ -38,6 +38,11 @@ from backend.src.production.speech_generation.exceptions import (
     SpeechProviderUncertainError,
     SpeechSourceScriptError,
 )
+from backend.src.production.speech_generation.fitting_recovery import (
+    FilesystemNarrationFittingRecoveryAuthorizationStore,
+    NarrationFittingRecoveryAuthorization,
+    NarrationFittingRecoveryAuthorizationError,
+)
 from backend.src.production.speech_generation.manifest_writer import (
     speech_manifest_relative_path,
 )
@@ -101,6 +106,9 @@ class SpeechGenerationHandler:
         duration_resolution_policy: DurationResolutionPolicy | None = None,
         narration_fitter: NarrationFittingProvider | None = None,
         narration_fitting_configuration: NarrationFittingConfiguration | None = None,
+        fitting_recovery_store: (
+            FilesystemNarrationFittingRecoveryAuthorizationStore | None
+        ) = None,
     ) -> None:
         self._reader = script_reader
         self._provider = provider
@@ -113,6 +121,7 @@ class SpeechGenerationHandler:
         self._fitting_configuration = (
             narration_fitting_configuration or NarrationFittingConfiguration()
         )
+        self._fitting_recovery_store = fitting_recovery_store
 
     async def execute(
         self,
@@ -128,11 +137,34 @@ class SpeechGenerationHandler:
             source = await self._reader.read_for_speech_generation(context=context)
             segments = build_speech_segments(source, self._configuration)
             existing = await self._writer.read_existing(context=context)
-            manifest = existing or self._initial_manifest(
-                command=command,
-                source=source,
-                segments=segments,
-            )
+            recovery_authorization = None
+            recovery_store = self._fitting_recovery_store
+            if (
+                existing is None
+                and command.attempt_number > 1
+                and recovery_store is not None
+            ):
+                recovery_authorization = await recovery_store.read(
+                    job_id=command.job_id
+                )
+            if recovery_authorization is not None:
+                assert recovery_store is not None
+                source_manifest = await recovery_store.load_source_manifest(
+                    recovery_authorization
+                )
+                manifest = self._recovery_manifest(
+                    command=command,
+                    source=source,
+                    segments=segments,
+                    source_manifest=source_manifest,
+                    authorization=recovery_authorization,
+                )
+            else:
+                manifest = existing or self._initial_manifest(
+                    command=command,
+                    source=source,
+                    segments=segments,
+                )
             if existing is None:
                 await self._writer.create(context=context, manifest=manifest)
             else:
@@ -346,6 +378,7 @@ class SpeechGenerationHandler:
                 source_segments=segments,
                 manifest=manifest,
                 stored_assets=stored_assets,
+                recovery_authorization=recovery_authorization,
             )
             if fitting_error is not None:
                 outcome = (
@@ -393,7 +426,12 @@ class SpeechGenerationHandler:
                 StageOutcome.NEEDS_USER_ACTION,
                 "source_script_invalid",
             )
-        except (SpeechManifestError, SpeechGenerationError, ValueError):
+        except (
+            SpeechManifestError,
+            SpeechGenerationError,
+            NarrationFittingRecoveryAuthorizationError,
+            ValueError,
+        ):
             return self._failure(
                 command,
                 started_at,
@@ -410,6 +448,7 @@ class SpeechGenerationHandler:
         source_segments: tuple[SpeechSegmentRequest, ...],
         manifest: SpeechGenerationManifest,
         stored_assets: dict[str, SpeechBinaryAsset],
+        recovery_authorization: NarrationFittingRecoveryAuthorization | None,
     ) -> tuple[
         SpeechGenerationManifest,
         dict[str, SpeechBinaryAsset],
@@ -477,7 +516,10 @@ class SpeechGenerationHandler:
 
             if self._fitting_configuration.provider == "disabled":
                 return manifest, stored_assets, "duration_resolution_invalid"
-            attempt = 1 + max((entry.fitting_revision for entry in manifest.entries), default=0)
+            attempt = 1 + max(
+                (record.attempt_number for record in manifest.fitting_records),
+                default=0,
+            )
             if attempt > self._fitting_configuration.maximum_attempts:
                 return manifest, stored_assets, "narration_fitting_exhausted"
             overrun_candidates = tuple(
@@ -518,6 +560,7 @@ class SpeechGenerationHandler:
                     manifest=manifest,
                     entry=candidate,
                     attempt=attempt,
+                    recovery_authorization=recovery_authorization,
                 )
                 if error is not None:
                     return manifest, stored_assets, error
@@ -541,7 +584,7 @@ class SpeechGenerationHandler:
                             "source_segment_id": (
                                 current_entry.source_segment_id or current_entry.segment_id
                             ),
-                            "fitting_revision": attempt,
+                            "fitting_revision": current_entry.fitting_revision + 1,
                             "narration_text": record.revised_narration,
                             "normalized_text_hash": record.revised_text_hash,
                             "status": SpeechSegmentStatus.PENDING,
@@ -613,6 +656,7 @@ class SpeechGenerationHandler:
         manifest: SpeechGenerationManifest,
         entry: SpeechSegmentManifestEntry,
         attempt: int,
+        recovery_authorization: NarrationFittingRecoveryAuthorization | None,
     ) -> tuple[SpeechGenerationManifest, NarrationFittingRecord, str | None]:
         existing = next(
             (
@@ -649,14 +693,18 @@ class SpeechGenerationHandler:
         assert configuration.estimated_cost_usd_per_attempt is not None
         assert configuration.maximum_estimated_cost_usd_per_attempt is not None
         assert configuration.maximum_estimated_job_cost_usd is not None
+        job_budget = self._effective_fitting_job_budget(recovery_authorization)
         projected = (
             sum(
-                (record.estimated_cost_usd for record in manifest.fitting_records),
+                (
+                    record.estimated_cost_usd * (1 + record.provider_retry_count)
+                    for record in manifest.fitting_records
+                ),
                 Decimal(0),
             )
             + configuration.estimated_cost_usd_per_attempt
         )
-        if projected > configuration.maximum_estimated_job_cost_usd:
+        if projected > job_budget:
             placeholder = self._prepared_fitting_record(
                 command=command,
                 source=source,
@@ -665,7 +713,10 @@ class SpeechGenerationHandler:
                 maximum_provider_retries=0,
             )
             return manifest, placeholder, "narration_fitting_cost_policy"
-        maximum_provider_retries = self._maximum_provider_retries(manifest)
+        maximum_provider_retries = self._maximum_provider_retries(
+            manifest,
+            job_budget=job_budget,
+        )
         request = self._fitting_request(
             command,
             source,
@@ -871,21 +922,49 @@ class SpeechGenerationHandler:
             prepared_at=self._aware_now(),
         )
 
-    def _maximum_provider_retries(self, manifest: SpeechGenerationManifest) -> int:
+    def _maximum_provider_retries(
+        self,
+        manifest: SpeechGenerationManifest,
+        *,
+        job_budget: Decimal,
+    ) -> int:
         configuration = self._fitting_configuration
         assert configuration.estimated_cost_usd_per_attempt is not None
-        assert configuration.maximum_estimated_job_cost_usd is not None
         spent = sum(
-            (record.estimated_cost_usd for record in manifest.fitting_records),
+            (
+                record.estimated_cost_usd * (1 + record.provider_retry_count)
+                for record in manifest.fitting_records
+            ),
             Decimal(0),
         )
-        available = configuration.maximum_estimated_job_cost_usd - spent
+        available = (
+            job_budget
+            - spent
+            - configuration.estimated_cost_usd_per_attempt
+        )
         retries = configuration.maximum_provider_retries
         while retries > 0 and available < (
             configuration.estimated_cost_usd_per_attempt * retries
         ):
             retries -= 1
         return retries
+
+    def _effective_fitting_job_budget(
+        self,
+        authorization: NarrationFittingRecoveryAuthorization | None,
+    ) -> Decimal:
+        configuration = self._fitting_configuration
+        assert configuration.maximum_estimated_job_cost_usd is not None
+        if authorization is None:
+            return configuration.maximum_estimated_job_cost_usd
+        if (
+            authorization.new_authorized_job_cost_usd
+            > configuration.maximum_estimated_job_cost_usd
+        ):
+            raise NarrationFittingRecoveryAuthorizationError(
+                "recovery authorization exceeds active Settings"
+            )
+        return authorization.new_authorized_job_cost_usd
 
     async def _replace_fitting_record(
         self,
@@ -1071,6 +1150,45 @@ class SpeechGenerationHandler:
             != tuple(segment.segment_id for segment in segments)
         ):
             raise SpeechManifestError("speech manifest source or configuration changed")
+
+    def _recovery_manifest(
+        self,
+        *,
+        command: StageCommand,
+        source: ReadSpeechSourceScript,
+        segments: tuple[SpeechSegmentRequest, ...],
+        source_manifest: SpeechGenerationManifest,
+        authorization: NarrationFittingRecoveryAuthorization,
+    ) -> SpeechGenerationManifest:
+        if (
+            authorization.job_id != command.job_id
+            or authorization.source_attempt_number != source_manifest.attempt_number
+            or command.attempt_number != source_manifest.attempt_number + 1
+        ):
+            raise NarrationFittingRecoveryAuthorizationError(
+                "recovery authorization does not match the next stage attempt"
+            )
+        candidate = source_manifest.model_copy(
+            update={
+                "attempt_number": command.attempt_number,
+                "status": SpeechGenerationManifestStatus.IN_PROGRESS,
+                "updated_at": self._aware_now(),
+                "metadata": {
+                    **source_manifest.metadata,
+                    "recovered_from_attempt": source_manifest.attempt_number,
+                    "fitting_recovery_record_sha256": authorization.fingerprint,
+                },
+            }
+        )
+        self._validate_existing(candidate, source, segments, command)
+        if not any(
+            record.status is NarrationFittingStatus.FAILED
+            for record in candidate.fitting_records
+        ):
+            raise NarrationFittingRecoveryAuthorizationError(
+                "source manifest has no failed fitting to recover"
+            )
+        return SpeechGenerationManifest.model_validate(candidate.model_dump(mode="python"))
 
     def _write_request(
         self,

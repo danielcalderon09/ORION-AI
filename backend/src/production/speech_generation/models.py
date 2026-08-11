@@ -559,7 +559,6 @@ def validate_speech_manifest_transition(
                     record
                     for record in current.fitting_records
                     if record.scene_id == before.source_scene_id
-                    and record.attempt_number == after.fitting_revision
                     and record.status is NarrationFittingStatus.COMPLETED
                     and record.previous_text_hash == before.normalized_text_hash
                     and record.revised_text_hash == after.normalized_text_hash

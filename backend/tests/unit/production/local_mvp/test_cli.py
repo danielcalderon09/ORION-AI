@@ -116,6 +116,7 @@ def test_local_mvp_settings_forwards_narration_fitting_authorization(
         "ORION_NARRATION_FITTING_MAX_ESTIMATED_COST_USD_PER_ATTEMPT", "0.002"
     )
     monkeypatch.setenv("ORION_NARRATION_FITTING_MAX_ESTIMATED_JOB_COST_USD", "0.008")
+    monkeypatch.setenv("ORION_NARRATION_FITTING_MAX_PROVIDER_RETRIES", "0")
 
     configured = generate_video.local_mvp_settings()
 
@@ -124,3 +125,4 @@ def test_local_mvp_settings_forwards_narration_fitting_authorization(
     assert Decimal("0.008") == (
         configured.ORION_NARRATION_FITTING_MAX_ESTIMATED_JOB_COST_USD
     )
+    assert configured.ORION_NARRATION_FITTING_MAX_PROVIDER_RETRIES == 0

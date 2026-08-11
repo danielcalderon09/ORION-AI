@@ -295,6 +295,9 @@ from backend.src.production.speech_generation.configuration import (
     SpeechGenerationConfiguration,
     SpeechRemotePreparationConfiguration,
 )
+from backend.src.production.speech_generation.fitting_recovery import (
+    FilesystemNarrationFittingRecoveryAuthorizationStore,
+)
 from backend.src.production.speech_generation.handler import (
     SpeechGenerationHandler,
 )
@@ -428,6 +431,9 @@ class ProductionContainer:
     video_clip_generation_provider: VideoClipGenerationProvider
     speech_generation_provider: SpeechGenerationProvider
     narration_fitting_provider: NarrationFittingProvider
+    narration_fitting_recovery_store: (
+        FilesystemNarrationFittingRecoveryAuthorizationStore
+    )
     music_generation_provider: MusicGenerationProvider
     sound_effect_generation_provider: SoundEffectGenerationProvider
     speech_capability_source: SpeechCapabilitySource
@@ -850,6 +856,9 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                 narration_fitting_configuration.maximum_provider_retries
             ),
         )
+    narration_fitting_recovery_store = (
+        FilesystemNarrationFittingRecoveryAuthorizationStore(settings.PROJECTS_DIR)
+    )
     speech_generation_handler = SpeechGenerationHandler(
         script_reader=speech_source_reader,
         provider=speech_generation_provider,
@@ -870,6 +879,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         ),
         narration_fitter=narration_fitting_provider,
         narration_fitting_configuration=narration_fitting_configuration,
+        fitting_recovery_store=narration_fitting_recovery_store,
     )
     audio_design_configuration = AudioDesignConfiguration(
         music_provider=settings.ORION_MUSIC_GENERATION_PROVIDER,
@@ -1230,6 +1240,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         video_clip_generation_provider=video_clip_generation_provider,
         speech_generation_provider=speech_generation_provider,
         narration_fitting_provider=narration_fitting_provider,
+        narration_fitting_recovery_store=narration_fitting_recovery_store,
         music_generation_provider=music_generation_provider,
         sound_effect_generation_provider=sound_effect_generation_provider,
         speech_capability_source=speech_capability_source,
