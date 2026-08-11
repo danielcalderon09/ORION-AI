@@ -295,3 +295,29 @@ video with static local motion. Legacy defaults are omitted from canonical JSON,
 historical shot-expansion payloads and fingerprints retain their exact serialized
 shape. Image-motion rendering, runtime reuse, and hybrid spending are intentionally
 not enabled in this phase.
+
+### SHORT-V1.2 hybrid strategy and aggregate exposure
+
+The pure visual strategy planner canonicalizes post-TTS shots and supports three
+durable policies: `full_video`, `hybrid_balanced`, and `hybrid_economy`. Selection
+uses bounded importance, generation priority, narrative role, shot function, and
+stable scene/shot identity. Balanced planning targets half of the visual shots and
+spreads video moments across the timeline; economy targets roughly thirty percent
+while retaining the hook and another reveal/payoff when available. A model can
+describe a shot but cannot authorize spending.
+
+Generated image shots receive deterministic pan or zoom intent only; no FFmpeg
+image-motion path is enabled yet. Reuse is preserved only when the input already
+contains an eligible `source_asset_id`. The planner never invents a reusable source.
+
+Before future asset acquisition, `AggregateVisualBudgetPlan` counts one image for
+each generated image and one first-frame image for each generated video. That
+first-frame requirement is a single image request, not an additional generated-image
+charge. Only `generated_video` shots create video requirements. The plan applies
+image request/cost limits, video request/per-request/job limits, and an independent
+maximum total visual cost. Every plan is versioned, canonically serialized, and
+fingerprinted; rejection is a pure fail-closed result and makes no provider call.
+
+SHORT-V1.2 does not alter StageRegistry or production handlers. Runtime remains
+legacy full-video until image acquisition, video generation, and composition gain
+explicit hybrid support in later phases.

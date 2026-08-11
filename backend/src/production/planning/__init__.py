@@ -6,6 +6,18 @@ from backend.src.production.domain.visual_strategy import (
     VisualMode,
     VisualMotionMode,
 )
+from backend.src.production.planning.aggregate_visual_budget import (
+    AggregateVisualBudgetError,
+    AggregateVisualBudgetPlan,
+    HybridVisualBudgetAuthorization,
+    ImageRequirementKind,
+    PlannedImageRequest,
+    PlannedVideoRequest,
+    authorize_aggregate_visual_budget,
+    build_aggregate_visual_budget_plan,
+    deserialize_aggregate_visual_budget_plan,
+    serialize_aggregate_visual_budget_plan,
+)
 from backend.src.production.planning.models import (
     PlanningJobConfiguration,
     ProductionPlan,
@@ -34,7 +46,18 @@ from backend.src.production.planning.provider_budget_planner import (
     resolve_editorial_audio_first,
 )
 from backend.src.production.planning.serialization import serialize_production_plan
-from backend.src.production.planning.visual_strategy import LegacyFullVideoStrategy
+from backend.src.production.planning.visual_strategy import (
+    HybridVisualStrategyPlan,
+    HybridVisualStrategyPolicy,
+    HybridVisualStrategySummary,
+    LegacyFullVideoStrategy,
+    StrategicVisualShot,
+    VisualStrategyName,
+    VisualStrategyQualityError,
+    build_hybrid_visual_strategy_plan,
+    deserialize_hybrid_visual_strategy_plan,
+    serialize_hybrid_visual_strategy_plan,
+)
 
 __all__ = [
     "PlanningJobConfiguration",
@@ -66,4 +89,23 @@ __all__ = [
     "VisualImportance",
     "VisualMode",
     "VisualMotionMode",
+    "AggregateVisualBudgetError",
+    "AggregateVisualBudgetPlan",
+    "HybridVisualBudgetAuthorization",
+    "HybridVisualStrategyPlan",
+    "HybridVisualStrategyPolicy",
+    "HybridVisualStrategySummary",
+    "ImageRequirementKind",
+    "PlannedImageRequest",
+    "PlannedVideoRequest",
+    "StrategicVisualShot",
+    "VisualStrategyName",
+    "VisualStrategyQualityError",
+    "authorize_aggregate_visual_budget",
+    "build_aggregate_visual_budget_plan",
+    "build_hybrid_visual_strategy_plan",
+    "deserialize_aggregate_visual_budget_plan",
+    "deserialize_hybrid_visual_strategy_plan",
+    "serialize_aggregate_visual_budget_plan",
+    "serialize_hybrid_visual_strategy_plan",
 ]
