@@ -114,6 +114,30 @@ async def _authorize(
     return store, authorization
 
 
+async def _build_failed_attempt_2(tmp_path: Path):
+    configuration, writer, first_fitter, source = await _failed_reference_equivalent(
+        tmp_path
+    )
+    store, authorization = await _authorize(tmp_path, "0.004")
+    fitter = FakeNarrationFitter({("scene-001", 2): REVISION_TWO_SHORT})
+    second_writer = LocalSpeechManifestWriter(tmp_path, max_manifest_bytes=2_000_000)
+    command, context = command_context(attempt=2)
+    output = await _handler(
+        tmp_path,
+        speech=SequencedSpeechProvider((5_475, 4_800)),
+        fitter=fitter,
+        writer=second_writer,
+        fitting_configuration=configuration.model_copy(
+            update={"maximum_estimated_job_cost_usd": Decimal("0.004")}
+        ),
+        fitting_recovery_store=store,
+    ).execute(command, context)
+    assert output.result.error_code == "narration_fitting_exhausted"
+    manifest = await second_writer.read_existing(context=context)
+    assert manifest is not None
+    return configuration, first_fitter, fitter, source, manifest
+
+
 async def test_recovery_authorization_004_adds_two_request_capacity(tmp_path: Path) -> None:
     await _failed_reference_equivalent(tmp_path)
 
@@ -274,6 +298,122 @@ async def test_recovery_reuses_completed_scene_and_creates_next_attempt(
         / f"production/{JOB_ID}/generating_narration/attempt-1/"
         "speech-generation-manifest.json"
     ).read_bytes() == source_bytes
+
+
+async def test_chained_authorization_targets_attempt_3_and_recovers_selectively(
+    tmp_path: Path,
+) -> None:
+    configuration, first_fitter, second_fitter, attempt_1, attempt_2 = (
+        await _build_failed_attempt_2(tmp_path)
+    )
+    store, (authorization_b, _) = await _authorize(
+        tmp_path,
+        "0.005",
+        settings_budget="0.008",
+        maximum_fitting_attempts=3,
+    )
+    assert authorization_b.source_attempt_number == 2
+    assert authorization_b.maximum_additional_provider_requests == 2
+    assert await store.read(job_id=JOB_ID, target_attempt_number=3) == authorization_b
+    assert await store.read(job_id=JOB_ID, target_attempt_number=2) is not None
+    _, (same_authorization, idempotent) = await _authorize(
+        tmp_path,
+        "0.005",
+        settings_budget="0.008",
+        maximum_fitting_attempts=3,
+    )
+    assert idempotent is True
+    assert same_authorization == authorization_b
+
+    attempt_1_path = (
+        tmp_path
+        / f"production/{JOB_ID}/generating_narration/attempt-1/"
+        "speech-generation-manifest.json"
+    )
+    attempt_2_path = (
+        tmp_path
+        / f"production/{JOB_ID}/generating_narration/attempt-2/"
+        "speech-generation-manifest.json"
+    )
+    attempt_1_bytes = attempt_1_path.read_bytes()
+    attempt_2_bytes = attempt_2_path.read_bytes()
+
+    third_fitter = FakeNarrationFitter({("scene-002", 3): REVISION_TWO_SHORT})
+    third_writer = LocalSpeechManifestWriter(tmp_path, max_manifest_bytes=2_000_000)
+    command, context = command_context(attempt=3)
+    third_speech = SequencedSpeechProvider((4_400,))
+    output = await _handler(
+        tmp_path,
+        speech=third_speech,
+        fitter=third_fitter,
+        writer=third_writer,
+        fitting_configuration=configuration.model_copy(
+            update={
+                "maximum_estimated_job_cost_usd": Decimal("0.005"),
+                "maximum_attempts": 3,
+            }
+        ),
+        fitting_recovery_store=store,
+    ).execute(command, context)
+    attempt_3 = await third_writer.read_existing(context=context)
+
+    assert output.result.outcome is StageOutcome.SUCCEEDED
+    assert third_fitter.calls == [("scene-002", 3)]
+    assert third_fitter.calls.count(("scene-001", 3)) == 0
+    assert third_speech.calls == 1
+    assert attempt_3 is not None
+    assert attempt_3.duration_resolution is not None
+    assert attempt_3.duration_resolution.resolved_duration_ms == 9_200
+    assert tuple(
+        (record.scene_id, record.attempt_number)
+        for record in attempt_3.fitting_records
+    ) == (
+        ("scene-001", 1),
+        ("scene-002", 1),
+        ("scene-001", 2),
+        ("scene-002", 3),
+    )
+    assert attempt_1.fitting_records[1].status.value == "failed"
+    assert attempt_2.fitting_records[-1].scene_id == "scene-001"
+    assert attempt_1_path.read_bytes() == attempt_1_bytes
+    assert attempt_2_path.read_bytes() == attempt_2_bytes
+    assert first_fitter.calls == [("scene-001", 1), ("scene-002", 1)]
+    assert second_fitter.calls == [("scene-001", 2)]
+
+
+async def test_attempt_3_authorization_requires_settings_max_attempts_3(
+    tmp_path: Path,
+) -> None:
+    await _build_failed_attempt_2(tmp_path)
+
+    with pytest.raises(
+        NarrationFittingRecoveryAuthorizationError,
+        match="attempt policy is exhausted",
+    ):
+        await _authorize(
+            tmp_path,
+            "0.005",
+            settings_budget="0.008",
+            maximum_fitting_attempts=2,
+        )
+
+
+async def test_attempt_3_budget_004_allows_only_one_provider_request(
+    tmp_path: Path,
+) -> None:
+    await _build_failed_attempt_2(tmp_path)
+
+    store, (authorization, _) = await _authorize(
+        tmp_path,
+        "0.004",
+        settings_budget="0.008",
+        maximum_fitting_attempts=3,
+    )
+
+    assert authorization.existing_committed_estimate_usd == Decimal("0.003")
+    assert authorization.additional_authorized_cost_usd == Decimal("0.001")
+    assert authorization.maximum_additional_provider_requests == 1
+    assert await store.read(job_id=JOB_ID, target_attempt_number=2) is not None
 
 
 def test_cli_parser_accepts_safe_decimal() -> None:

@@ -135,8 +135,9 @@ class FilesystemNarrationFittingRecoveryAuthorizationStore:
         self,
         *,
         job_id: UUID,
+        target_attempt_number: int | None = None,
     ) -> NarrationFittingRecoveryAuthorization | None:
-        return await asyncio.to_thread(self._read_sync, job_id)
+        return await asyncio.to_thread(self._read_sync, job_id, target_attempt_number)
 
     async def authorize(
         self,
@@ -254,7 +255,8 @@ class FilesystemNarrationFittingRecoveryAuthorizationStore:
                 "recovery request capacity does not match current policy"
             )
         source_sha = speech_manifest_sha256(source)
-        target = self._authorization_target(job_id)
+        target_attempt_number = source.attempt_number + 1
+        target = self._authorization_target(job_id, target_attempt_number)
         existing = self._read_target(target)
         if existing is not None:
             if (
@@ -355,8 +357,25 @@ class FilesystemNarrationFittingRecoveryAuthorizationStore:
     def _read_sync(
         self,
         job_id: UUID,
+        target_attempt_number: int | None,
     ) -> NarrationFittingRecoveryAuthorization | None:
-        authorization = self._read_target(self._authorization_target(job_id))
+        if target_attempt_number is not None and target_attempt_number < 2:
+            raise NarrationFittingRecoveryAuthorizationError(
+                "recovery target attempt must be at least 2"
+            )
+        targets = (
+            (self._authorization_target(job_id, target_attempt_number),)
+            if target_attempt_number is not None
+            else self._authorization_targets(job_id)
+        )
+        authorization = next(
+            (
+                candidate
+                for candidate in (self._read_target(target) for target in targets)
+                if candidate is not None
+            ),
+            None,
+        )
         if authorization is not None:
             self._verify_source(authorization)
         return authorization
@@ -381,12 +400,31 @@ class FilesystemNarrationFittingRecoveryAuthorizationStore:
                 "recovery authorization is invalid"
             ) from exc
 
-    def _authorization_target(self, job_id: UUID) -> Path:
-        return self._confinement.resolve(
-            "production/"
-            f"{job_id}/generating_narration/"
-            "narration-fitting-recovery-authorization.json"
+    def _authorization_targets(self, job_id: UUID) -> tuple[Path, ...]:
+        base = self._confinement.resolve(
+            f"production/{job_id}/generating_narration"
         )
+        legacy = self._authorization_target(job_id, 2)
+        chained = sorted(
+            base.glob("narration-fitting-recovery-authorization-attempt-*.json"),
+            reverse=True,
+        )
+        return (legacy, *chained)
+
+    def _authorization_target(self, job_id: UUID, target_attempt_number: int) -> Path:
+        if target_attempt_number == 2:
+            relative = (
+                "production/"
+                f"{job_id}/generating_narration/"
+                "narration-fitting-recovery-authorization.json"
+            )
+        else:
+            relative = (
+                "production/"
+                f"{job_id}/generating_narration/"
+                f"narration-fitting-recovery-authorization-attempt-{target_attempt_number}.json"
+            )
+        return self._confinement.resolve(relative)
 
     def _atomic_create(self, target: Path, content: bytes) -> None:
         if len(content) > self._maximum:

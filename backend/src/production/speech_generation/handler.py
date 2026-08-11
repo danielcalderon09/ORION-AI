@@ -145,7 +145,8 @@ class SpeechGenerationHandler:
                 and recovery_store is not None
             ):
                 recovery_authorization = await recovery_store.read(
-                    job_id=command.job_id
+                    job_id=command.job_id,
+                    target_attempt_number=command.attempt_number,
                 )
             if recovery_authorization is not None:
                 assert recovery_store is not None

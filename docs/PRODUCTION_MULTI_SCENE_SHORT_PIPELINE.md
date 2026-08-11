@@ -108,6 +108,14 @@ reused. A failed logical fitting attempt remains immutable, while the next fitti
 attempt receives a new durable identity. Estimated authorization reservations stay
 separate from lower reported provider cost.
 
+If that recovery attempt also exhausts the fitting policy, a later operator action
+may authorize the next logical round. The latest failed speech manifest becomes the
+new pinned source, and the authorization is written as
+`narration-fitting-recovery-authorization-attempt-3.json` (or the corresponding
+target attempt). The original legacy sidecar and all earlier manifests remain
+readable and immutable. The command still refuses the operation unless the current
+`ORION_NARRATION_FITTING_MAX_ATTEMPTS` permits the next round.
+
 Phase 7A validates ORION's first 2–5 scene short-form architecture completely
 offline. Simulated providers and `httpx.MockTransport` remain the test boundary;
 the feature does not activate billable providers.
