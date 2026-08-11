@@ -153,9 +153,20 @@ def test_same_input_has_exactly_deterministic_image_and_video_prompts(visual_ass
 
 
 def test_historical_plan_without_identity_remains_readable(visual_asset_plan):
-    historical = visual_asset_plan.model_dump(mode="json", exclude={"video_identity"})
+    historical = visual_asset_plan.model_dump(
+        mode="json",
+        exclude={
+            "video_identity",
+            "source_shot_expansion_artifact_id",
+            "source_shot_expansion_sha256",
+            "source_shot_expansion_fingerprint",
+        },
+    )
     loaded = type(visual_asset_plan).model_validate(historical)
     assert loaded.video_identity is None
+    assert loaded.source_shot_expansion_artifact_id is None
+    assert loaded.source_shot_expansion_sha256 is None
+    assert loaded.source_shot_expansion_fingerprint is None
     assert loaded.assets == visual_asset_plan.assets
 
 

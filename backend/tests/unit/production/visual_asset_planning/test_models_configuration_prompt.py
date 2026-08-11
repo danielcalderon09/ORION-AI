@@ -62,6 +62,32 @@ async def test_valid_plan_is_frozen_strict_canonical_and_mapped(
 
 
 @pytest.mark.asyncio
+async def test_consecutive_shots_require_distinct_visual_intent(
+    production_scene_plan,
+) -> None:
+    _, plan = await make_plan(production_scene_plan)
+    first, second = plan.assets[:2]
+    assert first.source_scene_id == second.source_scene_id
+    assert first.source_shot_id != second.source_shot_id
+    assert first.prompt != second.prompt
+    changed = plan.model_copy(
+        update={
+            "assets": (
+                first,
+                second.model_copy(update={"prompt": first.prompt}),
+                *plan.assets[2:],
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="distinct visual intent"):
+        validate_visual_asset_plan_against_scene_plan(
+            changed,
+            production_scene_plan,
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [

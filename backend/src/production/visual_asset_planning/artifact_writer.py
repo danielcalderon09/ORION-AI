@@ -22,6 +22,9 @@ from backend.src.production.visual_asset_planning.models import (
 from backend.src.production.visual_asset_planning.serialization import (
     serialize_visual_asset_plan,
 )
+from backend.src.production.visual_asset_planning.shot_expansion import (
+    PostTtsShotExpansion,
+)
 
 
 class WrittenVisualAssetPlanningArtifact(ContractModel):
@@ -31,7 +34,27 @@ class WrittenVisualAssetPlanningArtifact(ContractModel):
     visual_asset_plan: ProductionVisualAssetPlan
 
 
+class WrittenShotExpansionArtifact(ContractModel):
+    relative_path: str
+    size_bytes: int = Field(ge=0)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    shot_expansion: PostTtsShotExpansion
+
+
 class VisualAssetPlanningArtifactWriter(Protocol):
+    async def read_existing_shot_expansion(
+        self,
+        *,
+        context: StageContext,
+    ) -> WrittenShotExpansionArtifact | None: ...
+
+    async def write_shot_expansion(
+        self,
+        *,
+        context: StageContext,
+        shot_expansion: PostTtsShotExpansion,
+    ) -> WrittenShotExpansionArtifact: ...
+
     async def read_existing(
         self,
         *,
@@ -55,9 +78,60 @@ class InMemoryVisualAssetPlanningArtifactWriter:
         *,
         context: StageContext,
     ) -> WrittenVisualAssetPlanningArtifact | None:
-        relative_path = visual_asset_plan_relative_path(context)
-        content = self.contents.get(relative_path)
-        return _decode_written(relative_path, content) if content is not None else None
+        prefix = f"production/{context.job_id}/visual_asset_planning/attempt-"
+        suffix = "/visual-asset-plan.json"
+        candidates = tuple(
+            (path, content)
+            for path, content in self.contents.items()
+            if path.startswith(prefix)
+            and path.endswith(suffix)
+            and _attempt_from_path(path) <= context.attempt_number
+        )
+        if not candidates:
+            return None
+        relative_path, content = max(
+            candidates,
+            key=lambda item: _attempt_from_path(item[0]),
+        )
+        return _decode_written(relative_path, content)
+
+    async def read_existing_shot_expansion(
+        self,
+        *,
+        context: StageContext,
+    ) -> WrittenShotExpansionArtifact | None:
+        prefix = f"production/{context.job_id}/visual_asset_planning/attempt-"
+        suffix = "/shot-expansion.json"
+        candidates = tuple(
+            (path, content)
+            for path, content in self.contents.items()
+            if path.startswith(prefix)
+            and path.endswith(suffix)
+            and _attempt_from_path(path) <= context.attempt_number
+        )
+        if not candidates:
+            return None
+        relative_path, content = max(
+            candidates,
+            key=lambda item: _attempt_from_path(item[0]),
+        )
+        return _decode_shot_expansion(relative_path, content)
+
+    async def write_shot_expansion(
+        self,
+        *,
+        context: StageContext,
+        shot_expansion: PostTtsShotExpansion,
+    ) -> WrittenShotExpansionArtifact:
+        relative_path = shot_expansion_relative_path(context)
+        content = _serialize_shot_expansion(shot_expansion)
+        existing = self.contents.get(relative_path)
+        if existing is not None and existing != content:
+            raise VisualAssetPlanningValidationException(
+                "shot expansion path already has incompatible content"
+            )
+        self.contents[relative_path] = content
+        return _written_shot_expansion(relative_path, content, shot_expansion)
 
     async def write_visual_asset_plan(
         self,
@@ -91,8 +165,29 @@ class LocalVisualAssetPlanningArtifactWriter:
         *,
         context: StageContext,
     ) -> WrittenVisualAssetPlanningArtifact | None:
-        relative_path = visual_asset_plan_relative_path(context)
-        return await asyncio.to_thread(self._read_existing_sync, relative_path)
+        return await asyncio.to_thread(self._read_latest_visual_plan_sync, context)
+
+    async def read_existing_shot_expansion(
+        self,
+        *,
+        context: StageContext,
+    ) -> WrittenShotExpansionArtifact | None:
+        return await asyncio.to_thread(self._read_latest_shot_expansion_sync, context)
+
+    async def write_shot_expansion(
+        self,
+        *,
+        context: StageContext,
+        shot_expansion: PostTtsShotExpansion,
+    ) -> WrittenShotExpansionArtifact:
+        relative_path = shot_expansion_relative_path(context)
+        content = _serialize_shot_expansion(shot_expansion)
+        if len(content) > self._max_bytes:
+            raise VisualAssetPlanningValidationException(
+                "shot expansion exceeds the configured limit"
+            )
+        await asyncio.to_thread(self._write_atomic, relative_path, content)
+        return _written_shot_expansion(relative_path, content, shot_expansion)
 
     async def write_visual_asset_plan(
         self,
@@ -138,6 +233,71 @@ class LocalVisualAssetPlanningArtifactWriter:
                 "existing visual asset plan exceeds the configured limit"
             )
         return _decode_written(relative_path, content)
+
+    def _read_latest_visual_plan_sync(
+        self,
+        context: StageContext,
+    ) -> WrittenVisualAssetPlanningArtifact | None:
+        candidates = self._candidate_paths(
+            context,
+            filename="visual-asset-plan.json",
+        )
+        if not candidates:
+            return None
+        _, relative_path = max(candidates)
+        return self._read_existing_sync(relative_path)
+
+    def _read_shot_expansion_sync(
+        self,
+        relative_path: str,
+    ) -> WrittenShotExpansionArtifact | None:
+        target = self._safe_target(relative_path)
+        if not target.exists():
+            return None
+        if not target.is_file():
+            raise VisualAssetPlanningValidationException(
+                "existing shot expansion is not a regular file"
+            )
+        content = _read_bounded(target, self._max_bytes)
+        if len(content) > self._max_bytes:
+            raise VisualAssetPlanningValidationException(
+                "existing shot expansion exceeds the configured limit"
+            )
+        return _decode_shot_expansion(relative_path, content)
+
+    def _read_latest_shot_expansion_sync(
+        self,
+        context: StageContext,
+    ) -> WrittenShotExpansionArtifact | None:
+        candidates = self._candidate_paths(context, filename="shot-expansion.json")
+        if not candidates:
+            return None
+        _, relative_path = max(candidates)
+        return self._read_shot_expansion_sync(relative_path)
+
+    def _candidate_paths(
+        self,
+        context: StageContext,
+        *,
+        filename: str,
+    ) -> list[tuple[int, str]]:
+        base = self._root / "production" / str(context.job_id) / "visual_asset_planning"
+        if not base.exists():
+            return []
+        candidates: list[tuple[int, str]] = []
+        for directory in base.iterdir():
+            if not directory.is_dir() or not directory.name.startswith("attempt-"):
+                continue
+            value = directory.name[8:]
+            if not value.isdigit() or not 1 <= int(value) <= context.attempt_number:
+                continue
+            relative_path = (
+                f"production/{context.job_id}/visual_asset_planning/"
+                f"{directory.name}/{filename}"
+            )
+            if (directory / filename).exists():
+                candidates.append((int(value), relative_path))
+        return candidates
 
     def _write_atomic(self, relative_path: str, content: bytes) -> None:
         target = self._safe_target(relative_path)
@@ -205,6 +365,20 @@ def visual_asset_plan_relative_path(context: StageContext) -> str:
     return normalized
 
 
+def shot_expansion_relative_path(context: StageContext) -> str:
+    relative_path = f"{context.workspace_relative_path}/shot-expansion.json"
+    normalized = validate_relative_path(relative_path)
+    expected = (
+        f"production/{context.job_id}/visual_asset_planning/"
+        f"attempt-{context.attempt_number}/shot-expansion.json"
+    )
+    if "\\" in normalized or normalized != expected:
+        raise VisualAssetPlanningValidationException(
+            "shot expansion path is not contractual for this command"
+        )
+    return normalized
+
+
 def _decode_written(
     relative_path: str,
     content: bytes,
@@ -230,6 +404,34 @@ def _decode_written(
     return _written(relative_path, content, plan)
 
 
+def _serialize_shot_expansion(expansion: PostTtsShotExpansion) -> bytes:
+    return json.dumps(
+        expansion.model_dump(mode="json"),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def _decode_shot_expansion(
+    relative_path: str,
+    content: bytes,
+) -> WrittenShotExpansionArtifact:
+    try:
+        payload = json.loads(
+            content.decode("utf-8", errors="strict"),
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
+        expansion = PostTtsShotExpansion.model_validate(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
+        raise VisualAssetPlanningValidationException(
+            "existing shot expansion is invalid"
+        ) from exc
+    return _written_shot_expansion(relative_path, content, expansion)
+
+
 def _written(
     relative_path: str,
     content: bytes,
@@ -240,6 +442,19 @@ def _written(
         size_bytes=len(content),
         sha256=hashlib.sha256(content).hexdigest(),
         visual_asset_plan=plan,
+    )
+
+
+def _written_shot_expansion(
+    relative_path: str,
+    content: bytes,
+    expansion: PostTtsShotExpansion,
+) -> WrittenShotExpansionArtifact:
+    return WrittenShotExpansionArtifact(
+        relative_path=relative_path,
+        size_bytes=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
+        shot_expansion=expansion,
     )
 
 
@@ -262,6 +477,14 @@ def _reject_symlink_components(root: Path, target: Path) -> None:
 def _read_bounded(path: Path, maximum: int) -> bytes:
     with path.open("rb") as stream:
         return stream.read(maximum + 1)
+
+
+def _attempt_from_path(relative_path: str) -> int:
+    parts = PurePosixPath(relative_path).parts
+    if len(parts) == 5 and parts[3].startswith("attempt-"):
+        value = parts[3][8:]
+        return int(value) if value.isdigit() else -1
+    return -1
 
 
 def _fsync_directory(directory: Path) -> None:

@@ -96,8 +96,9 @@ async def test_full_pipeline_acquires_durable_images_without_real_network(
             "0.001" if image_provider_name == "openrouter" else None
         ),
         ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD=(
-            "0.001" if image_provider_name == "openrouter" else None
+            "0.002" if image_provider_name == "openrouter" else None
         ),
+        ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB=2,
     )
     container = build_production_container(settings)
     ProductionBase.metadata.create_all(container.engine)
@@ -149,9 +150,9 @@ async def test_full_pipeline_acquires_durable_images_without_real_network(
             for record in rows
             if record[0] == ArtifactType.PRODUCTION_VIDEO_CLIP_MANIFEST.value
         ]
-        assert len(images) == 1
+        assert len(images) == 2
         assert len(manifests) == 1
-        assert len(video_clips) == 1
+        assert len(video_clips) == 2
         assert len(video_manifests) == 1
         for record in (*images, *manifests, *video_clips, *video_manifests):
             target = settings.PROJECTS_DIR.joinpath(*record[1].split("/"))
@@ -163,11 +164,11 @@ async def test_full_pipeline_acquires_durable_images_without_real_network(
         durable_manifest = json.loads(manifest_target.read_text(encoding="utf-8"))
         serialized_manifest = json.dumps(durable_manifest)
         if image_provider_name == "openrouter":
-            entry = durable_manifest["entries"][0]
-            assert entry["request_status"] == "completed"
-            assert entry["fresh_submission_permitted"] is False
-            assert len(entry["request_fingerprint"]) == 64
-            assert entry["http_status"] == 200
+            for entry in durable_manifest["entries"]:
+                assert entry["request_status"] == "completed"
+                assert entry["fresh_submission_permitted"] is False
+                assert len(entry["request_fingerprint"]) == 64
+                assert entry["http_status"] == 200
         assert "fake-test-only" not in serialized_manifest
         assert "Authorization" not in serialized_manifest
         assert "b64_json" not in serialized_manifest
@@ -186,6 +187,6 @@ async def test_full_pipeline_acquires_durable_images_without_real_network(
                 )
             )
         assert count_after == count_before
-        assert calls == (1 if image_provider_name == "openrouter" else 0)
+        assert calls == (2 if image_provider_name == "openrouter" else 0)
     finally:
         await container.aclose()

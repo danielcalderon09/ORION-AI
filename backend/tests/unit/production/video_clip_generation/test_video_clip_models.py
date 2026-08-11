@@ -1,5 +1,6 @@
 """Strict video clip contracts and serialization."""
 
+import json
 from decimal import Decimal
 from uuid import UUID
 
@@ -175,6 +176,20 @@ def test_decimal_and_canonical_json_are_safe() -> None:
     assert first == second
     assert deserialize_video_clip_manifest(first) == value
     assert b"NaN" not in first
+
+
+def test_historical_single_shot_manifest_without_purchase_plan_is_readable() -> None:
+    payload = manifest().model_dump(mode="json")
+    payload.pop("purchase_plan")
+    payload.pop("purchase_plan_fingerprint")
+
+    loaded = deserialize_video_clip_manifest(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+
+    assert loaded.purchase_plan is None
+    assert loaded.purchase_plan_fingerprint is None
+    assert len(loaded.entries) == 1
 
 
 @pytest.mark.parametrize(

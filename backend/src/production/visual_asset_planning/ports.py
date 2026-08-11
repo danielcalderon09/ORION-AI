@@ -20,6 +20,9 @@ from backend.src.production.visual_asset_planning.models import (
 )
 
 if TYPE_CHECKING:
+    from backend.src.production.composition.audio_first_duration_reader import (
+        ReadDurableDurationResolution,
+    )
     from backend.src.production.runtime.context import StageContext
 
 
@@ -50,6 +53,13 @@ class ProductionScenePlanReader(Protocol):
         *,
         context: StageContext,
     ) -> ReadProductionScenePlan: ...
+
+
+class ShotExpansionDurationReader(Protocol):
+    async def read_source_for_job(
+        self,
+        job_id: UUID,
+    ) -> ReadDurableDurationResolution | None: ...
 
 
 class ProductionScenePlanArtifactCandidate(ContractModel):

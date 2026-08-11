@@ -212,6 +212,12 @@ class RemoteVideoJobRecord(ContractModel):
     job_id: str
     attempt_number: int = Field(ge=1)
     visual_asset_id: str = Field(pattern=r"^asset-s[0-9]{3}-q[0-9]{3}-v[0-9]{3}$")
+    scene_id: str | None = Field(default=None, pattern=r"^scene-[0-9]{3}$")
+    shot_id: str | None = Field(
+        default=None,
+        pattern=r"^scene-[0-9]{3}-shot-[0-9]{3}$",
+    )
+    clip_index: int = Field(default=1, ge=1, le=50)
     provider: str = "openrouter"
     model: str
     source_image_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -268,6 +274,10 @@ class RemoteVideoJobRecord(ContractModel):
             raise ValueError("remote video local job ID is invalid") from exc
         if self.provider != "openrouter":
             raise ValueError("remote video provider must be OpenRouter")
+        if self.shot_id is not None and self.scene_id is not None and not self.shot_id.startswith(
+            f"{self.scene_id}-shot-"
+        ):
+            raise ValueError("remote video shot does not belong to its scene")
         if self.remote_job_id is not None and (
             any(
                 character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"

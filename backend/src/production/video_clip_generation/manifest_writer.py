@@ -49,6 +49,19 @@ class InMemoryVideoClipManifestWriter:
         content = self.contents.get(video_clip_manifest_relative_path(context))
         return deserialize_video_clip_manifest(content) if content is not None else None
 
+    async def read_latest_before(
+        self, *, context: StageContext
+    ) -> ProductionVideoClipManifest | None:
+        for attempt in range(context.attempt_number - 1, 0, -1):
+            path = (
+                f"production/{context.job_id}/generating_video_clips/attempt-{attempt}/"
+                "video-clip-generation-manifest.json"
+            )
+            content = self.contents.get(path)
+            if content is not None:
+                return deserialize_video_clip_manifest(content)
+        return None
+
     async def create(self, *, context: StageContext, manifest: ProductionVideoClipManifest) -> None:
         path = video_clip_manifest_relative_path(context)
         if path in self.contents:
@@ -96,6 +109,11 @@ class LocalVideoClipManifestWriter:
     async def read_existing(self, *, context: StageContext) -> ProductionVideoClipManifest | None:
         return await asyncio.to_thread(self._read_existing_sync, context)
 
+    async def read_latest_before(
+        self, *, context: StageContext
+    ) -> ProductionVideoClipManifest | None:
+        return await asyncio.to_thread(self._read_latest_before_sync, context)
+
     async def create(self, *, context: StageContext, manifest: ProductionVideoClipManifest) -> None:
         await asyncio.to_thread(self._create_sync, context, manifest)
 
@@ -127,6 +145,19 @@ class LocalVideoClipManifestWriter:
         if not target.exists():
             return None
         return self._read(target)
+
+    def _read_latest_before_sync(
+        self, context: StageContext
+    ) -> ProductionVideoClipManifest | None:
+        for attempt in range(context.attempt_number - 1, 0, -1):
+            relative = (
+                f"production/{context.job_id}/generating_video_clips/attempt-{attempt}/"
+                "video-clip-generation-manifest.json"
+            )
+            target = self._confinement.resolve(relative)
+            if target.exists():
+                return self._read(target)
+        return None
 
     def _create_sync(self, context: StageContext, manifest: ProductionVideoClipManifest) -> None:
         target = self._target(context)

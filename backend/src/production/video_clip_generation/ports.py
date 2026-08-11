@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Protocol
@@ -15,6 +16,9 @@ from backend.src.production.domain.duration_resolution import DurableDurationRes
 from backend.src.production.domain.enums import ArtifactType
 from backend.src.production.image_acquisition.models import (
     ProductionImageAcquisitionManifest,
+)
+from backend.src.production.planning.provider_budget_planner import (
+    VideoProviderPurchasePlan,
 )
 from backend.src.production.video_clip_generation.configuration import (
     VideoClipGenerationConfiguration,
@@ -178,6 +182,10 @@ class VideoClipProviderRequest(ContractModel):
     correlation_id: UUID
     attempt_number: int = Field(ge=1)
     visual_asset_id: str
+    scene_id: str = Field(pattern=r"^scene-[0-9]{3}$")
+    shot_id: str = Field(pattern=r"^scene-[0-9]{3}-shot-[0-9]{3}$")
+    clip_index: int = Field(default=1, ge=1, le=50)
+    visual_intent_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     source_image_artifact_id: UUID
     source_image_sha256: str
     source_image_mime_type: str
@@ -194,6 +202,29 @@ class VideoClipProviderRequest(ContractModel):
     height: int = Field(gt=0, le=16_384)
     configuration: VideoClipGenerationConfiguration
     fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_legacy_clip_identity(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        result = dict(value)
+        visual_asset_id = result.get("visual_asset_id")
+        if isinstance(visual_asset_id, str):
+            parts = visual_asset_id.split("-")
+            if len(parts) == 4:
+                scene_number = parts[1][1:]
+                shot_number = parts[2][1:]
+                result.setdefault("scene_id", f"scene-{scene_number}")
+                result.setdefault(
+                    "shot_id",
+                    f"scene-{scene_number}-shot-{shot_number}",
+                )
+            result.setdefault(
+                "visual_intent_sha256",
+                hashlib.sha256(visual_asset_id.encode("utf-8")).hexdigest(),
+            )
+        return result
 
     @field_validator("source_metadata")
     @classmethod
@@ -239,6 +270,35 @@ class VideoClipProviderResponse(ContractModel):
         return result
 
 
+class VideoClipJobPreflight(ContractModel):
+    requests: tuple[VideoClipProviderRequest, ...] = Field(min_length=1, max_length=500)
+    purchase_plan: VideoProviderPurchasePlan
+    purchase_plan_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def validate_fingerprint(self) -> VideoClipJobPreflight:
+        if self.purchase_plan.fingerprint() != self.purchase_plan_fingerprint:
+            raise ValueError("video purchase plan fingerprint differs")
+        planned_clips = tuple(
+            clip for scene in self.purchase_plan.scenes for clip in scene.clips
+        )
+        if len(self.requests) != len(planned_clips):
+            raise ValueError("provider requests differ from video purchase plan")
+        for request, clip in zip(self.requests, planned_clips, strict=True):
+            if (
+                request.scene_id != clip.scene_id
+                or request.shot_id != clip.shot_id
+                or request.visual_asset_id != clip.visual_asset_id
+                or request.clip_index != 1
+                or request.visual_intent_sha256 != clip.visual_intent_sha256
+                or request.source_image_sha256 != clip.source_image_sha256
+                or request.duration_seconds != clip.provider_duration_seconds
+            ):
+                raise ValueError("provider request differs from video purchase plan clip")
+        return self
+
+
+
 class VideoClipGenerationProvider(Protocol):
     async def generate_clip(
         self, request: VideoClipProviderRequest
@@ -261,6 +321,10 @@ class VideoClipBinaryStore(Protocol):
 
 class VideoClipManifestWriter(Protocol):
     async def read_existing(
+        self, *, context: StageContext
+    ) -> ProductionVideoClipManifest | None: ...
+
+    async def read_latest_before(
         self, *, context: StageContext
     ) -> ProductionVideoClipManifest | None: ...
 

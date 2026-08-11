@@ -66,6 +66,66 @@ def test_builds_complete_stable_timeline(
     assert first.tracks[4].disabled_reason == "no_durable_subtitle_asset"
 
 
+def test_one_narrative_scene_composes_two_provider_shots_without_loop(
+    composition_source: MediaCompositionSource,
+) -> None:
+    video_assets = tuple(
+        asset
+        for asset in composition_source.assets
+        if asset.kind is CompositionAssetKind.VIDEO
+    )
+    duration_by_id = {
+        video_assets[0].asset_id: 6_000,
+        video_assets[1].asset_id: 4_000,
+    }
+    assets = tuple(
+        asset.model_copy(
+            update={
+                "duration_ms": duration_by_id.get(asset.asset_id, 9_000),
+                "frame_count": (
+                    duration_by_id[asset.asset_id] * 24 // 1_000
+                    if asset.asset_id in duration_by_id
+                    else asset.frame_count
+                ),
+            }
+        )
+        for asset in composition_source.assets
+    )
+    shots = (
+        composition_source.shots[0].model_copy(
+            update={"shot_start_ms": 0, "shot_end_ms": 6_000}
+        ),
+        composition_source.shots[1].model_copy(
+            update={"shot_start_ms": 6_000, "shot_end_ms": 9_000}
+        ),
+    )
+    narration = (
+        composition_source.narration[0].model_copy(update={"duration_ms": 9_000}),
+    )
+    source = composition_source.model_copy(
+        update={
+            "assets": assets,
+            "shots": shots,
+            "narration": narration,
+            "music": composition_source.music.model_copy(update={"duration_ms": 9_000}),
+        }
+    )
+
+    plan = build_media_composition_plan(source, MediaCompositionConfiguration())
+
+    videos = plan.tracks[0].clips
+    assert [(clip.timeline_start_ms, clip.timeline_end_ms) for clip in videos] == [
+        (0, 6_000),
+        (6_000, 9_000),
+    ]
+    assert plan.output.expected_duration_ms == 9_000
+    assert all(clip.playback_mode == "once" and clip.loop_count == 1 for clip in videos)
+    assert plan.metadata["video_adaptations"] == {
+        "clip-video-scene-001-shot-001": "none",
+        "clip-video-scene-001-shot-002": "trim",
+    }
+
+
 def test_relevant_timeline_change_changes_fingerprints(
     composition_source: MediaCompositionSource,
 ) -> None:

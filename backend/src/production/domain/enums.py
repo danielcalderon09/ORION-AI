@@ -57,6 +57,7 @@ class ArtifactType(StrEnum):
     PRODUCTION_PLAN = "production_plan"
     PRODUCTION_SCRIPT = "production_script"
     PRODUCTION_SCENE_PLAN = "production_scene_plan"
+    PRODUCTION_SHOT_EXPANSION = "production_shot_expansion"
     PRODUCTION_VISUAL_ASSET_PLAN = "production_visual_asset_plan"
     PRODUCTION_IMAGE_ACQUISITION_MANIFEST = "production_image_acquisition_manifest"
     PRODUCTION_VIDEO_CLIP_MANIFEST = "production_video_clip_manifest"

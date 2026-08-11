@@ -17,6 +17,12 @@ from uuid import UUID
 
 import httpx
 
+from backend.src.production.planning.provider_budget_planner import (
+    BoundVisualShot,
+    VideoProviderPurchasePlan,
+    authorize_video_purchase_plan,
+    build_bound_video_purchase_plan,
+)
 from backend.src.production.video_clip_generation.duration_strategy import (
     select_provider_duration,
 )
@@ -41,6 +47,7 @@ from backend.src.production.video_clip_generation.frame_image_publisher import (
 )
 from backend.src.production.video_clip_generation.ports import (
     GeneratedVideoClipPayload,
+    VideoClipJobPreflight,
     VideoClipProviderRequest,
     VideoClipProviderResponse,
 )
@@ -143,7 +150,8 @@ class OpenRouterVideoClipGenerationProvider:
     async def preflight_job(
         self,
         requests: tuple[VideoClipProviderRequest, ...],
-    ) -> tuple[VideoClipProviderRequest, ...]:
+        existing_plan: VideoProviderPurchasePlan | None = None,
+    ) -> VideoClipJobPreflight:
         """Validate every known scene and its aggregate budget before any publication or POST."""
 
         if not requests:
@@ -153,7 +161,10 @@ class OpenRouterVideoClipGenerationProvider:
             raise OpenRouterVideoConfigurationError("video preflight requests must share one job")
         job_id, _ = next(iter(identity))
         existing_count = await self._jobs.count_for_job(job_id=job_id)
-        if existing_count + len(requests) > self._config.max_requests_per_job:
+        if (
+            existing_plan is None
+            and existing_count + len(requests) > self._config.max_requests_per_job
+        ):
             raise OpenRouterVideoCostPolicyError(
                 "OpenRouter video paid submission limit would be exceeded",
                 diagnostic_phase="aggregate_cost_authorization",
@@ -170,6 +181,7 @@ class OpenRouterVideoClipGenerationProvider:
         capability = await self._resolver.discover(model=self._config.model)
         adjusted: list[VideoClipProviderRequest] = []
         total = Decimal("0")
+        unit_price: Decimal | None = None
         for request in requests:
             selected_duration = select_provider_duration(
                 request.duration_seconds,
@@ -201,6 +213,14 @@ class OpenRouterVideoClipGenerationProvider:
                 has_remote_job=False,
                 has_recoverable_clip=False,
             )
+            current_unit_price = estimated / Decimal(selected_duration)
+            if unit_price is not None and current_unit_price != unit_price:
+                raise OpenRouterVideoCostPolicyError(
+                    "video purchase plan requires one stable pricing SKU",
+                    diagnostic_phase="pricing_discovery",
+                    diagnostic_code="pricing_sku_mismatch",
+                )
+            unit_price = current_unit_price
             total += estimated
             adjusted.append(request.model_copy(update={"duration_seconds": selected_duration}))
         if total > self._config.max_estimated_job_cost_usd:
@@ -216,7 +236,72 @@ class OpenRouterVideoClipGenerationProvider:
                     "planned_request_count": len(requests),
                 },
             )
-        return tuple(adjusted)
+        if unit_price is None:
+            raise OpenRouterVideoCostPolicyError(
+                "video purchase plan has no price",
+                diagnostic_phase="pricing_discovery",
+                diagnostic_code="pricing_sku_missing",
+            )
+        try:
+            purchase_plan = build_bound_video_purchase_plan(
+                shots=tuple(
+                    BoundVisualShot(
+                        scene_id=request.scene_id,
+                        scene_sequence_index=int(request.scene_id[-3:]) - 1,
+                        shot_id=request.shot_id,
+                        shot_sequence_index=int(request.shot_id[-3:]) - 1,
+                        visual_asset_id=request.visual_asset_id,
+                        visual_intent_sha256=request.visual_intent_sha256,
+                        source_image_sha256=request.source_image_sha256,
+                        usable_duration_ms=round(original.duration_seconds * 1_000),
+                    )
+                    for original, request in zip(requests, adjusted, strict=True)
+                ),
+                provider="openrouter",
+                model=self._config.model,
+                supported_durations_seconds=capability.supported_durations,
+                price_per_second_usd=unit_price,
+                max_requests_per_job=self._config.max_requests_per_job,
+                maximum_authorized_cost_per_request_usd=(
+                    self._config.max_estimated_cost_usd
+                ),
+                maximum_authorized_cost_usd=(
+                    self._config.max_estimated_job_cost_usd
+                ),
+            )
+        except ValueError as exc:
+            raise OpenRouterVideoConfigurationError(
+                "video purchase plan cannot bind approved visual shots",
+                diagnostic_phase="purchase_plan_construction",
+                diagnostic_code="purchase_plan_invalid",
+            ) from exc
+        try:
+            authorize_video_purchase_plan(purchase_plan)
+        except ValueError as exc:
+            raise OpenRouterVideoCostPolicyError(
+                "video purchase plan is not authorized",
+                diagnostic_phase="aggregate_cost_authorization",
+                diagnostic_code="purchase_plan_not_authorized",
+                diagnostic_metadata={
+                    "estimated_job_cost_usd": str(purchase_plan.estimated_cost_usd),
+                    "max_estimated_job_cost_usd": str(
+                        self._config.max_estimated_job_cost_usd
+                    ),
+                    "planned_request_count": purchase_plan.total_clip_count,
+                },
+            ) from exc
+        fingerprint = purchase_plan.fingerprint()
+        if existing_plan is not None and existing_plan.fingerprint() != fingerprint:
+            raise OpenRouterVideoConfigurationError(
+                "persisted video purchase plan differs from reconstructed inputs",
+                diagnostic_phase="purchase_plan_recovery",
+                diagnostic_code="purchase_plan_drift",
+            )
+        return VideoClipJobPreflight(
+            requests=tuple(adjusted),
+            purchase_plan=purchase_plan,
+            purchase_plan_fingerprint=fingerprint,
+        )
 
     async def generate_clip(self, request: VideoClipProviderRequest) -> VideoClipProviderResponse:
         if self._closed:
@@ -761,6 +846,9 @@ class OpenRouterVideoClipGenerationProvider:
         )
         if (
             record.model != self._config.model
+            or record.scene_id not in {None, request.scene_id}
+            or record.shot_id not in {None, request.shot_id}
+            or record.clip_index != request.clip_index
             or record.source_image_sha256 != request.source_image_sha256
             or record.prompt_sha256 != prompt_sha256
             or record.provider_request_fingerprint != expected_fingerprint
@@ -963,6 +1051,9 @@ def _request_fingerprint(
         "configuration": request.fingerprint,
         "source_image_sha256": request.source_image_sha256,
         "visual_asset_id": request.visual_asset_id,
+        "scene_id": request.scene_id,
+        "shot_id": request.shot_id,
+        "clip_index": request.clip_index,
         "prompt_sha256": prompt_sha256,
         "capability_snapshot_hash": capability_hash,
         "publication_id": publication_id,

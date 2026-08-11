@@ -572,6 +572,11 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             settings.PROJECTS_DIR,
             max_artifact_bytes=(settings.ORION_VISUAL_ASSET_PLANNING_MAX_ARTIFACT_BYTES),
         ),
+        duration_resolution_reader=DurableSpeechDurationResolutionReader(
+            workspace_root=settings.PROJECTS_DIR,
+            inventory=SQLAlchemyMediaCompositionArtifactInventory(artifacts),
+            max_manifest_bytes=settings.ORION_SPEECH_GENERATION_MAX_MANIFEST_BYTES,
+        ),
         clock=clock,
         uuid_factory=uuid4,
     )

@@ -61,6 +61,7 @@ from backend.src.production.video_clip_generation.ports import (
     VerifiedSourceImage,
     VideoClipBinaryStore,
     VideoClipGenerationProvider,
+    VideoClipJobPreflight,
     VideoClipManifestWriter,
     VideoClipProviderRequest,
     VideoClipProviderResponse,
@@ -114,6 +115,16 @@ class VideoClipGenerationHandler:
                 source=source, attempt_number=command.attempt_number
             )
             if existing is None:
+                previous = await self._writer.read_latest_before(context=context)
+                if previous is not None and previous.purchase_plan is not None:
+                    manifest = manifest.model_copy(
+                        update={
+                            "purchase_plan": previous.purchase_plan,
+                            "purchase_plan_fingerprint": (
+                                previous.purchase_plan_fingerprint
+                            ),
+                        }
+                    )
                 await self._writer.create(context=context, manifest=manifest)
             else:
                 self._validate_manifest_source(manifest, source)
@@ -172,17 +183,53 @@ class VideoClipGenerationHandler:
                 if _entry_for(manifest, image.visual_asset_id).status
                 is VideoClipEntryStatus.PENDING
             )
+            preflight_images = source.source_images if pending_images else ()
             prepared_requests = {
                 image.visual_asset_id: self._provider_request(
                     command, context, image, source.video_identity
                 )
-                for image in pending_images
+                for image in preflight_images
             }
             preflight = getattr(self._provider, "preflight_job", None)
             if prepared_requests and callable(preflight):
                 try:
-                    planned = await preflight(tuple(prepared_requests.values()))
-                    prepared_requests = {item.visual_asset_id: item for item in planned}
+                    if manifest.purchase_plan is None:
+                        planned = await preflight(tuple(prepared_requests.values()))
+                    else:
+                        planned = await preflight(
+                            tuple(prepared_requests.values()),
+                            existing_plan=manifest.purchase_plan,
+                        )
+                    if isinstance(planned, VideoClipJobPreflight):
+                        if manifest.purchase_plan is None:
+                            current = manifest.model_copy(
+                                update={
+                                    "purchase_plan": planned.purchase_plan,
+                                    "purchase_plan_fingerprint": (
+                                        planned.purchase_plan_fingerprint
+                                    ),
+                                }
+                            )
+                            await self._writer.checkpoint(
+                                context=context,
+                                previous=manifest,
+                                current=current,
+                            )
+                            manifest = current
+                        elif (
+                            manifest.purchase_plan_fingerprint
+                            != planned.purchase_plan_fingerprint
+                        ):
+                            raise VideoClipIntegrityError(
+                                "persisted video purchase plan fingerprint changed"
+                            )
+                        prepared_requests = {
+                            item.visual_asset_id: item for item in planned.requests
+                        }
+                    else:
+                        prepared_requests = {
+                            item.visual_asset_id: item for item in planned
+                        }
                 except OpenRouterVideoError as exc:
                     image = pending_images[0]
                     entry = _entry_for(manifest, image.visual_asset_id)
@@ -381,6 +428,9 @@ class VideoClipGenerationHandler:
                             image=image,
                             provider_request=provider_request,
                             response=response,
+                            purchase_plan_fingerprint=(
+                                manifest.purchase_plan_fingerprint
+                            ),
                         ),
                         content=payload.content,
                     )
@@ -709,6 +759,10 @@ class VideoClipGenerationHandler:
             correlation_id=context.correlation_id,
             attempt_number=command.attempt_number,
             visual_asset_id=image.visual_asset_id,
+            scene_id=image.scene_id,
+            shot_id=image.shot_id,
+            clip_index=1,
+            visual_intent_sha256=_visual_intent_sha256(image),
             source_image_artifact_id=image.artifact_id,
             source_image_sha256=image.sha256,
             source_image_mime_type=image.mime_type,
@@ -738,10 +792,13 @@ class VideoClipGenerationHandler:
         image: VerifiedSourceImage,
         provider_request: VideoClipProviderRequest,
         response: VideoClipProviderResponse,
+        purchase_plan_fingerprint: str | None,
     ) -> VideoClipWriteRequest:
         width, height = self._configuration.output_dimensions(image.width, image.height)
         simulated = bool(response.metadata.get("simulated", False))
         attributes = {**response.metadata, "simulated": simulated}
+        if purchase_plan_fingerprint is not None:
+            attributes["purchase_plan_fingerprint"] = purchase_plan_fingerprint
         if simulated:
             attributes["animation_recipe"] = self._recipe_builder.build(image.visual_asset_id)
         return VideoClipWriteRequest(
@@ -824,6 +881,9 @@ class VideoClipGenerationHandler:
                     "recovered": recovered,
                     "simulated": asset.metadata.attributes.get("simulated", False),
                     "deterministic": asset.metadata.deterministic,
+                    "purchase_plan_fingerprint": asset.metadata.attributes.get(
+                        "purchase_plan_fingerprint"
+                    ),
                 },
             }
         )
@@ -920,6 +980,9 @@ class VideoClipGenerationHandler:
                             entry.remote_status.value if entry.remote_status is not None else None
                         ),
                         "remote_poll_attempts": entry.remote_poll_attempts,
+                        "purchase_plan_fingerprint": (
+                            manifest.purchase_plan_fingerprint
+                        ),
                         "reported_cost_usd": (
                             str(entry.reported_cost_usd)
                             if entry.reported_cost_usd is not None
@@ -1142,6 +1205,25 @@ def _pre_submission_error_code(error: OpenRouterVideoError) -> str | None:
 
 def _video_artifact_id(job_id: UUID, visual_asset_id: str) -> UUID:
     return uuid5(NAMESPACE_URL, f"orion:{job_id}:source-video-clip:{visual_asset_id}")
+
+
+def _visual_intent_sha256(image: VerifiedSourceImage) -> str:
+    prompt_sha256 = image.metadata.get("prompt_sha256")
+    if isinstance(prompt_sha256, str) and len(prompt_sha256) == 64:
+        return prompt_sha256
+    safe_intent = "|".join(
+        str(image.metadata.get(key, ""))
+        for key in (
+            "video_visual_subject",
+            "video_environment",
+            "video_action",
+            "video_camera_movement",
+            "video_camera_framing",
+        )
+    )
+    if not safe_intent.strip("|"):
+        safe_intent = image.visual_asset_id
+    return hashlib.sha256(safe_intent.encode("utf-8")).hexdigest()
 
 
 def _manifest_artifact_id(job_id: UUID, attempt_number: int) -> UUID:

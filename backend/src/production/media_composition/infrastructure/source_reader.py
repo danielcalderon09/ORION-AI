@@ -213,8 +213,54 @@ class DurableMediaCompositionSourceReader:
         scene_starts: dict[str, int] = {}
         shots: list[CompositionShotSource] = []
         global_scene_start = 0
+        purchase_by_scene = (
+            {item.scene_id: item for item in video.purchase_plan.scenes}
+            if video.purchase_plan is not None
+            else {}
+        )
         for scene in scene_source.scene_plan.scenes:
             scene_starts[scene.scene_id] = global_scene_start
+            purchased = purchase_by_scene.get(scene.scene_id)
+            if purchased is not None:
+                local_start = 0
+                for index, clip in enumerate(purchased.clips):
+                    shot_asset = video_by_shot.get(clip.shot_id)
+                    if shot_asset is None:
+                        raise MediaCompositionSourceError(
+                            "a purchased visual shot has no primary video clip"
+                        )
+                    local_end = local_start + clip.usable_duration_ms
+                    final = index == len(purchased.clips) - 1
+                    source_transition = scene.shots[-1].transition
+                    shots.append(
+                        CompositionShotSource(
+                            scene_id=scene.scene_id,
+                            shot_id=clip.shot_id,
+                            scene_number=scene.scene_number,
+                            shot_number=index + 1,
+                            scene_start_ms=global_scene_start,
+                            shot_start_ms=global_scene_start + local_start,
+                            shot_end_ms=global_scene_start + local_end,
+                            transition_kind=(
+                                _TRANSITIONS[source_transition.kind]
+                                if final
+                                else _TRANSITIONS["cut"]
+                            ),
+                            transition_duration_ms=(
+                                _seconds_to_ms(source_transition.duration_seconds)
+                                if final
+                                else 0
+                            ),
+                            video_asset_id=shot_asset.asset_id,
+                        )
+                    )
+                    local_start = local_end
+                if local_start != purchased.resolved_duration_ms:
+                    raise MediaCompositionSourceError(
+                        "purchased visual shots do not cover their narrative scene"
+                    )
+                global_scene_start += purchased.resolved_duration_ms
+                continue
             for shot in scene.shots:
                 shot_asset = video_by_shot.get(shot.shot_id)
                 if shot_asset is None:

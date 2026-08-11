@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
@@ -96,6 +97,7 @@ def provider_for(
     max_video_bytes: int = 1_000_000,
     sleeper: Callable[[float], Awaitable[None]] = no_sleep,
     max_requests_per_job: int = 1,
+    max_estimated_cost_usd: Decimal = Decimal("1"),
     max_estimated_job_cost_usd: Decimal = Decimal("1"),
 ) -> tuple[
     OpenRouterVideoClipGenerationProvider,
@@ -107,7 +109,7 @@ def provider_for(
     configuration = OpenRouterVideoProviderConfiguration(
         model="test/video-model",
         resolution="720p",
-        max_estimated_cost_usd=Decimal("1"),
+        max_estimated_cost_usd=max_estimated_cost_usd,
         allow_billable_requests=True,
         poll_interval_seconds=0.01,
         max_poll_seconds=60,
@@ -139,7 +141,7 @@ def provider_for(
             remote_job_store=jobs,
             cost_policy=BillableVideoGenerationPolicy(
                 allow_billable_requests=True,
-                max_estimated_cost_usd=Decimal("1"),
+                max_estimated_cost_usd=max_estimated_cost_usd,
             ),
             polling_policy=polling,
             prompt_builder=VideoMotionPromptBuilder(),
@@ -173,6 +175,11 @@ def multi_scene_requests() -> tuple[VideoClipProviderRequest, ...]:
         base.model_copy(
             update={
                 "visual_asset_id": f"asset-s{index:03d}-q001-v001",
+                "scene_id": f"scene-{index:03d}",
+                "shot_id": f"scene-{index:03d}-shot-001",
+                "visual_intent_sha256": hashlib.sha256(
+                    f"scene-{index:03d}-shot-001".encode()
+                ).hexdigest(),
                 "source_image_artifact_id": UUID(
                     f"40000000-0000-4000-8000-{index:012d}"
                 ),
@@ -241,12 +248,44 @@ async def test_audio_first_accepted_budget_selects_six_second_clips() -> None:
         )
         planned = await provider.preflight_job(audio_first_two_scene_requests())
 
-    assert tuple(request.duration_seconds for request in planned) == (6.0, 6.0)
+    assert tuple(request.duration_seconds for request in planned.requests) == (6.0, 6.0)
     assert Decimal("0.03") * sum(
-        Decimal(str(request.duration_seconds)) for request in planned
+        Decimal(str(request.duration_seconds)) for request in planned.requests
     ) == Decimal("0.36")
     assert not jobs.records
     assert observations == [("GET", "/api/v1/videos/models")]
+
+
+@pytest.mark.asyncio
+async def test_persisted_purchase_plan_drift_fails_before_video_post() -> None:
+    observations: list[tuple[str, str]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        observations.append((request.method, request.url.path))
+        assert request.method == "GET"
+        return response(request, 200, multi_scene_models_body())
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://openrouter.ai",
+    ) as client:
+        provider, jobs, _ = provider_for(
+            client,
+            max_requests_per_job=2,
+            max_estimated_job_cost_usd=Decimal("0.40"),
+        )
+        requests = audio_first_two_scene_requests()
+        planned = await provider.preflight_job(requests)
+        changed = (
+            requests[0].model_copy(update={"source_image_sha256": "f" * 64}),
+            requests[1],
+        )
+        with pytest.raises(OpenRouterVideoConfigurationError) as captured:
+            await provider.preflight_job(changed, existing_plan=planned.purchase_plan)
+
+    assert captured.value.diagnostic_code == "purchase_plan_drift"
+    assert not jobs.records
+    assert all(method != "POST" for method, _ in observations)
 
 
 @pytest.mark.asyncio
@@ -269,9 +308,9 @@ async def test_multi_scene_preflight_selects_durations_and_authorizes_aggregate(
         )
         planned = await provider.preflight_job(multi_scene_requests())
 
-    assert tuple(item.duration_seconds for item in planned) == (4.0, 6.0, 6.0)
+    assert tuple(item.duration_seconds for item in planned.requests) == (4.0, 6.0, 6.0)
     assert Decimal("0.03") * sum(
-        Decimal(str(item.duration_seconds)) for item in planned
+        Decimal(str(item.duration_seconds)) for item in planned.requests
     ) == Decimal("0.48")
     assert observations == [("GET", "/api/v1/videos/models")]
 
@@ -407,7 +446,7 @@ async def test_mock_multi_scene_generation_reaches_three_unique_prepared_records
             max_estimated_job_cost_usd=Decimal("0.48"),
         )
         planned = await provider.preflight_job(multi_scene_requests())
-        for request in planned:
+        for request in planned.requests:
             await provider.generate_clip(request)
 
     records = tuple(jobs.records.values())
@@ -446,7 +485,7 @@ async def test_audio_first_accepted_budget_creates_two_six_second_remote_jobs() 
             max_estimated_job_cost_usd=Decimal("0.40"),
         )
         planned = await provider.preflight_job(audio_first_two_scene_requests())
-        for request in planned:
+        for request in planned.requests:
             await provider.generate_clip(request)
 
     records = tuple(jobs.records.values())

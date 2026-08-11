@@ -6,9 +6,12 @@ from pathlib import Path, PurePosixPath
 from typing import Protocol
 from uuid import UUID
 
+from pydantic import Field
+
 from backend.src.production.binary_assets.exceptions import BinaryAssetError
 from backend.src.production.binary_assets.workspace import WorkspaceConfinement
 from backend.src.production.domain.artifact import Artifact
+from backend.src.production.domain.base import ContractModel
 from backend.src.production.domain.duration_resolution import DurableDurationResolution
 from backend.src.production.domain.enums import ArtifactStatus, ArtifactType
 from backend.src.production.speech_generation.models import SpeechGenerationManifestStatus
@@ -23,6 +26,13 @@ from backend.src.production.video_clip_generation.exceptions import (
 
 class DurationArtifactInventory(Protocol):
     async def list_for_job(self, job_id: UUID) -> tuple[Artifact, ...]: ...
+
+
+class ReadDurableDurationResolution(ContractModel):
+    resolution: DurableDurationResolution
+    artifact_id: UUID
+    relative_path: str
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 class DurableSpeechDurationResolutionReader:
@@ -42,6 +52,13 @@ class DurableSpeechDurationResolutionReader:
         self._maximum = max_manifest_bytes
 
     async def read_for_job(self, job_id: UUID) -> DurableDurationResolution | None:
+        source = await self.read_source_for_job(job_id)
+        return source.resolution if source is not None else None
+
+    async def read_source_for_job(
+        self,
+        job_id: UUID,
+    ) -> ReadDurableDurationResolution | None:
         artifacts = await self._inventory.list_for_job(job_id)
         candidates = tuple(
             artifact
@@ -59,7 +76,19 @@ class DurableSpeechDurationResolutionReader:
                 str(artifact.artifact_id),
             ),
         )
-        return await asyncio.to_thread(self._read, selected, job_id)
+        resolution = await asyncio.to_thread(self._read, selected, job_id)
+        if resolution is None:
+            return None
+        if selected.sha256 is None:
+            raise ImageAcquisitionManifestSchemaException(
+                "speech duration manifest checksum is missing"
+            )
+        return ReadDurableDurationResolution(
+            resolution=resolution,
+            artifact_id=selected.artifact_id,
+            relative_path=selected.relative_path,
+            sha256=selected.sha256,
+        )
 
     def _read(
         self,
@@ -139,4 +168,7 @@ def _attempt(relative_path: str) -> int:
     return -1
 
 
-__all__ = ["DurableSpeechDurationResolutionReader"]
+__all__ = [
+    "DurableSpeechDurationResolutionReader",
+    "ReadDurableDurationResolution",
+]

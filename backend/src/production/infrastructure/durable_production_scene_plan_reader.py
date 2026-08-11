@@ -161,7 +161,12 @@ class DurableProductionScenePlanReader:
             job_id=context.job_id,
             artifact_ids=context.input_artifact_ids,
         )
-        if input_types and ArtifactType.PRODUCTION_SCENE_PLAN not in input_types.values():
+        allowed_predecessors = {
+            ArtifactType.NARRATION,
+            ArtifactType.PRODUCTION_SCENE_PLAN,
+            ArtifactType.PRODUCTION_SPEECH_GENERATION_MANIFEST,
+        }
+        if input_types and not set(input_types.values()).issubset(allowed_predecessors):
             raise ProductionScenePlanTypeException(
                 "input artifacts do not contain a production scene plan"
             )

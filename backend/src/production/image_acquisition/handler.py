@@ -912,6 +912,9 @@ class ImageAcquisitionHandler:
                 "checkpointed": True,
                 "output_format": self._configuration.output_format,
                 "configuration_sha256": self._configuration_sha256(),
+                "shot_expansion_fingerprint": (
+                    source.visual_asset_plan.source_shot_expansion_fingerprint
+                ),
             },
         )
 
@@ -928,6 +931,8 @@ class ImageAcquisitionHandler:
             or tuple(entry.visual_asset_id for entry in manifest.entries)
             != tuple(asset.asset_id for asset in assets)
             or manifest.metadata.get("configuration_sha256") != self._configuration_sha256()
+            or manifest.metadata.get("shot_expansion_fingerprint")
+            != source.visual_asset_plan.source_shot_expansion_fingerprint
         ):
             raise ImageAcquisitionValidationError(
                 "manifest source differs from durable visual asset plan"

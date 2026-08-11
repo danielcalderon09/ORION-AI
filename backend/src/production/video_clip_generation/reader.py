@@ -18,6 +18,7 @@ from backend.src.production.binary_assets.exceptions import (
 )
 from backend.src.production.binary_assets.ports import BinaryAssetReader
 from backend.src.production.binary_assets.workspace import WorkspaceConfinement
+from backend.src.production.domain.duration_resolution import ResolvedSceneDuration
 from backend.src.production.domain.enums import ArtifactType
 from backend.src.production.domain.path_rules import validate_relative_path
 from backend.src.production.image_acquisition.models import (
@@ -221,6 +222,7 @@ class DurableImageAcquisitionManifestReader:
                                 "video_action",
                                 "video_camera_movement",
                                 "video_camera_framing",
+                                "prompt_sha256",
                             )
                             if key in binary.metadata.attributes
                         },
@@ -238,11 +240,12 @@ class DurableImageAcquisitionManifestReader:
                 raise ImageAcquisitionManifestSchemaException(
                     "speech duration resolution differs from image scenes"
                 )
+            resolved_by_shot = _resolved_duration_by_shot(images, by_scene)
             images = [
                 image.model_copy(
                     update={
                         "resolved_duration_seconds": (
-                            by_scene[image.scene_id].resolved_duration_ms / 1_000
+                            resolved_by_shot[image.shot_id] / 1_000
                         ),
                         "actual_narration_duration_ms": (
                             by_scene[image.scene_id].actual_narration_duration_ms
@@ -491,6 +494,52 @@ def _attempt(path: str) -> int:
         value = parts[3][8:]
         return int(value) if value.isdigit() else -1
     return -1
+
+
+def _resolved_duration_by_shot(
+    images: list[VerifiedSourceImage],
+    by_scene: dict[str, ResolvedSceneDuration],
+) -> dict[str, int]:
+    """Assign one scene resolution across its distinct planned shots."""
+
+    result: dict[str, int] = {}
+    for scene_id, resolution in by_scene.items():
+        scene_images = [image for image in images if image.scene_id == scene_id]
+        primary_by_shot = {
+            image.shot_id: image
+            for image in scene_images
+            if image.role == "primary"
+        }
+        if not primary_by_shot:
+            primary_by_shot = {image.shot_id: image for image in scene_images}
+        ordered = tuple(
+            sorted(primary_by_shot.values(), key=lambda item: item.shot_number)
+        )
+        if not ordered:
+            raise ImageAcquisitionManifestSchemaException(
+                "resolved video shots require planned durations"
+            )
+        durations: list[int] = []
+        for image in ordered:
+            if image.planned_duration_seconds is None:
+                raise ImageAcquisitionManifestSchemaException(
+                    "resolved video shots require planned durations"
+                )
+            durations.append(round(image.planned_duration_seconds * 1_000))
+        difference = resolution.resolved_duration_ms - sum(durations)
+        durations[-1] += difference
+        if durations[-1] <= 0:
+            raise ImageAcquisitionManifestSchemaException(
+                "resolved video shot duration is invalid"
+            )
+        for image, duration in zip(ordered, durations, strict=True):
+            result[image.shot_id] = duration
+        for image in scene_images:
+            if image.shot_id not in result:
+                raise ImageAcquisitionManifestSchemaException(
+                    "source image has no resolved primary shot"
+                )
+    return result
 
 
 def _safe_metadata(value: dict[str, Any]) -> dict[str, Any]:

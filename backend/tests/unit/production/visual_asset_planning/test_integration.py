@@ -35,7 +35,7 @@ from backend.src.production.visual_asset_planning.providers.openrouter_provider 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("visual_provider_name", ["simulated", "openrouter"])
-async def test_pipeline_persists_four_linked_json_artifacts_without_network(
+async def test_pipeline_persists_linked_post_tts_visual_artifacts_without_network(
     monkeypatch,
     tmp_path,
     visual_provider_name,
@@ -160,6 +160,7 @@ async def test_pipeline_persists_four_linked_json_artifacts_without_network(
             ArtifactType.PRODUCTION_PLAN.value,
             ArtifactType.PRODUCTION_SCRIPT.value,
             ArtifactType.PRODUCTION_SCENE_PLAN.value,
+            ArtifactType.PRODUCTION_SHOT_EXPANSION.value,
             ArtifactType.PRODUCTION_VISUAL_ASSET_PLAN.value,
         }
         durable = {
@@ -175,7 +176,7 @@ async def test_pipeline_persists_four_linked_json_artifacts_without_network(
         source_checksum = durable[ArtifactType.PRODUCTION_SCENE_PLAN.value][1]
         visual_metadata = durable[ArtifactType.PRODUCTION_VISUAL_ASSET_PLAN.value][2]
         assert visual_metadata["source_scene_plan_sha256"] == source_checksum
-        assert visual_metadata["asset_count"] == 2
+        assert visual_metadata["asset_count"] == 4
         assert artifact_count == first_artifact_count
         assert calls == (1 if visual_provider_name == "openrouter" else 0)
 

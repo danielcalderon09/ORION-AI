@@ -285,3 +285,79 @@ async def durable_source(root: Path, *, width: int = 64, height: int = 64):
         store,
         FakeImageManifestRepository(manifest_candidate, image_candidate),
     )
+
+
+async def nine_second_two_shot_source(root: Path) -> ReadImageAcquisitionManifest:
+    """One narrative scene backed by two distinct, duration-bound visual shots."""
+
+    source, _, _ = await durable_source(root)
+    first_entry = source.manifest.entries[0].model_copy(
+        update={"planned_duration_seconds": 6.0}
+    )
+    second_visual_id = "asset-s001-q002-v001"
+    second_artifact_id = UUID("40000000-0000-4000-8000-000000001002")
+    stream = BytesIO()
+    Image.new("RGB", (64, 64), "teal").save(stream, "PNG")
+    second_content = stream.getvalue()
+    second_entry = first_entry.model_copy(
+        update={
+            "visual_asset_id": second_visual_id,
+            "binary_asset_id": f"image-{second_visual_id}",
+            "binary_artifact_id": second_artifact_id,
+            "source_shot_id": "scene-001-shot-002",
+            "shot_number": 2,
+            "planned_duration_seconds": 3.0,
+            "sha256": hashlib.sha256(second_content).hexdigest(),
+            "size_bytes": len(second_content),
+            "storage_path": first_entry.storage_path.replace(
+                VISUAL_ASSET_ID,
+                second_visual_id,
+            ),
+        }
+    )
+    entries = (first_entry, second_entry)
+    values = source.manifest.model_dump(mode="python")
+    values.update(entries=entries, summary=summarize_entries(entries))
+    manifest = ProductionImageAcquisitionManifest.model_validate(values)
+    first_image = source.source_images[0].model_copy(
+        update={
+            "planned_duration_seconds": 6.0,
+            "resolved_duration_seconds": 6.0,
+            "actual_narration_duration_ms": 9_000,
+            "metadata": {
+                "simulated": False,
+                "provider": "openrouter",
+                "model": "test/image-model",
+                "prompt_sha256": "a" * 64,
+            },
+        }
+    )
+    second_image = first_image.model_copy(
+        update={
+            "visual_asset_id": second_visual_id,
+            "artifact_id": second_artifact_id,
+            "binary_asset_id": f"image-{second_visual_id}",
+            "sha256": hashlib.sha256(second_content).hexdigest(),
+            "size_bytes": len(second_content),
+            "shot_id": "scene-001-shot-002",
+            "shot_number": 2,
+            "planned_duration_seconds": 3.0,
+            "resolved_duration_seconds": 3.0,
+            "content": second_content,
+            "metadata": {
+                "simulated": False,
+                "provider": "openrouter",
+                "model": "test/image-model",
+                "prompt_sha256": "b" * 64,
+            },
+        }
+    )
+    return ReadImageAcquisitionManifest(
+        manifest=manifest,
+        job_id=source.job_id,
+        artifact_id=source.artifact_id,
+        sha256=source.sha256,
+        size_bytes=source.size_bytes,
+        schema_version=source.schema_version,
+        source_images=(first_image, second_image),
+    )

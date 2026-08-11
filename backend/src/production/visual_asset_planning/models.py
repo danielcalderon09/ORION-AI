@@ -283,6 +283,15 @@ class ProductionVisualAssetPlan(ContractModel):
         default=None,
         pattern=r"^[a-f0-9]{64}$",
     )
+    source_shot_expansion_artifact_id: UUID | None = None
+    source_shot_expansion_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[a-f0-9]{64}$",
+    )
+    source_shot_expansion_fingerprint: str | None = Field(
+        default=None,
+        pattern=r"^[a-f0-9]{64}$",
+    )
     title: str = Field(min_length=1, max_length=300)
     language: str = Field(min_length=2, max_length=16)
     aspect_ratio: str = Field(pattern=r"^(?:16:9|9:16|1:1)$")
@@ -434,6 +443,7 @@ def validate_visual_asset_plan_against_scene_plan(
         for shot in scene.shots
     }
     primary_shots: set[tuple[int, int]] = set()
+    primary_assets_by_scene: dict[int, list[ProductionVisualAssetSpec]] = {}
     for asset in plan.assets:
         scene = source_scenes.get(asset.scene_number)
         pair = source_shots.get((asset.scene_number, asset.shot_number))
@@ -452,8 +462,18 @@ def validate_visual_asset_plan_against_scene_plan(
             raise ValueError("visual asset duration must match approved shot timing")
         if asset.role is VisualAssetRole.PRIMARY:
             primary_shots.add((asset.scene_number, asset.shot_number))
+            primary_assets_by_scene.setdefault(asset.scene_number, []).append(asset)
     if primary_shots != set(source_shots):
         raise ValueError("each shot must have at least one primary visual asset")
+    for assets in primary_assets_by_scene.values():
+        ordered = sorted(assets, key=lambda item: item.shot_number)
+        if any(
+            before.prompt.casefold() == after.prompt.casefold()
+            for before, after in zip(ordered, ordered[1:], strict=False)
+        ):
+            raise ValueError(
+                "consecutive shots in one scene require distinct visual intent"
+            )
     return plan
 
 

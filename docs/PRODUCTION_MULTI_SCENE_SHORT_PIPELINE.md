@@ -22,7 +22,7 @@ Older speech manifests without this optional record remain readable.
 
 The production order is:
 
-`SCRIPT -> IMAGES -> TTS -> RESOLVE DURATIONS -> VIDEO -> SUBTITLES -> TIMELINE`
+`SCRIPT -> INITIAL SCENE SEMANTICS -> TTS -> RESOLVE DURATIONS -> FINAL SHOT EXPANSION -> VISUAL PLAN -> IMAGES -> VIDEO -> SUBTITLES -> TIMELINE`
 
 TTS remains one narration WAV per scene. Once every WAV is stored, ORION measures
 its durable duration and resolves the complete batch. An excessive resolution fails
@@ -137,3 +137,74 @@ reused on resume, and timeline/render failures reuse all completed remote media.
 - Phase 7A: offline duration-aware multi-scene pipeline.
 - Phase 7B: controlled two-scene real test.
 - Phase 7C: three-to-five-scene production short.
+
+## Duration and provider purchase planner
+
+`planning.provider_budget_planner` separates three decisions that must remain
+auditable before any video request:
+
+1. `EditorialDurationPlan`: requested duration, adaptive scene count, narrative
+   role, and contiguous editorial targets.
+2. `AudioFirstNarrativePlan`: actual per-scene narration and resolved media
+   duration, using the canonical audio-first tolerance policy.
+3. `VideoProviderPurchasePlan`: visual clips required to cover each resolved
+   narrative scene, purchased provider seconds, per-scene cost, and aggregate
+   job cost.
+
+Narrative scenes are not required to equal visual clips. A long scene can use
+multiple provider clips. Coverage is selected deterministically from discovered
+provider durations: purchased seconds are minimized first, then request count.
+For example, 9 seconds with `(4, 6, 8)` becomes `6 + 4`, 14 seconds becomes
+`8 + 6`, and 16 seconds becomes `8 + 8`. Each clip is trimmed when its purchased
+duration exceeds its usable slot; no loop or replay mode is planned.
+
+The entire purchase plan is built before submission. `accepted` is false when
+total clip count exceeds the job request limit, any individual clip exceeds its
+per-request cost ceiling, or aggregate estimated cost exceeds job authorization.
+The caller must authorize the plan before creating provider requests, so a later
+scene cannot discover a budget failure after an earlier paid submission.
+
+For the OpenRouter runtime, the accepted plan is embedded immutably in the
+video-clip manifest and checkpointed before the first `/api/v1/videos` POST.
+Its canonical SHA-256 fingerprint binds provider/model, source-image hashes,
+scene/shot/clip identities, usable durations, purchased durations, costs, and
+authorization limits. Every provider request must match the corresponding plan
+clip exactly. Resume loads the previous attempt's plan, reconstructs it from the
+same durable inputs, and fails closed before submission if the fingerprint
+drifts.
+
+Multi-clip narrative scenes require distinct post-TTS visual shots. Each shot
+has its own objective, prompt, source image, durable ID, and usable interval,
+while sharing the scene StoryBeat and VideoIdentity. Runtime planning never
+duplicates a first frame to manufacture an extra clip: the durable expansion creates
+the required shot split before final visual planning and image acquisition. Timeline
+composition consumes those shots contiguously with
+`playback_mode=once` and `loop_count=1`.
+
+The planner is provider-neutral and includes future `generation_mode` values for
+full AI video, hybrid, image motion, and stock. The economy selector is not
+implemented yet; a future policy can choose Veo only for high-impact scenes and
+local image motion for explanatory scenes without changing these contracts.
+
+## Post-TTS durable shot expansion
+
+Final visual shots are no longer purchased or imaged before narration timing is
+known. The completed speech manifest is measured first. Visual asset planning then
+derives and atomically persists `shot-expansion.json`, binding the source ScenePlan,
+speech-manifest identity, resolved scene durations, provider-duration vocabulary,
+shot allocation, distinct shot semantics, and expanded visual ScenePlan under one
+canonical SHA-256 fingerprint.
+
+For a 9-second narrative scene and provider durations `(4, 6, 8)`, the expansion
+creates two deterministic shots: 6,000 ms and 3,000 ms usable time. Their provider
+purchases are 6 s and 4 s. Each shot has a distinct camera/composition progression,
+its own VisualAssetSpec, its own SOURCE_IMAGE, and its own first frame. Image
+acquisition cannot start until the final visual plan referencing the expansion is
+durable.
+
+Recovery reconstructs the expansion from the durable ScenePlan and accepted speech
+manifest. Any narration, allocation, or fingerprint drift fails closed before new
+image or video requests. Existing single-shot visual plans without expansion
+provenance remain readable and reusable. Composition uses the immutable purchase
+plan's usable shot intervals when present, preserving contiguous scene coverage,
+`playback_mode=once`, and `loop_count=1`.

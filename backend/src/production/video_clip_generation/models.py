@@ -13,6 +13,9 @@ from pydantic import Field, field_validator, model_validator
 from backend.src.production.application.sanitization import validate_safe_json
 from backend.src.production.domain.base import ContractModel
 from backend.src.production.domain.path_rules import validate_relative_path
+from backend.src.production.planning.provider_budget_planner import (
+    VideoProviderPurchasePlan,
+)
 from backend.src.production.visual_asset_planning.models import VisualAssetRole
 
 SUPPORTED_VIDEO_CLIP_MANIFEST_VERSIONS = frozenset({"1.0.0"})
@@ -325,6 +328,11 @@ class ProductionVideoClipManifest(ContractModel):
     entries: tuple[ProductionVideoClipEntry, ...] = Field(min_length=1, max_length=500)
     summary: ProductionVideoClipSummary
     status: VideoClipManifestStatus
+    purchase_plan: VideoProviderPurchasePlan | None = None
+    purchase_plan_fingerprint: str | None = Field(
+        default=None,
+        pattern=r"^[a-f0-9]{64}$",
+    )
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("metadata")
@@ -354,6 +362,13 @@ class ProductionVideoClipManifest(ContractModel):
             entry.status is VideoClipEntryStatus.UNCERTAIN for entry in self.entries
         ):
             raise ValueError("uncertain manifest requires an uncertain entry")
+        if (self.purchase_plan is None) != (self.purchase_plan_fingerprint is None):
+            raise ValueError("video purchase plan and fingerprint must coexist")
+        if (
+            self.purchase_plan is not None
+            and self.purchase_plan.fingerprint() != self.purchase_plan_fingerprint
+        ):
+            raise ValueError("video purchase plan fingerprint differs")
         return self
 
 
@@ -441,6 +456,15 @@ def validate_manifest_transition(
         != tuple(entry.visual_asset_id for entry in current.entries)
     ):
         raise ValueError("video clip manifest immutable fields changed")
+    if previous.purchase_plan is not None and (
+        previous.purchase_plan != current.purchase_plan
+        or previous.purchase_plan_fingerprint != current.purchase_plan_fingerprint
+    ):
+        raise ValueError("video purchase plan changed after persistence")
+    if previous.purchase_plan is None and current.purchase_plan is not None and any(
+        entry.status is not VideoClipEntryStatus.PENDING for entry in previous.entries
+    ):
+        raise ValueError("video purchase plan must precede clip generation")
     for before, after in zip(previous.entries, current.entries, strict=True):
         if after.status not in _ALLOWED_TRANSITIONS[before.status]:
             raise ValueError(

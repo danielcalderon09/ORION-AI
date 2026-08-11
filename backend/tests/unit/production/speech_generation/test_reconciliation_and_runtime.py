@@ -198,8 +198,14 @@ async def test_composition_builds_explicit_openrouter_narration_fitter(
 def test_audio_first_stage_order_runs_narration_before_video() -> None:
     pipeline = StageRegistry.PIPELINE
     assert pipeline.index(ProductionStage.GENERATING_NARRATION) == (
-        pipeline.index(ProductionStage.ACQUIRING_ASSETS) + 1
+        pipeline.index(ProductionStage.SCENE_PLANNING) + 1
+    )
+    assert pipeline.index(ProductionStage.VISUAL_ASSET_PLANNING) == (
+        pipeline.index(ProductionStage.GENERATING_NARRATION) + 1
+    )
+    assert pipeline.index(ProductionStage.ACQUIRING_ASSETS) == (
+        pipeline.index(ProductionStage.VISUAL_ASSET_PLANNING) + 1
     )
     assert pipeline.index(ProductionStage.GENERATING_VIDEO_CLIPS) == (
-        pipeline.index(ProductionStage.GENERATING_NARRATION) + 1
+        pipeline.index(ProductionStage.ACQUIRING_ASSETS) + 1
     )

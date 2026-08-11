@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from decimal import Decimal
 from io import BytesIO
 
 import httpx
@@ -20,9 +22,7 @@ from backend.src.production.video_clip_generation.handler import (
 from backend.src.production.video_clip_generation.manifest_writer import (
     LocalVideoClipManifestWriter,
 )
-from backend.src.production.video_clip_generation.ports import (
-    VideoClipProviderRequest,
-)
+from backend.src.production.video_clip_generation.ports import VideoClipProviderRequest
 from backend.src.production.video_clip_generation.providers.simulated_provider import (
     SimulatedVideoClipGenerationProvider,
 )
@@ -37,8 +37,10 @@ from backend.tests.unit.production.video_clip_generation.conftest import (
     VISUAL_ASSET_ID,
     command_context,
     durable_source,
+    nine_second_two_shot_source,
 )
 from backend.tests.unit.production.video_clip_generation.test_openrouter_provider import (
+    multi_scene_models_body,
     provider_for,
     successful_transport,
 )
@@ -48,12 +50,12 @@ from backend.tests.unit.production.video_clip_generation.test_reader_and_handler
 )
 
 
-async def valid_remote_mp4() -> bytes:
+async def valid_remote_mp4(*, duration_seconds: int = 4) -> bytes:
     stream = BytesIO()
     Image.new("RGB", (720, 720), "navy").save(stream, "PNG")
     content = stream.getvalue()
     configuration = VideoClipGenerationConfiguration(
-        duration_seconds=4,
+        duration_seconds=duration_seconds,
         frame_rate=24,
     )
     request = VideoClipProviderRequest(
@@ -70,7 +72,7 @@ async def valid_remote_mp4() -> bytes:
         source_image_height=720,
         source_role="primary",
         source_image_content=content,
-        duration_seconds=4,
+        duration_seconds=duration_seconds,
         frame_rate=24,
         width=720,
         height=720,
@@ -163,3 +165,177 @@ async def test_fake_openrouter_pipeline_store_manifest_artifacts_and_restart(
         assert recovered.artifacts[0].metadata["recovered"] is True
     assert remote_store is not None
     assert len(remote_store.records) == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_persists_and_executes_exact_nine_second_purchase_plan(
+    tmp_path,
+) -> None:
+    source = await nine_second_two_shot_source(tmp_path)
+    writer = LocalVideoClipManifestWriter(tmp_path, max_manifest_bytes=500_000)
+    command, context = command_context()
+    content_by_duration = {
+        6: await valid_remote_mp4(duration_seconds=6),
+        4: await valid_remote_mp4(duration_seconds=4),
+    }
+    posts: list[int] = []
+    first_frame_urls: list[str] = []
+    plan_seen_before_posts: list[bool] = []
+
+    async def transport_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/videos/models":
+            return httpx.Response(
+                200,
+                json=multi_scene_models_body(),
+                request=request,
+            )
+        if request.method == "POST" and request.url.path == "/api/v1/videos":
+            checkpoint = await writer.read_existing(context=context)
+            plan_seen_before_posts.append(
+                checkpoint is not None
+                and checkpoint.purchase_plan is not None
+                and checkpoint.purchase_plan_fingerprint is not None
+            )
+            body = json.loads(request.content)
+            duration = int(body["duration"])
+            posts.append(duration)
+            first_frame_urls.append(body["frame_images"][0]["image_url"]["url"])
+            remote_id = f"job-{len(posts)}"
+            return httpx.Response(
+                202,
+                json={
+                    "id": remote_id,
+                    "generation_id": f"generation-{len(posts)}",
+                    "polling_url": f"/api/v1/videos/{remote_id}",
+                    "status": "pending",
+                },
+                request=request,
+            )
+        if request.url.path.endswith("/content"):
+            remote_id = request.url.path.split("/")[-2]
+            duration = posts[int(remote_id[-1]) - 1]
+            return httpx.Response(
+                200,
+                content=content_by_duration[duration],
+                headers={"content-type": "video/mp4"},
+                request=request,
+            )
+        if request.url.path.startswith("/api/v1/videos/job-"):
+            remote_id = request.url.path.rsplit("/", 1)[-1]
+            return httpx.Response(
+                200,
+                json={
+                    "id": remote_id,
+                    "generation_id": f"generation-{remote_id[-1]}",
+                    "polling_url": f"/api/v1/videos/{remote_id}",
+                    "status": "completed",
+                    "usage": {"cost": 0.18 if remote_id == "job-1" else 0.12},
+                },
+                request=request,
+            )
+        raise AssertionError(f"unexpected fake request: {request.method} {request.url}")
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(transport_handler),
+        base_url="https://openrouter.ai",
+        follow_redirects=False,
+    ) as client:
+        provider, jobs, _ = provider_for(
+            client,
+            max_requests_per_job=2,
+            max_estimated_cost_usd=Decimal("0.20"),
+            max_estimated_job_cost_usd=Decimal("0.30"),
+            max_video_bytes=5_000_000,
+        )
+        configuration = VideoClipGenerationConfiguration(
+            provider="openrouter",
+            model="test/video-model",
+            resolution="720p",
+            duration_seconds=4,
+            max_duration_seconds=10,
+            frame_rate=24,
+        )
+        component = VideoClipGenerationHandler(
+            manifest_reader=FakeReader(source),
+            provider=provider,
+            binary_store=video_store(tmp_path),
+            manifest_writer=writer,
+            configuration=configuration,
+            clock=lambda: NOW,
+        )
+        output = await component.execute(command, context)
+
+    assert output.result.outcome is StageOutcome.SUCCEEDED
+    assert posts == [6, 4]
+    assert len(first_frame_urls) == len(set(first_frame_urls)) == 2
+    assert plan_seen_before_posts == [True, True]
+    assert len(jobs.records) == 2
+    manifest = await writer.read_existing(context=context)
+    assert manifest is not None
+    assert manifest.purchase_plan is not None
+    assert manifest.purchase_plan_fingerprint == manifest.purchase_plan.fingerprint()
+    scene = manifest.purchase_plan.scenes[0]
+    assert scene.resolved_duration_ms == 9_000
+    assert tuple(clip.usable_duration_ms for clip in scene.clips) == (6_000, 3_000)
+    assert tuple(clip.provider_duration_seconds for clip in scene.clips) == (6, 4)
+    assert len({clip.visual_intent_sha256 for clip in scene.clips}) == 2
+    assert all(
+        artifact.metadata["purchase_plan_fingerprint"]
+        == manifest.purchase_plan_fingerprint
+        for artifact in output.artifacts
+        if artifact.artifact_type is ArtifactType.SOURCE_VIDEO_CLIP
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("per_request_max", "job_max"),
+    ((Decimal("0.20"), Decimal("0.29")), (Decimal("0.17"), Decimal("0.30"))),
+)
+async def test_runtime_rejects_purchase_budget_before_first_post(
+    tmp_path,
+    per_request_max: Decimal,
+    job_max: Decimal,
+) -> None:
+    source = await nine_second_two_shot_source(tmp_path)
+    posts = 0
+
+    async def transport_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal posts
+        if request.url.path == "/api/v1/videos/models":
+            return httpx.Response(200, json=multi_scene_models_body(), request=request)
+        if request.method == "POST" and request.url.path == "/api/v1/videos":
+            posts += 1
+        raise AssertionError(f"unexpected fake request: {request.method} {request.url}")
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(transport_handler),
+        base_url="https://openrouter.ai",
+    ) as client:
+        provider, _, _ = provider_for(
+            client,
+            max_requests_per_job=2,
+            max_estimated_cost_usd=per_request_max,
+            max_estimated_job_cost_usd=job_max,
+        )
+        writer = LocalVideoClipManifestWriter(tmp_path, max_manifest_bytes=500_000)
+        component = VideoClipGenerationHandler(
+            manifest_reader=FakeReader(source),
+            provider=provider,
+            binary_store=video_store(tmp_path),
+            manifest_writer=writer,
+            configuration=VideoClipGenerationConfiguration(
+                provider="openrouter",
+                model="test/video-model",
+                resolution="720p",
+                duration_seconds=4,
+                max_duration_seconds=10,
+                frame_rate=24,
+            ),
+            clock=lambda: NOW,
+        )
+        command, context = command_context()
+        output = await component.execute(command, context)
+
+    assert output.result.outcome is StageOutcome.FAILED_PERMANENT
+    assert posts == 0
