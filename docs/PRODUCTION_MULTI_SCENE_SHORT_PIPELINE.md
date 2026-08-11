@@ -346,3 +346,30 @@ catalog references, while preserving deterministic request identities. The legac
 `ImageAcquisitionHandler` remains unchanged and is still the active production
 path; container registration, hybrid video consumption, image-motion rendering,
 and real reuse are deferred to subsequent phases.
+
+### SHORT-V1.4 deterministic local image motion
+
+A separate versioned hybrid composition plan now represents both video and image
+segments without changing the historical full-video schema. Image duration comes
+only from the editorial shot interval; still images have no source-media duration
+and no provider-video purchase identity. Video segments retain
+`playback_mode=once` and `loop_count=1`.
+
+The local FFmpeg adapter supports static images, deterministic four-direction pan,
+zoom-in, zoom-out, and restrained combined pan-and-zoom. A durable motion plan pins
+source SHA-256, mode, direction, start/end scale and position, exact frame count,
+output geometry, strategy fingerprint, and hybrid-acquisition fingerprint. The
+same source and shot identity always produce the same motion. Scale-to-cover plus
+center crop preserves aspect ratio without stretching or black borders.
+
+FFmpeg's still-image input loop is an implementation detail used to synthesize
+frames from one image; it is not video replay and never emits `-stream_loop`.
+Every segment is trimmed to its frame-derived editorial duration and concatenated
+with safe CUT boundaries, including video-to-image, image-to-video, and
+image-to-image sequences. Before execution, local files must exist and match their
+durable size, SHA-256, MIME family, and image dimensions. Plan, source, geometry,
+duration, motion, strategy, or acquisition drift fails closed before FFmpeg.
+
+The active production container is unchanged in SHORT-V1.4. Narration, music,
+subtitles, the audio-first ordering, and historical rendering remain on their
+existing paths until the reviewed hybrid runtime integration phase.
