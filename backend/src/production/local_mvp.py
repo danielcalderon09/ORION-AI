@@ -32,6 +32,12 @@ from backend.src.production.domain.enums import (
     ProductionStage,
 )
 from backend.src.production.domain.production_job import ProductionJob
+from backend.src.production.planning.aggregate_visual_budget import (
+    deserialize_aggregate_visual_budget_plan,
+)
+from backend.src.production.planning.visual_strategy import (
+    deserialize_hybrid_visual_strategy_plan,
+)
 from backend.src.production.render_validation.models import FinalValidationResult
 from backend.src.production.render_validation.serialization import (
     deserialize_final_render_validation,
@@ -101,6 +107,19 @@ class LocalMvpFailure(ContractModel):
     recommended_action: str
 
 
+class LocalMvpVisualSummary(ContractModel):
+    visual_strategy: str
+    visual_shots: int = Field(ge=1)
+    generated_video_shots: int = Field(ge=0)
+    generated_image_shots: int = Field(ge=0)
+    reused_video_shots: int = Field(ge=0)
+    reused_image_shots: int = Field(ge=0)
+    image_requests: int = Field(ge=0)
+    video_requests: int = Field(ge=0)
+    purchased_video_seconds: int = Field(ge=0)
+    estimated_visual_cost_usd: str
+
+
 class LocalMvpReport(ContractModel):
     mode: Literal["local_simulated_e2e"] = LOCAL_MVP_MODE
     job_id: UUID
@@ -114,6 +133,7 @@ class LocalMvpReport(ContractModel):
     progress: tuple[LocalMvpProgress, ...] = ()
     output: LocalMvpOutput | None = None
     failure: LocalMvpFailure | None = None
+    visual_summary: LocalMvpVisualSummary | None = None
 
 
 class LocalMvpApplication:
@@ -316,6 +336,46 @@ class LocalMvpApplication:
             elapsed_seconds=time.perf_counter() - started,
             progress=progress,
             output=output,
+            visual_summary=await self._load_visual_summary(job.job_id),
+        )
+
+    async def _load_visual_summary(self, job_id: UUID) -> LocalMvpVisualSummary | None:
+        page = await self._list_artifacts.execute(job_id)
+        budgets = tuple(
+            item.artifact
+            for item in page.items
+            if item.artifact.artifact_type is ArtifactType.AGGREGATE_VISUAL_BUDGET_PLAN
+        )
+        strategies = tuple(
+            item.artifact
+            for item in page.items
+            if item.artifact.artifact_type is ArtifactType.HYBRID_VISUAL_STRATEGY_PLAN
+        )
+        if not budgets or not strategies:
+            return None
+        budget_artifact = max(budgets, key=lambda item: item.relative_path)
+        strategy_artifact = max(strategies, key=lambda item: item.relative_path)
+        budget = deserialize_aggregate_visual_budget_plan(
+            self._workspace.resolve(
+                budget_artifact.relative_path, require_exists=True
+            ).read_bytes()
+        )
+        strategy = deserialize_hybrid_visual_strategy_plan(
+            self._workspace.resolve(
+                strategy_artifact.relative_path, require_exists=True
+            ).read_bytes()
+        )
+        return LocalMvpVisualSummary(
+            visual_strategy=strategy.strategy_name.value,
+            visual_shots=strategy.summary.visual_shot_count,
+            generated_video_shots=strategy.summary.generated_video_shots,
+            generated_image_shots=strategy.summary.generated_image_shots,
+            reused_video_shots=strategy.summary.reused_video_shots,
+            reused_image_shots=strategy.summary.reused_image_shots,
+            image_requests=budget.image_requests,
+            video_requests=budget.video_requests,
+            purchased_video_seconds=budget.purchased_video_seconds,
+            estimated_visual_cost_usd=str(budget.estimated_total_visual_cost_usd),
         )
 
     async def _failure_report(

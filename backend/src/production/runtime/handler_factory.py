@@ -33,19 +33,10 @@ from backend.src.production.runtime.handlers.base import StageHandler
 from backend.src.production.runtime.job_dispatcher import StageHandlerRegistry
 
 if TYPE_CHECKING:
-    from backend.src.production.image_acquisition.handler import (
-        ImageAcquisitionHandler,
-    )
     from backend.src.production.media_composition.application.handler import (
         MediaCompositionHandler,
     )
     from backend.src.production.scene_planning.handler import ScenePlanningHandler
-    from backend.src.production.video_clip_generation.handler import (
-        VideoClipGenerationHandler,
-    )
-    from backend.src.production.visual_asset_planning.handler import (
-        VisualAssetPlanningHandler,
-    )
 
 
 def create_simulated_handler_registry(
@@ -102,9 +93,9 @@ def create_handler_registry(
     planning_handler: PlanningHandler,
     scripting_handler: ScriptingHandler | None = None,
     scene_planning_handler: ScenePlanningHandler | None = None,
-    visual_asset_planning_handler: VisualAssetPlanningHandler | None = None,
-    image_acquisition_handler: ImageAcquisitionHandler | None = None,
-    video_clip_generation_handler: VideoClipGenerationHandler | None = None,
+    visual_asset_planning_handler: StageHandler | None = None,
+    image_acquisition_handler: StageHandler | None = None,
+    video_clip_generation_handler: StageHandler | None = None,
     speech_generation_handler: StageHandler | None = None,
     audio_design_handler: StageHandler | None = None,
     media_composition_handler: MediaCompositionHandler | None = None,

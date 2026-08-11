@@ -17,6 +17,7 @@ from backend.src.production.domain.base import ContractModel
 from backend.src.production.domain.path_rules import validate_relative_path
 from backend.src.production.media_composition.domain.hybrid import (
     HybridImageMotionCompositionPlan,
+    HybridImageMotionRenderResult,
     HybridVisualSegment,
     HybridVisualSourceKind,
     ImageMotionPlan,
@@ -52,20 +53,6 @@ class HybridFFmpegExecutionPlan(ContractModel):
         if "-stream_loop" in self.argument_vector:
             raise ValueError("hybrid visual execution cannot loop video streams")
         return self
-
-
-class HybridImageMotionRenderResult(ContractModel):
-    output_relative_path: str
-    output_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    size_bytes: int = Field(gt=0)
-    duration_ms: int = Field(gt=0)
-    frame_count: int = Field(gt=0)
-    width: int = Field(gt=0)
-    height: int = Field(gt=0)
-    frame_rate: int = Field(gt=0)
-    video_codec: Literal["h264"] = "h264"
-    audio_stream_count: int = Field(ge=0, le=8)
-    execution_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 def build_hybrid_ffmpeg_execution_plan(

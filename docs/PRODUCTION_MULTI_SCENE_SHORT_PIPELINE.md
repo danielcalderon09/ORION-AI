@@ -393,3 +393,31 @@ Completed entries are immutable, transient failures resume selectively, and
 uncertain submissions fail closed pending reconciliation. This boundary is not
 registered in the production container or stage registry, so existing full-video
 jobs continue through the legacy handler unchanged.
+## SHORT-V1.6 hybrid production runtime
+
+Hybrid execution is explicitly opt-in through `ORION_VISUAL_STRATEGY`. Its accepted
+values are `full_video`, `hybrid_balanced`, and `hybrid_economy`; the default remains
+`full_video`, so existing jobs and configurations continue through the historical
+handlers and manifests.
+
+For either hybrid strategy, final visual planning remains post-TTS and audio-first.
+The `visual_asset_planning` stage additionally persists the immutable
+`HybridVisualStrategyPlan` and `AggregateVisualBudgetPlan`. The aggregate image,
+video, per-request, and total-visual limits must all pass before `acquiring_assets`;
+a rejection cannot reach either media provider.
+
+The existing stage registry is intentionally unchanged. Strategy and budget are pure
+decisions within final visual planning, hybrid acquisition remains the realization of
+`acquiring_assets`, and hybrid clip generation/local visual realization remains the
+work of `generating_video_clips`. The latter invokes the video provider only for
+`GENERATED_VIDEO`, builds a canonical `HybridImageMotionCompositionPlan`, and renders
+one deterministic local visual track. `building_timeline` uses editorial shot timing
+and source offsets into that track, while the established renderer continues to mux
+narration, simulated music, and subtitles into the final H.264/AAC output.
+
+Every hybrid sidecar is versioned and fingerprinted. Retry reads the latest prior
+checkpoint, reuses completed images and videos, and can rerun only local FFmpeg after
+a render interruption. A changed expansion, strategy, budget, acquisition manifest,
+video manifest, composition plan, source checksum, or execution plan fails closed.
+Historical jobs without hybrid artifacts continue to select the legacy full-video
+source reader and retain their historical serialization and fingerprints.

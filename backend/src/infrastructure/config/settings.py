@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     ORION_VISUAL_ASSET_PLANNING_TEMPERATURE: float = 0.2
     ORION_VISUAL_ASSET_PLANNING_MAX_SCENE_PLAN_BYTES: int = 4_000_000
     ORION_VISUAL_ASSET_PLANNING_MAX_ARTIFACT_BYTES: int = 8_000_000
+    ORION_VISUAL_STRATEGY: Literal[
+        "full_video", "hybrid_balanced", "hybrid_economy"
+    ] = "full_video"
+    ORION_HYBRID_IMAGE_ESTIMATED_COST_USD: Decimal = Decimal("0.04")
+    ORION_HYBRID_VIDEO_PRICE_PER_SECOND_USD: Decimal = Decimal("0.03")
+    ORION_MAX_TOTAL_VISUAL_COST_USD: Decimal = Decimal("2.50")
     ORION_BINARY_ASSET_MAX_SIZE_BYTES: int = 25_000_000
     ORION_BINARY_ASSET_ALLOWED_MIME_TYPES: tuple[str, ...] = (
         "image/png",
@@ -464,6 +470,17 @@ class Settings(BaseSettings):
             raise ValueError("ORION_VISUAL_ASSET_PLANNING_MAX_OUTPUT_TOKENS is outside safe limits")
         if not 0 <= self.ORION_VISUAL_ASSET_PLANNING_TEMPERATURE <= 2:
             raise ValueError("ORION_VISUAL_ASSET_PLANNING_TEMPERATURE must be between 0 and 2")
+        for hybrid_name, hybrid_value in {
+            "ORION_HYBRID_IMAGE_ESTIMATED_COST_USD": (
+                self.ORION_HYBRID_IMAGE_ESTIMATED_COST_USD
+            ),
+            "ORION_HYBRID_VIDEO_PRICE_PER_SECOND_USD": (
+                self.ORION_HYBRID_VIDEO_PRICE_PER_SECOND_USD
+            ),
+            "ORION_MAX_TOTAL_VISUAL_COST_USD": self.ORION_MAX_TOTAL_VISUAL_COST_USD,
+        }.items():
+            if hybrid_value <= 0:
+                raise ValueError(f"{hybrid_name} must be positive")
         for name, value in {
             "ORION_SCRIPTING_MAX_PLAN_BYTES": self.ORION_SCRIPTING_MAX_PLAN_BYTES,
             "ORION_SCRIPTING_MAX_SCRIPT_BYTES": self.ORION_SCRIPTING_MAX_SCRIPT_BYTES,

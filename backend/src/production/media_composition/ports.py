@@ -31,6 +31,7 @@ class CompositionShotSource(ContractModel):
     transition_kind: CompositionTransitionKind
     transition_duration_ms: int = Field(ge=0, le=10_000)
     video_asset_id: str
+    source_start_ms: int = Field(default=0, ge=0, le=3_600_000)
 
 
 class CompositionNarrationSource(ContractModel):

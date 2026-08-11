@@ -37,6 +37,11 @@ from backend.src.production.media_composition.configuration import (
 from backend.src.production.media_composition.domain.fingerprints import (
     canonical_sha256,
 )
+from backend.src.production.media_composition.domain.hybrid import (
+    HybridImageMotionCompositionPlan,
+    HybridImageMotionRenderResult,
+    deserialize_hybrid_image_motion_plan,
+)
 from backend.src.production.media_composition.domain.models import (
     CompositionAssetAvailability,
     CompositionAssetKind,
@@ -58,6 +63,7 @@ from backend.src.production.media_composition.ports import (
     MediaCompositionSource,
     MediaCompositionStageContext,
 )
+from backend.src.production.planning.provider_budget_planner import SceneProviderPurchasePlan
 from backend.src.production.runtime.context import StageContext
 from backend.src.production.scene_planning.models import ProductionScenePlan
 from backend.src.production.scene_planning.ports import (
@@ -157,11 +163,37 @@ class DurableMediaCompositionSourceReader:
         artifacts: tuple[Artifact, ...],
     ) -> MediaCompositionSource:
         by_type = _by_type(artifacts)
-        video_artifact, video_content = self._selected_manifest(
-            by_type,
-            ArtifactType.PRODUCTION_VIDEO_CLIP_MANIFEST,
-            context.job_id,
-        )
+        hybrid = bool(by_type.get(ArtifactType.HYBRID_IMAGE_MOTION_RENDER_RESULT))
+        video_artifact: Artifact | None = None
+        video_content: bytes | None = None
+        hybrid_plan_artifact: Artifact | None = None
+        hybrid_result_artifact: Artifact | None = None
+        hybrid_plan: HybridImageMotionCompositionPlan | None = None
+        hybrid_result: HybridImageMotionRenderResult | None = None
+        if hybrid:
+            hybrid_plan_artifact, hybrid_plan_content = self._selected_manifest(
+                by_type,
+                ArtifactType.HYBRID_IMAGE_MOTION_COMPOSITION_PLAN,
+                context.job_id,
+            )
+            hybrid_result_artifact, hybrid_result_content = self._selected_manifest(
+                by_type,
+                ArtifactType.HYBRID_IMAGE_MOTION_RENDER_RESULT,
+                context.job_id,
+            )
+            try:
+                hybrid_plan = deserialize_hybrid_image_motion_plan(hybrid_plan_content)
+                hybrid_result = HybridImageMotionRenderResult.model_validate_json(
+                    hybrid_result_content
+                )
+            except (TypeError, ValueError) as exc:
+                raise MediaCompositionSourceError("hybrid visual artifacts are invalid") from exc
+        else:
+            video_artifact, video_content = self._selected_manifest(
+                by_type,
+                ArtifactType.PRODUCTION_VIDEO_CLIP_MANIFEST,
+                context.job_id,
+            )
         speech_artifact, speech_content = self._selected_manifest(
             by_type,
             ArtifactType.PRODUCTION_SPEECH_GENERATION_MANIFEST,
@@ -173,19 +205,32 @@ class DurableMediaCompositionSourceReader:
             context.job_id,
         )
         try:
-            video = deserialize_video_clip_manifest(video_content)
+            video = (
+                deserialize_video_clip_manifest(video_content)
+                if video_content is not None
+                else None
+            )
             speech = deserialize_speech_manifest(speech_content)
             audio = deserialize_audio_design_manifest(audio_content)
         except (TypeError, ValueError) as exc:
             raise MediaCompositionSourceError("an upstream media manifest is invalid") from exc
-        self._validate_manifests(
-            context.job_id,
-            script_source,
-            scene_source.scene_plan,
-            video,
-            speech,
-            audio,
-        )
+        if video is not None:
+            self._validate_manifests(
+                context.job_id,
+                script_source,
+                scene_source.scene_plan,
+                video,
+                speech,
+                audio,
+            )
+        else:
+            self._validate_non_video_manifests(
+                context.job_id,
+                script_source,
+                scene_source.scene_plan,
+                speech,
+                audio,
+            )
         audio_plan = derive_audio_design_plan(
             job_id=context.job_id,
             source_script_artifact_id=script_source.artifact_id,
@@ -200,89 +245,65 @@ class DurableMediaCompositionSourceReader:
         validation: list[CompositionAssetValidation] = []
 
         video_by_shot: dict[str, CompositionAssetReference] = {}
-        for video_entry in video.entries:
-            if video_entry.role is not VisualAssetRole.PRIMARY:
-                continue
-            if video_entry.source_shot_id in video_by_shot:
-                raise MediaCompositionSourceError("multiple primary video clips exist for one shot")
-            video_asset = _video_asset(video_entry)
-            video_by_shot[video_entry.source_shot_id] = video_asset
-            expected.append(video_asset)
-            validation.append(self._validate_asset(video_asset, registered))
+        hybrid_asset: CompositionAssetReference | None = None
+        if video is not None:
+            for video_entry in video.entries:
+                if video_entry.role is not VisualAssetRole.PRIMARY:
+                    continue
+                if video_entry.source_shot_id in video_by_shot:
+                    raise MediaCompositionSourceError(
+                        "multiple primary video clips exist for one shot"
+                    )
+                video_asset = _video_asset(video_entry)
+                video_by_shot[video_entry.source_shot_id] = video_asset
+                expected.append(video_asset)
+                validation.append(self._validate_asset(video_asset, registered))
+        else:
+            assert hybrid_plan is not None and hybrid_result is not None
+            hybrid_asset = self._hybrid_visual_asset(
+                by_type,
+                context.job_id,
+                hybrid_result,
+            )
+            expected.append(hybrid_asset)
+            validation.append(self._validate_asset(hybrid_asset, registered))
 
         scene_starts: dict[str, int] = {}
         shots: list[CompositionShotSource] = []
-        global_scene_start = 0
         purchase_by_scene = (
             {item.scene_id: item for item in video.purchase_plan.scenes}
-            if video.purchase_plan is not None
+            if video is not None and video.purchase_plan is not None
             else {}
         )
-        for scene in scene_source.scene_plan.scenes:
-            scene_starts[scene.scene_id] = global_scene_start
-            purchased = purchase_by_scene.get(scene.scene_id)
-            if purchased is not None:
-                local_start = 0
-                for index, clip in enumerate(purchased.clips):
-                    shot_asset = video_by_shot.get(clip.shot_id)
-                    if shot_asset is None:
-                        raise MediaCompositionSourceError(
-                            "a purchased visual shot has no primary video clip"
-                        )
-                    local_end = local_start + clip.usable_duration_ms
-                    final = index == len(purchased.clips) - 1
-                    source_transition = scene.shots[-1].transition
-                    shots.append(
-                        CompositionShotSource(
-                            scene_id=scene.scene_id,
-                            shot_id=clip.shot_id,
-                            scene_number=scene.scene_number,
-                            shot_number=index + 1,
-                            scene_start_ms=global_scene_start,
-                            shot_start_ms=global_scene_start + local_start,
-                            shot_end_ms=global_scene_start + local_end,
-                            transition_kind=(
-                                _TRANSITIONS[source_transition.kind]
-                                if final
-                                else _TRANSITIONS["cut"]
-                            ),
-                            transition_duration_ms=(
-                                _seconds_to_ms(source_transition.duration_seconds)
-                                if final
-                                else 0
-                            ),
-                            video_asset_id=shot_asset.asset_id,
-                        )
-                    )
-                    local_start = local_end
-                if local_start != purchased.resolved_duration_ms:
-                    raise MediaCompositionSourceError(
-                        "purchased visual shots do not cover their narrative scene"
-                    )
-                global_scene_start += purchased.resolved_duration_ms
-                continue
-            for shot in scene.shots:
-                shot_asset = video_by_shot.get(shot.shot_id)
-                if shot_asset is None:
-                    raise MediaCompositionSourceError("a scene-plan shot has no primary video clip")
-                start_ms = global_scene_start + _seconds_to_ms(shot.timing.start_seconds)
-                end_ms = global_scene_start + _seconds_to_ms(shot.timing.end_seconds)
+        if hybrid_plan is not None and hybrid_asset is not None:
+            for segment in hybrid_plan.segments:
+                scene_id = segment.shot_id.rsplit("-shot-", 1)[0]
+                scene_number = int(scene_id.removeprefix("scene-"))
+                shot_number = int(segment.shot_id.rsplit("-shot-", 1)[1])
+                scene_starts.setdefault(scene_id, segment.timeline_start_ms)
                 shots.append(
                     CompositionShotSource(
-                        scene_id=scene.scene_id,
-                        shot_id=shot.shot_id,
-                        scene_number=scene.scene_number,
-                        shot_number=shot.shot_number,
-                        scene_start_ms=global_scene_start,
-                        shot_start_ms=start_ms,
-                        shot_end_ms=end_ms,
-                        transition_kind=_TRANSITIONS[shot.transition.kind],
-                        transition_duration_ms=_seconds_to_ms(shot.transition.duration_seconds),
-                        video_asset_id=shot_asset.asset_id,
+                        scene_id=scene_id,
+                        shot_id=segment.shot_id,
+                        scene_number=scene_number,
+                        shot_number=shot_number,
+                        scene_start_ms=scene_starts[scene_id],
+                        shot_start_ms=segment.timeline_start_ms,
+                        shot_end_ms=segment.timeline_end_ms,
+                        transition_kind=CompositionTransitionKind.CUT,
+                        transition_duration_ms=0,
+                        video_asset_id=hybrid_asset.asset_id,
+                        source_start_ms=segment.timeline_start_ms,
                     )
                 )
-            global_scene_start += _seconds_to_ms(scene.estimated_duration_seconds)
-
+        else:
+            self._append_legacy_shots(
+                shots=shots,
+                scene_starts=scene_starts,
+                scene_plan=scene_source.scene_plan,
+                video_by_shot=video_by_shot,
+                purchase_by_scene=purchase_by_scene,
+            )
         narration: list[CompositionNarrationSource] = []
         for speech_entry in speech.entries:
             speech_asset = _speech_asset(speech_entry)
@@ -363,10 +384,8 @@ class DurableMediaCompositionSourceReader:
                 and item.artifact_id not in expected_artifact_ids
             )
         )
-        source_manifests = tuple(
-            sorted(
-                (
-                    _source_reference(
+        manifest_references = [
+            _source_reference(
                         script_source.artifact_id,
                         ArtifactType.PRODUCTION_SCRIPT,
                         script_source.relative_path,
@@ -374,7 +393,7 @@ class DurableMediaCompositionSourceReader:
                         script_source.sha256,
                         script_source.size_bytes,
                     ),
-                    _source_reference(
+            _source_reference(
                         scene_source.artifact_id,
                         ArtifactType.PRODUCTION_SCENE_PLAN,
                         scene_source.relative_path,
@@ -382,12 +401,21 @@ class DurableMediaCompositionSourceReader:
                         scene_source.sha256,
                         scene_source.size_bytes,
                     ),
-                    _artifact_reference(video_artifact, video.schema_version),
-                    _artifact_reference(speech_artifact, speech.schema_version),
-                    _artifact_reference(audio_artifact, audio.schema_version),
-                ),
-                key=lambda item: item.artifact_type.value,
+            _artifact_reference(speech_artifact, speech.schema_version),
+            _artifact_reference(audio_artifact, audio.schema_version),
+        ]
+        if video_artifact is not None and video is not None:
+            manifest_references.append(_artifact_reference(video_artifact, video.schema_version))
+        else:
+            assert hybrid_plan_artifact is not None and hybrid_result_artifact is not None
+            manifest_references.extend(
+                (
+                    _artifact_reference(hybrid_plan_artifact, "1.0.0"),
+                    _artifact_reference(hybrid_result_artifact, "1.0.0"),
+                )
             )
+        source_manifests = tuple(
+            sorted(manifest_references, key=lambda item: item.artifact_type.value)
         )
         return MediaCompositionSource(
             job_id=context.job_id,
@@ -400,6 +428,127 @@ class DurableMediaCompositionSourceReader:
             sound_effects=tuple(sound_effects),
             subtitles=subtitle,
             orphan_asset_ids=orphans,
+        )
+
+    @staticmethod
+    def _append_legacy_shots(
+        *,
+        shots: list[CompositionShotSource],
+        scene_starts: dict[str, int],
+        scene_plan: ProductionScenePlan,
+        video_by_shot: dict[str, CompositionAssetReference],
+        purchase_by_scene: dict[str, SceneProviderPurchasePlan],
+    ) -> None:
+        global_scene_start = 0
+        for scene in scene_plan.scenes:
+            scene_starts[scene.scene_id] = global_scene_start
+            purchased = purchase_by_scene.get(scene.scene_id)
+            if purchased is not None:
+                local_start = 0
+                for index, clip in enumerate(purchased.clips):
+                    shot_asset = video_by_shot.get(clip.shot_id)
+                    if shot_asset is None:
+                        raise MediaCompositionSourceError(
+                            "a purchased visual shot has no primary video clip"
+                        )
+                    local_end = local_start + clip.usable_duration_ms
+                    final = index == len(purchased.clips) - 1
+                    source_transition = scene.shots[-1].transition
+                    shots.append(
+                        CompositionShotSource(
+                            scene_id=scene.scene_id,
+                            shot_id=clip.shot_id,
+                            scene_number=scene.scene_number,
+                            shot_number=index + 1,
+                            scene_start_ms=global_scene_start,
+                            shot_start_ms=global_scene_start + local_start,
+                            shot_end_ms=global_scene_start + local_end,
+                            transition_kind=(
+                                _TRANSITIONS[source_transition.kind]
+                                if final
+                                else _TRANSITIONS["cut"]
+                            ),
+                            transition_duration_ms=(
+                                _seconds_to_ms(source_transition.duration_seconds)
+                                if final
+                                else 0
+                            ),
+                            video_asset_id=shot_asset.asset_id,
+                        )
+                    )
+                    local_start = local_end
+                if local_start != purchased.resolved_duration_ms:
+                    raise MediaCompositionSourceError(
+                        "purchased visual shots do not cover their narrative scene"
+                    )
+                global_scene_start += purchased.resolved_duration_ms
+                continue
+            for shot in scene.shots:
+                shot_asset = video_by_shot.get(shot.shot_id)
+                if shot_asset is None:
+                    raise MediaCompositionSourceError(
+                        "a scene-plan shot has no primary video clip"
+                    )
+                start_ms = global_scene_start + _seconds_to_ms(shot.timing.start_seconds)
+                end_ms = global_scene_start + _seconds_to_ms(shot.timing.end_seconds)
+                shots.append(
+                    CompositionShotSource(
+                        scene_id=scene.scene_id,
+                        shot_id=shot.shot_id,
+                        scene_number=scene.scene_number,
+                        shot_number=shot.shot_number,
+                        scene_start_ms=global_scene_start,
+                        shot_start_ms=start_ms,
+                        shot_end_ms=end_ms,
+                        transition_kind=_TRANSITIONS[shot.transition.kind],
+                        transition_duration_ms=_seconds_to_ms(
+                            shot.transition.duration_seconds
+                        ),
+                        video_asset_id=shot_asset.asset_id,
+                    )
+                )
+            global_scene_start += _seconds_to_ms(scene.estimated_duration_seconds)
+
+    def _hybrid_visual_asset(
+        self,
+        by_type: dict[ArtifactType, tuple[Artifact, ...]],
+        job_id: UUID,
+        result: HybridImageMotionRenderResult,
+    ) -> CompositionAssetReference:
+        candidates = tuple(
+            item
+            for item in by_type.get(ArtifactType.SOURCE_VIDEO_CLIP, ())
+            if item.relative_path == result.output_relative_path
+            and item.metadata.get("hybrid_visual_track") is True
+        )
+        if len(candidates) != 1:
+            raise MediaCompositionSourceError("hybrid visual track artifact is ambiguous")
+        artifact = candidates[0]
+        if (
+            artifact.job_id != job_id
+            or artifact.sha256 != result.output_sha256
+            or artifact.size_bytes != result.size_bytes
+        ):
+            raise MediaCompositionSourceError("hybrid visual track provenance differs")
+        return CompositionAssetReference(
+            asset_id=f"hybrid-visual-track-{result.output_sha256[:24]}",
+            artifact_id=artifact.artifact_id,
+            kind=CompositionAssetKind.VIDEO,
+            relative_path=result.output_relative_path,
+            mime_type="video/mp4",
+            sha256=result.output_sha256,
+            fingerprint=canonical_sha256(
+                {
+                    "execution_fingerprint": result.execution_fingerprint,
+                    "sha256": result.output_sha256,
+                }
+            ),
+            size_bytes=result.size_bytes,
+            duration_ms=result.duration_ms,
+            width=result.width,
+            height=result.height,
+            frame_rate=result.frame_rate,
+            frame_count=result.frame_count,
         )
 
     def _selected_manifest(
@@ -578,6 +727,29 @@ class DurableMediaCompositionSourceReader:
             or audio.source_script_artifact_id != script.artifact_id
             or audio.production_script_fingerprint != script.sha256
             or any(entry.status is not VideoClipEntryStatus.STORED for entry in video.entries)
+            or any(entry.status is not SpeechSegmentStatus.STORED for entry in speech.entries)
+            or any(entry.status is not AudioDesignAssetStatus.STORED for entry in audio.entries)
+        ):
+            raise MediaCompositionSourceError("upstream manifests are incomplete or incompatible")
+
+    @staticmethod
+    def _validate_non_video_manifests(
+        job_id: UUID,
+        script: ReadProductionScript,
+        scene_plan: ProductionScenePlan,
+        speech: SpeechGenerationManifest,
+        audio: AudioDesignManifest,
+    ) -> None:
+        if (
+            scene_plan.source_script_sha256 != script.sha256
+            or speech.status is not SpeechGenerationManifestStatus.COMPLETED
+            or audio.status is not AudioDesignManifestStatus.COMPLETE
+            or speech.job_id != job_id
+            or audio.job_id != job_id
+            or speech.source_script_artifact_id != script.artifact_id
+            or speech.source_script_sha256 != script.sha256
+            or audio.source_script_artifact_id != script.artifact_id
+            or audio.production_script_fingerprint != script.sha256
             or any(entry.status is not SpeechSegmentStatus.STORED for entry in speech.entries)
             or any(entry.status is not AudioDesignAssetStatus.STORED for entry in audio.entries)
         ):

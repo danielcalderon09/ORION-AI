@@ -194,6 +194,22 @@ class HybridImageMotionCompositionPlan(ContractModel):
         return self
 
 
+class HybridImageMotionRenderResult(ContractModel):
+    """Provider-neutral integrity result for a locally realized visual track."""
+
+    output_relative_path: str
+    output_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    size_bytes: int = Field(gt=0)
+    duration_ms: int = Field(gt=0)
+    frame_count: int = Field(gt=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    frame_rate: int = Field(gt=0)
+    video_codec: Literal["h264"] = "h264"
+    audio_stream_count: int = Field(ge=0, le=8)
+    execution_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 def build_hybrid_image_motion_plan(
     *,
     job_id: UUID,

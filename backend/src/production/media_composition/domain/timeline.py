@@ -204,6 +204,12 @@ def _video_clips(
             raise MediaCompositionPlanError("video asset duration is missing")
         source_frames = _ms_to_frames(asset.duration_ms, frame_rate)
         timeline_frames = end - start
+        source_in = _ms_to_frames(shot.source_start_ms, frame_rate)
+        source_out = source_in + timeline_frames
+        if source_in > 0 and source_out > source_frames:
+            raise MediaCompositionPlanError("video source undercovers its editorial interval")
+        if source_in == 0:
+            source_out = min(source_frames, timeline_frames)
         clips.append(
             CompositionClip(
                 clip_id=f"clip-video-{shot.shot_id}",
@@ -216,7 +222,8 @@ def _video_clips(
                 timeline_end_frame=end,
                 timeline_start_ms=_frames_to_ms(start, frame_rate),
                 timeline_end_ms=_frames_to_ms(end, frame_rate),
-                source_out_frame=min(source_frames, timeline_frames),
+                source_in_frame=source_in,
+                source_out_frame=source_out,
                 playback_mode="once",
                 loop_count=1,
             )

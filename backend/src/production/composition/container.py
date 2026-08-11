@@ -98,6 +98,13 @@ from backend.src.production.composition.audio_first_duration_reader import (
 )
 from backend.src.production.domain.duration_resolution import DurationResolutionPolicy
 from backend.src.production.domain.enums import ArtifactType
+from backend.src.production.hybrid_runtime.assets import HybridAssetAcquisitionStageHandler
+from backend.src.production.hybrid_runtime.planning import (
+    HybridVisualPlanningHandler,
+    LocalHybridPlanningStore,
+    hybrid_budget_authorization_from_values,
+)
+from backend.src.production.hybrid_runtime.video import HybridVideoGenerationStageHandler
 from backend.src.production.image_acquisition.configuration import (
     ImageAcquisitionConfiguration,
     OpenRouterImageBillablePolicy,
@@ -192,6 +199,7 @@ from backend.src.production.planning.providers.availability import (
     load_openrouter_planning_provider,
 )
 from backend.src.production.planning.reconciliation import PlanningArtifactReconciler
+from backend.src.production.planning.visual_strategy import VisualStrategyName
 from backend.src.production.render_validation.handler import (
     FinalRenderValidationHandler,
 )
@@ -207,6 +215,7 @@ from backend.src.production.rendering.executable_resolver import (
     LocalMediaExecutableResolver,
 )
 from backend.src.production.rendering.handler import LocalRenderPreparationHandler
+from backend.src.production.rendering.image_motion import LocalHybridImageMotionRenderer
 from backend.src.production.rendering.manifest_store import (
     LocalRenderPreparationStore,
 )
@@ -239,6 +248,7 @@ from backend.src.production.runtime.handlers import (
     PlanningHandler,
     ScriptingHandler,
 )
+from backend.src.production.runtime.handlers.base import StageHandler
 from backend.src.production.runtime.leases import (
     ProductionLeaseManager,
     SQLAlchemyLeaseRepository,
@@ -567,7 +577,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         clock=clock,
         uuid_factory=uuid4,
     )
-    visual_asset_planning_handler = VisualAssetPlanningHandler(
+    visual_asset_planning_handler: StageHandler = VisualAssetPlanningHandler(
         scene_plan_reader=DurableProductionScenePlanReader(
             workspace_root=settings.PROJECTS_DIR,
             repository=SQLAlchemyProductionScenePlanQueryRepository(sessions),
@@ -586,6 +596,41 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         clock=clock,
         uuid_factory=uuid4,
     )
+    visual_strategy = VisualStrategyName(settings.ORION_VISUAL_STRATEGY)
+    if visual_strategy is not VisualStrategyName.FULL_VIDEO:
+        image_cost = settings.ORION_HYBRID_IMAGE_ESTIMATED_COST_USD
+        image_job_cost = (
+            settings.ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD
+            if settings.ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD is not None
+            else image_cost * settings.ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB
+        )
+        visual_asset_planning_handler = HybridVisualPlanningHandler(
+            delegate=visual_asset_planning_handler,
+            strategy_name=visual_strategy,
+            authorization=hybrid_budget_authorization_from_values(
+                image_cost=image_cost,
+                video_price_per_second=(
+                    settings.ORION_HYBRID_VIDEO_PRICE_PER_SECOND_USD
+                ),
+                maximum_image_requests=(
+                    settings.ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB
+                ),
+                maximum_video_requests=(
+                    settings.ORION_VIDEO_CLIP_GENERATION_MAX_REQUESTS_PER_JOB
+                ),
+                maximum_image_cost=image_job_cost,
+                maximum_video_cost_per_request=(
+                    settings.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD
+                ),
+                maximum_video_cost=(
+                    settings.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_JOB_COST_USD
+                ),
+                maximum_total_visual_cost=settings.ORION_MAX_TOTAL_VISUAL_COST_USD,
+            ),
+            store=LocalHybridPlanningStore(settings.PROJECTS_DIR),
+            clock=clock,
+            uuid_factory=uuid4,
+        )
     binary_asset_configuration = AssetStorageConfiguration(
         workspace=settings.PROJECTS_DIR,
         max_asset_size=settings.ORION_BINARY_ASSET_MAX_SIZE_BYTES,
@@ -608,7 +653,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
     image_prompt_builder = ImageGenerationPromptBuilder(
         max_prompt_bytes=settings.ORION_IMAGE_ACQUISITION_MAX_PLAN_BYTES,
     )
-    image_acquisition_handler = ImageAcquisitionHandler(
+    image_acquisition_handler: StageHandler = ImageAcquisitionHandler(
         plan_reader=DurableProductionVisualAssetPlanReader(
             workspace_root=settings.PROJECTS_DIR,
             repository=SQLAlchemyProductionVisualAssetPlanQueryRepository(sessions),
@@ -642,6 +687,17 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             else None
         ),
     )
+    if visual_strategy is not VisualStrategyName.FULL_VIDEO:
+        image_acquisition_handler = HybridAssetAcquisitionStageHandler(
+            workspace_root=settings.PROJECTS_DIR,
+            provider=image_acquisition_provider,
+            configuration=ImageAcquisitionConfiguration(
+                output_format=settings.ORION_IMAGE_ACQUISITION_OUTPUT_FORMAT,
+                quality=settings.ORION_IMAGE_ACQUISITION_QUALITY,
+            ),
+            clock=clock,
+            uuid_factory=uuid4,
+        )
     video_clip_configuration = VideoClipGenerationConfiguration(
         provider=settings.ORION_VIDEO_CLIP_GENERATION_PROVIDER,
         model=settings.ORION_VIDEO_CLIP_GENERATION_MODEL,
@@ -731,7 +787,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             max_manifest_bytes=settings.ORION_SPEECH_GENERATION_MAX_MANIFEST_BYTES,
         ),
     )
-    video_clip_generation_handler = VideoClipGenerationHandler(
+    video_clip_generation_handler: StageHandler = VideoClipGenerationHandler(
         manifest_reader=image_acquisition_manifest_reader,
         provider=video_clip_generation_provider,
         binary_store=filesystem_video_clip_store,
@@ -1031,6 +1087,8 @@ def build_production_container(settings: Settings) -> ProductionContainer:
     local_renderer: LocalRenderer
     final_render_validation_handler: FinalRenderValidationHandler | None = None
     if rendering_configuration.renderer is RendererKind.DRY_RUN:
+        if visual_strategy is not VisualStrategyName.FULL_VIDEO:
+            raise ValueError("hybrid visual strategy requires the local ffmpeg renderer")
         local_renderer = DryRunRenderer()
     else:
         resolved_render_binaries = LocalMediaExecutableResolver().resolve(
@@ -1046,6 +1104,18 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             workspace_root=settings.PROJECTS_DIR,
             runner=render_process_runner,
         )
+        if visual_strategy is not VisualStrategyName.FULL_VIDEO:
+            video_clip_generation_handler = HybridVideoGenerationStageHandler(
+                workspace_root=settings.PROJECTS_DIR,
+                provider=video_clip_generation_provider,
+                configuration=video_clip_configuration,
+                renderer=LocalHybridImageMotionRenderer(
+                    workspace_root=settings.PROJECTS_DIR,
+                    runner=render_process_runner,
+                ),
+                clock=clock,
+                uuid_factory=uuid4,
+            )
         final_render_validation_handler = FinalRenderValidationHandler(
             source_reader=VerifiedFinalRenderSourceReader(
                 workspace_root=settings.PROJECTS_DIR,
