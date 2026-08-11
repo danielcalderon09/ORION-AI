@@ -321,3 +321,28 @@ fingerprinted; rejection is a pure fail-closed result and makes no provider call
 SHORT-V1.2 does not alter StageRegistry or production handlers. Runtime remains
 legacy full-video until image acquisition, video generation, and composition gain
 explicit hybrid support in later phases.
+
+### SHORT-V1.3 hybrid asset acquisition boundary
+
+Hybrid image acquisition consumes the already selected `HybridVisualStrategyPlan`
+and its authorized `AggregateVisualBudgetPlan`; it never selects a strategy or
+recounts requests inside the acquisition loop. A canonical acquisition identity
+binds the final visual intent, strategy fingerprint, budget fingerprint, shot ID,
+asset ID, visual mode, motion intent, usable duration, and schema version. Any
+source or fingerprint drift fails closed before another image request.
+
+`generated_video` produces exactly one durable first-frame image and
+`generated_image` produces exactly one durable final image. Both use the single
+corresponding image requirement from the aggregate plan. `reused_image` and
+`reused_video` produce no image-provider request: their declared `source_asset_id`
+must resolve through an allowed durable catalog with matching media type and stable
+integrity metadata. A missing source or changed SHA-256 fails closed.
+
+The hybrid acquisition manifest records per-shot visual mode, motion intent,
+usable duration, origin, generated/reused status, durable asset identity, SHA-256,
+MIME type, dimensions where applicable, provenance, and both upstream
+fingerprints. Checkpoint recovery reuses completed generated images and resolved
+catalog references, while preserving deterministic request identities. The legacy
+`ImageAcquisitionHandler` remains unchanged and is still the active production
+path; container registration, hybrid video consumption, image-motion rendering,
+and real reuse are deferred to subsequent phases.
