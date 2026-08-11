@@ -30,6 +30,7 @@ from backend.src.production.speech_generation.exceptions import (
     SpeechProviderClosedError,
     SpeechProviderResponseError,
     SpeechProviderUncertainError,
+    SpeechUncertaintyResolutionError,
 )
 from backend.src.production.speech_generation.fingerprinting import (
     SpeechRemoteRequestFingerprintInput,
@@ -60,6 +61,10 @@ from backend.src.production.speech_generation.remote_models import (
     RemoteSpeechOutputMetadata,
 )
 from backend.src.production.speech_generation.remote_ports import RemoteSpeechJobStore
+from backend.src.production.speech_generation.unresolved_replacement import (
+    SpeechUnresolvedReplacementPermit,
+    SpeechUnresolvedReplacementStore,
+)
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_.-]{1,300}$")
 _SAFE_PCM_MIME = frozenset(
@@ -82,6 +87,7 @@ class OpenRouterSpeechGenerationProvider:
         maximum_authorized_cost_usd: Decimal,
         allow_billable_requests: bool,
         remote_job_store: RemoteSpeechJobStore,
+        unresolved_replacement_store: SpeechUnresolvedReplacementStore | None = None,
         maximum_requests_per_job: int = 1,
         base_url: str = "https://openrouter.ai/api/v1",
         timeout_seconds: float = 120,
@@ -119,6 +125,7 @@ class OpenRouterSpeechGenerationProvider:
         self._estimated_cost = estimated_cost_usd
         self._maximum_cost = maximum_authorized_cost_usd
         self._store = remote_job_store
+        self._replacement_store = unresolved_replacement_store
         self._maximum_requests = maximum_requests_per_job
         self._base_url = str(parsed).rstrip("/")
         self._timeout = httpx.Timeout(timeout_seconds)
@@ -149,10 +156,26 @@ class OpenRouterSpeechGenerationProvider:
         job_records = tuple(record for record in records if record.job_id == request.job_id)
         if len(job_records) >= self._maximum_requests:
             raise SpeechBillableAuthorizationError("speech job request limit was reached")
-        if any(record.status is RemoteSpeechJobStatus.UNCERTAIN for record in job_records):
-            raise SpeechProviderUncertainError("uncertain speech submission requires review")
+        replacement_permit = await self._replacement_permit(request, job_records)
 
         prepared = self._prepared_record(request)
+        if replacement_permit is not None:
+            prepared = prepared.model_copy(
+                update={
+                    "metadata": {
+                        **prepared.metadata,
+                        "replacement_permit_fingerprint": (
+                            replacement_permit.authorization.fingerprint
+                        ),
+                        "replacement_submission_identity": (
+                            replacement_permit.replacement_submission_identity
+                        ),
+                        "replacement_source_attempt": (
+                            replacement_permit.authorization.source_attempt_number
+                        ),
+                    }
+                }
+            )
         await self._store.create(prepared)
         snapshot = self._capability_snapshot(request, prepared.prepared_at)
         SpeechBillableRequestGate().authorize(
@@ -168,6 +191,13 @@ class OpenRouterSpeechGenerationProvider:
             authorized_at=prepared.prepared_at,
         )
         started = self._now()
+        if replacement_permit is not None:
+            assert self._replacement_store is not None
+            await self._replacement_store.consume(
+                permit=replacement_permit,
+                estimated_cost_usd=self._estimated_cost,
+                consumed_at=started,
+            )
         submitting = prepared.model_copy(
             update={
                 "status": RemoteSpeechJobStatus.SUBMITTING,
@@ -215,6 +245,7 @@ class OpenRouterSpeechGenerationProvider:
                         downloaded_at=finished,
                     ),
                     "metadata": {
+                        **submitting.metadata,
                         "endpoint": "api_v1_audio_speech",
                         "http_status": status,
                         "response_format": "pcm",
@@ -242,6 +273,7 @@ class OpenRouterSpeechGenerationProvider:
         except asyncio.CancelledError:
             await self._mark_uncertain(submitting)
             raise
+
         except (httpx.TimeoutException, httpx.RequestError) as exc:
             await self._mark_uncertain(submitting)
             raise SpeechProviderUncertainError(
@@ -263,6 +295,50 @@ class OpenRouterSpeechGenerationProvider:
                 )
                 await self._store.checkpoint(previous=submitting, current=failed)
             raise
+
+    async def _replacement_permit(
+        self,
+        request: SpeechProviderRequest,
+        job_records: tuple[RemoteSpeechJobRecord, ...],
+    ) -> SpeechUnresolvedReplacementPermit | None:
+        uncertain = tuple(
+            record for record in job_records if record.status is RemoteSpeechJobStatus.UNCERTAIN
+        )
+        if not uncertain:
+            return None
+        if self._replacement_store is None:
+            raise SpeechProviderUncertainError("uncertain speech submission requires review")
+        uncovered = []
+        for record in uncertain:
+            if not await self._replacement_store.uncertainty_is_covered(
+                record=record,
+                job_records=job_records,
+            ):
+                uncovered.append(record)
+        if not uncovered:
+            return None
+        matching = tuple(
+            record
+            for record in uncovered
+            if record.segment_id == request.segment.segment_id
+            and record.attempt_number + 1 == request.attempt_number
+        )
+        if len(matching) != 1 or len(uncovered) != 1:
+            raise SpeechProviderUncertainError("uncertain speech submission requires review")
+        try:
+            permit = await self._replacement_store.permit(
+                job_id=request.job_id,
+                target_attempt_number=request.attempt_number,
+                segment_id=request.segment.segment_id,
+                estimated_cost_usd=self._estimated_cost,
+            )
+        except SpeechUncertaintyResolutionError as exc:
+            raise SpeechProviderUncertainError(
+                "unresolved speech replacement authorization is invalid"
+            ) from exc
+        if permit is None:
+            raise SpeechProviderUncertainError("uncertain speech submission requires review")
+        return permit
 
     async def _post_once(
         self, request: SpeechProviderRequest
@@ -484,7 +560,11 @@ class OpenRouterSpeechGenerationProvider:
                 "terminal_at": now,
                 "remote_generation_id": generation_id,
                 "safe_error_code": "provider_http_error" if status != 200 else "invalid_audio",
-                "metadata": {"endpoint": "api_v1_audio_speech", "http_status": status},
+                "metadata": {
+                    **record.metadata,
+                    "endpoint": "api_v1_audio_speech",
+                    "http_status": status,
+                },
             }
         )
 

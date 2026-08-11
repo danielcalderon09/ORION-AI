@@ -345,6 +345,9 @@ from backend.src.production.speech_generation.remote_reconciliation import (
 from backend.src.production.speech_generation.source_reader import (
     SpeechSourceScriptReaderAdapter,
 )
+from backend.src.production.speech_generation.unresolved_replacement import (
+    SpeechUnresolvedReplacementStore,
+)
 from backend.src.production.speech_generation.wav import SpeechWavValidator
 from backend.src.production.video_clip_generation.configuration import (
     VideoClipGenerationConfiguration,
@@ -854,6 +857,9 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             maximum_authorized_cost_usd=(speech_remote_configuration.maximum_estimated_cost),
             allow_billable_requests=speech_remote_configuration.allow_billable_requests,
             remote_job_store=remote_speech_job_store,
+            unresolved_replacement_store=SpeechUnresolvedReplacementStore(
+                settings.PROJECTS_DIR
+            ),
             maximum_requests_per_job=settings.ORION_SPEECH_GENERATION_MAX_REQUESTS_PER_JOB,
             base_url=settings.ORION_SPEECH_GENERATION_OPENROUTER_BASE_URL,
             timeout_seconds=settings.ORION_SPEECH_GENERATION_OPENROUTER_TIMEOUT_SECONDS,

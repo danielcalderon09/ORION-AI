@@ -485,3 +485,26 @@ a new request identity and new accounting entry. `confirmed_completed` is recove
 without resubmission, while `confirmed_failed` and `unresolved` remain blocked until
 the applicable recovery policy is explicitly satisfied. Historical uncertain cost
 exposure remains counted once, so resolution cannot double-count or erase it.
+
+## SHORT-V1.10E risk-authorized unresolved TTS replacement
+
+`confirmed_not_submitted` and `unresolved` remain intentionally different. The
+former is an evidence-backed statement that the provider did not receive the
+request. The latter says that the outcome is still unknown and, by default, keeps
+every fresh submission blocked.
+
+For an `unresolved` record, an operator may create a separate
+`SpeechUnresolvedReplacementAuthorization`. The authorization pins the job, source
+and target attempts, scene, segment, original request fingerprint and record hash,
+the unresolved resolution fingerprint, one additional request, a Decimal cost
+ceiling, operator identity, timestamp, and explicit acceptance of possible duplicate
+charges. Creating it is offline and never calls the provider.
+
+The authorization is write-once, idempotent for the same decision, and consumed
+before the single replacement submission can proceed. Consumption gives the new
+submission a distinct durable identity. A second submission is blocked; if the
+replacement itself becomes uncertain, another explicit authorization is required.
+Completed narration segments remain reusable and normal pending segments proceed
+only after the authorized replacement completes. The original uncertain record and
+its estimated fallback exposure remain immutable, while any replacement cost is
+accounted independently.

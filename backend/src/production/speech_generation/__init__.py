@@ -16,6 +16,10 @@ from backend.src.production.speech_generation.uncertainty_resolution import (
     SpeechSubmissionResolutionStatus,
     SpeechUncertaintyResolver,
 )
+from backend.src.production.speech_generation.unresolved_replacement import (
+    SpeechUnresolvedReplacementAuthorization,
+    SpeechUnresolvedReplacementStore,
+)
 
 __all__ = [
     "SpeechGenerationConfiguration",
@@ -28,4 +32,6 @@ __all__ = [
     "SpeechSubmissionResolutionProvenance",
     "SpeechSubmissionResolutionStatus",
     "SpeechUncertaintyResolver",
+    "SpeechUnresolvedReplacementAuthorization",
+    "SpeechUnresolvedReplacementStore",
 ]

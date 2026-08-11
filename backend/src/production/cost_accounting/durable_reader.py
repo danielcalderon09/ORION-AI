@@ -74,13 +74,24 @@ def _speech_records(root: Path) -> list[ProviderCostRecord]:
             if isinstance(reported_raw, dict)
             else None
         )
+        metadata = raw.get("metadata")
+        replacement_identity = (
+            metadata.get("replacement_submission_identity")
+            if isinstance(metadata, dict)
+            else None
+        )
+        identity = (
+            f"replacement:{replacement_identity}"
+            if isinstance(replacement_identity, str) and replacement_identity
+            else (
+                f"{_required_text(raw, 'request_fingerprint')}:"
+                f"{_required_text(raw, 'submission_started_at')}"
+            )
+        )
         records.append(
             _record(
                 category=JobCostCategory.SPEECH,
-                identity=(
-                    f"{_required_text(raw, 'request_fingerprint')}:"
-                    f"{_required_text(raw, 'submission_started_at')}"
-                ),
+                identity=identity,
                 provider=_required_text(raw, "provider"),
                 estimated=_money(estimate.get("estimated_maximum_cost")),
                 reported=reported,
