@@ -829,6 +829,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         maximum_estimated_job_cost_usd=(
             settings.ORION_NARRATION_FITTING_MAX_ESTIMATED_JOB_COST_USD
         ),
+        maximum_provider_retries=settings.ORION_NARRATION_FITTING_MAX_PROVIDER_RETRIES,
     )
     narration_fitting_provider: NarrationFittingProvider
     if narration_fitting_configuration.provider == "disabled":
@@ -845,6 +846,9 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             max_output_tokens=settings.ORION_NARRATION_FITTING_MAX_OUTPUT_TOKENS,
             temperature=settings.ORION_NARRATION_FITTING_TEMPERATURE,
             max_response_bytes=settings.ORION_NARRATION_FITTING_MAX_RESPONSE_BYTES,
+            max_provider_retries=(
+                narration_fitting_configuration.maximum_provider_retries
+            ),
         )
     speech_generation_handler = SpeechGenerationHandler(
         script_reader=speech_source_reader,

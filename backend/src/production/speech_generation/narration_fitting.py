@@ -25,11 +25,35 @@ class NarrationFittingConfigurationError(NarrationFittingError):
 
 
 class NarrationFittingProviderError(NarrationFittingError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        safe_error_code: str = "provider_error",
+        retryable: bool = False,
+        http_status: int | None = None,
+        provider_request_id: str | None = None,
+        response_headers_received: bool = False,
+        response_received: bool = False,
+        provider_retry_count: int = 0,
+    ) -> None:
+        super().__init__(message)
+        self.safe_error_code = safe_error_code
+        self.retryable = retryable
+        self.http_status = http_status
+        self.provider_request_id = provider_request_id
+        self.response_headers_received = response_headers_received
+        self.response_received = response_received
+        self.provider_retry_count = provider_retry_count
+
+
+class NarrationFittingTransientProviderError(NarrationFittingProviderError):
     pass
 
 
 class NarrationFittingUncertainError(NarrationFittingProviderError):
-    pass
+    def __init__(self, message: str) -> None:
+        super().__init__(message, safe_error_code="uncertain_transport")
 
 
 class NarrationFittingStatus(StrEnum):
@@ -48,6 +72,7 @@ class NarrationFittingConfiguration(ContractModel):
     estimated_cost_usd_per_attempt: Decimal | None = Field(default=None, gt=0)
     maximum_estimated_cost_usd_per_attempt: Decimal | None = Field(default=None, gt=0)
     maximum_estimated_job_cost_usd: Decimal | None = Field(default=None, gt=0)
+    maximum_provider_retries: int = Field(default=1, ge=0, le=1)
 
     @model_validator(mode="after")
     def validate_activation(self) -> NarrationFittingConfiguration:
@@ -83,6 +108,7 @@ class NarrationFittingRequest(ContractModel):
     target_duration_ms: int = Field(gt=0, le=600_000)
     language: str = Field(min_length=2, max_length=16)
     tone: str = Field(min_length=1, max_length=300)
+    maximum_provider_retries: int = Field(default=1, ge=0, le=1)
 
 
 class NarrationFittingResult(ContractModel):
@@ -96,6 +122,9 @@ class NarrationFittingResult(ContractModel):
     total_tokens: int | None = Field(default=None, ge=0)
     reported_cost_usd: Decimal | None = Field(default=None, ge=0)
     finish_reason: str | None = Field(default=None, max_length=100)
+    provider_retry_count: int = Field(default=0, ge=0, le=1)
+    response_headers_received: bool = True
+    response_received: bool = True
 
 
 class NarrationFittingRecord(ContractModel):
@@ -133,6 +162,10 @@ class NarrationFittingRecord(ContractModel):
     reported_cost_usd: Decimal | None = Field(default=None, ge=0)
     finish_reason: str | None = Field(default=None, max_length=100)
     safe_error_code: str | None = Field(default=None, pattern=r"^[a-z0-9_]{1,100}$")
+    retryable: bool | None = None
+    response_headers_received: bool = False
+    response_received: bool = False
+    provider_retry_count: int = Field(default=0, ge=0, le=1)
 
     @field_validator("prepared_at", "submission_started_at", "terminal_at")
     @classmethod
@@ -245,6 +278,7 @@ __all__ = [
     "NarrationFittingError",
     "NarrationFittingProvider",
     "NarrationFittingProviderError",
+    "NarrationFittingTransientProviderError",
     "NarrationFittingRecord",
     "NarrationFittingRequest",
     "NarrationFittingResult",

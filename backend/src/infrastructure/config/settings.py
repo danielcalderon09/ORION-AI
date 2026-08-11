@@ -180,6 +180,7 @@ class Settings(BaseSettings):
     ORION_NARRATION_FITTING_MODEL: str = "google/gemini-2.5-flash-lite"
     ORION_NARRATION_FITTING_ALLOW_BILLABLE_REQUESTS: bool = False
     ORION_NARRATION_FITTING_MAX_ATTEMPTS: int = 2
+    ORION_NARRATION_FITTING_MAX_PROVIDER_RETRIES: int = 1
     ORION_NARRATION_FITTING_ESTIMATED_COST_USD_PER_ATTEMPT: Decimal | None = None
     ORION_NARRATION_FITTING_MAX_ESTIMATED_COST_USD_PER_ATTEMPT: Decimal | None = None
     ORION_NARRATION_FITTING_MAX_ESTIMATED_JOB_COST_USD: Decimal | None = None
@@ -616,6 +617,8 @@ class Settings(BaseSettings):
         fitting_enabled = self.ORION_NARRATION_FITTING_PROVIDER == "openrouter"
         if not 0 <= self.ORION_NARRATION_FITTING_MAX_ATTEMPTS <= 5:
             raise ValueError("narration fitting attempts are outside safe limits")
+        if not 0 <= self.ORION_NARRATION_FITTING_MAX_PROVIDER_RETRIES <= 1:
+            raise ValueError("narration fitting provider retries are outside safe limits")
         if self.ORION_NARRATION_FITTING_MAX_TRANSPORT_ATTEMPTS != 1:
             raise ValueError("narration fitting does not permit automatic transport retries")
         if fitting_enabled:

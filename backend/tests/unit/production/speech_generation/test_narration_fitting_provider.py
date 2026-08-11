@@ -5,8 +5,9 @@ import httpx
 import pytest
 
 from backend.src.production.speech_generation.narration_fitting import (
+    NarrationFittingProviderError,
     NarrationFittingRequest,
-    NarrationFittingUncertainError,
+    NarrationFittingTransientProviderError,
 )
 from backend.src.production.speech_generation.providers.openrouter_narration_fitter import (
     OpenRouterNarrationFittingProvider,
@@ -89,7 +90,167 @@ async def test_openrouter_fitter_uses_one_bounded_structured_request() -> None:
     assert str(result.reported_cost_usd) == "0.0001"
 
 
-async def test_openrouter_fitter_timeout_is_uncertain_without_retry() -> None:
+async def test_openrouter_fitter_timeout_retries_once_then_succeeds() -> None:
+    calls = 0
+
+    def timeout(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ReadTimeout("fake timeout", request=request)
+        return httpx.Response(
+            200,
+            headers={"x-request-id": "fit-request-retry"},
+            json={
+                "model": "google/gemini-2.5-flash-lite",
+                "choices": [{"message": {"content": json.dumps(
+                    {"narration": "Criaturas antiguas brillan bajo el ocÃ©ano."}
+                )}}],
+            },
+            request=request,
+        )
+
+    provider = _provider(httpx.MockTransport(timeout))
+    try:
+        result = await provider.revise(_request())
+    finally:
+        await provider.close()
+
+    assert calls == 2
+    assert result.provider_retry_count == 1
+
+
+@pytest.mark.asyncio
+async def test_openrouter_fitter_http_500_retries_once() -> None:
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(500, headers={"x-request-id": "server-1"}, request=request)
+        return httpx.Response(
+            200,
+            json={
+                "model": "google/gemini-2.5-flash-lite",
+                "choices": [{"message": {"content": json.dumps(
+                    {"narration": "Criaturas antiguas brillan bajo el ocÃ©ano."}
+                )}}],
+            },
+            request=request,
+        )
+
+    provider = _provider(httpx.MockTransport(respond))
+    try:
+        result = await provider.revise(_request())
+    finally:
+        await provider.close()
+    assert calls == 2
+    assert result.provider_retry_count == 1
+
+
+@pytest.mark.asyncio
+async def test_openrouter_fitter_http_429_retries_once() -> None:
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(429, headers={"x-request-id": "rate-1"}, request=request)
+        return httpx.Response(
+            200,
+            json={
+                "model": "google/gemini-2.5-flash-lite",
+                "choices": [{"message": {"content": json.dumps(
+                    {"narration": "Criaturas antiguas brillan bajo el ocÃ©ano."}
+                )}}],
+            },
+            request=request,
+        )
+
+    provider = _provider(httpx.MockTransport(respond))
+    try:
+        result = await provider.revise(_request())
+    finally:
+        await provider.close()
+    assert calls == 2
+    assert result.provider_retry_count == 1
+
+
+@pytest.mark.asyncio
+async def test_openrouter_fitter_http_400_is_not_retried_and_is_diagnostic() -> None:
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(400, headers={"x-request-id": "bad-1"}, request=request)
+
+    provider = _provider(httpx.MockTransport(respond))
+    try:
+        with pytest.raises(NarrationFittingProviderError) as error:
+            await provider.revise(_request())
+    finally:
+        await provider.close()
+    assert calls == 1
+    assert error.value.safe_error_code == "http_400"
+    assert error.value.retryable is False
+    assert error.value.http_status == 400
+    assert error.value.provider_request_id == "bad-1"
+
+
+@pytest.mark.asyncio
+async def test_openrouter_fitter_invalid_json_is_not_retried() -> None:
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            headers={"x-request-id": "json-1"},
+            content=b'{"choices":[{"message":{"content":"not json"}}]}',
+            request=request,
+        )
+
+    provider = _provider(httpx.MockTransport(respond))
+    try:
+        with pytest.raises(NarrationFittingProviderError) as error:
+            await provider.revise(_request())
+    finally:
+        await provider.close()
+    assert calls == 1
+    assert error.value.safe_error_code == "invalid_json"
+    assert error.value.response_received is True
+
+
+@pytest.mark.asyncio
+async def test_openrouter_fitter_contract_failure_is_not_retried() -> None:
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps({"wrong": "field"})}}]},
+            request=request,
+        )
+
+    provider = _provider(httpx.MockTransport(respond))
+    try:
+        with pytest.raises(NarrationFittingProviderError) as error:
+            await provider.revise(_request())
+    finally:
+        await provider.close()
+    assert calls == 1
+    assert error.value.safe_error_code == "contract_error"
+    assert error.value.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_openrouter_fitter_retry_budget_blocks_second_call() -> None:
     calls = 0
 
     def timeout(request: httpx.Request) -> httpx.Response:
@@ -99,9 +260,10 @@ async def test_openrouter_fitter_timeout_is_uncertain_without_retry() -> None:
 
     provider = _provider(httpx.MockTransport(timeout))
     try:
-        with pytest.raises(NarrationFittingUncertainError):
-            await provider.revise(_request())
+        with pytest.raises(NarrationFittingTransientProviderError) as error:
+            await provider.revise(_request().model_copy(update={"maximum_provider_retries": 0}))
     finally:
         await provider.close()
-
     assert calls == 1
+    assert error.value.safe_error_code == "timeout"
+    assert error.value.retryable is True

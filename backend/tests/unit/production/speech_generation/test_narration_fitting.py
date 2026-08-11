@@ -13,6 +13,7 @@ from backend.src.production.speech_generation.manifest_writer import (
 from backend.src.production.speech_generation.models import SpeechSegmentAudioMetadata
 from backend.src.production.speech_generation.narration_fitting import (
     NarrationFittingConfiguration,
+    NarrationFittingProviderError,
     NarrationFittingRequest,
     NarrationFittingResult,
     NarrationFittingStatus,
@@ -319,3 +320,40 @@ async def test_historical_manifest_without_fitting_fields_remains_readable(
     loaded = SpeechGenerationManifest.model_validate(json.loads(json.dumps(payload)))
     assert loaded.fitting_records == ()
     assert all(entry.fitting_revision == 0 for entry in loaded.entries)
+
+
+class DiagnosticFailureFitter:
+    name = "openrouter"
+    model = "google/gemini-2.5-flash-lite"
+
+    async def revise(self, request: NarrationFittingRequest) -> NarrationFittingResult:
+        raise NarrationFittingProviderError(
+            "fake timeout",
+            safe_error_code="timeout",
+            retryable=True,
+            provider_retry_count=1,
+        )
+
+    async def close(self) -> None:
+        return None
+
+
+async def test_provider_diagnostics_are_persisted_without_secrets(tmp_path: Path) -> None:
+    writer = InMemorySpeechManifestWriter()
+    command, context = command_context()
+    output = await _handler(
+        tmp_path,
+        speech=SequencedSpeechProvider((5_325, 5_100)),
+        fitter=DiagnosticFailureFitter(),
+        writer=writer,
+        fitting_configuration=_fitting_configuration(),
+    ).execute(command, context)
+    manifest = await writer.read_existing(context=context)
+    assert output.result.error_code == "narration_fitting_provider_error"
+    assert manifest is not None
+    record = manifest.fitting_records[0]
+    assert record.safe_error_code == "timeout"
+    assert record.retryable is True
+    assert record.provider_retry_count == 1
+    assert record.response_received is False
+    assert record.provider_request_id is None

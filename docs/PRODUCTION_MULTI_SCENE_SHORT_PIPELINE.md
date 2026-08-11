@@ -74,6 +74,13 @@ requires explicit per-attempt and aggregate-job cost authorization through the
 requests, the speech request-count and aggregate speech-cost limits must also cover
 the explicitly authorized worst case.
 
+Within one fitting attempt, the OpenRouter adapter permits at most one additional
+provider call, and only for a timeout, connection failure, HTTP 429, or HTTP 5xx.
+HTTP 4xx, authentication, invalid JSON, structured-output, and semantic revision
+failures are terminal for that attempt. Durable fitting records retain the safe
+category, retryable flag, HTTP status, provider request ID, response/header receipt,
+and provider retry count; secrets and raw provider bodies are never persisted.
+
 Phase 7A validates ORION's first 2–5 scene short-form architecture completely
 offline. Simulated providers and `httpx.MockTransport` remain the test boundary;
 the feature does not activate billable providers.

@@ -612,6 +612,10 @@ def _validate_fitting_record_transitions(
                 "reported_cost_usd": after.reported_cost_usd,
                 "finish_reason": after.finish_reason,
                 "safe_error_code": after.safe_error_code,
+                "retryable": after.retryable,
+                "response_headers_received": after.response_headers_received,
+                "response_received": after.response_received,
+                "provider_retry_count": after.provider_retry_count,
             }
         )
         if identity_before != after:

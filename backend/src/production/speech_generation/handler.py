@@ -662,14 +662,23 @@ class SpeechGenerationHandler:
                 source=source,
                 entry=entry,
                 attempt=attempt,
+                maximum_provider_retries=0,
             )
             return manifest, placeholder, "narration_fitting_cost_policy"
-        request = self._fitting_request(command, source, entry, attempt)
+        maximum_provider_retries = self._maximum_provider_retries(manifest)
+        request = self._fitting_request(
+            command,
+            source,
+            entry,
+            attempt,
+            maximum_provider_retries=maximum_provider_retries,
+        )
         prepared = self._prepared_fitting_record(
             command=command,
             source=source,
             entry=entry,
             attempt=attempt,
+            maximum_provider_retries=maximum_provider_retries,
         )
         prepared_manifest = manifest.model_copy(
             update={
@@ -721,12 +730,18 @@ class SpeechGenerationHandler:
                 record=uncertain,
             )
             return manifest, uncertain, "narration_fitting_uncertain"
-        except NarrationFittingProviderError:
+        except NarrationFittingProviderError as exc:
             failed = submitting.model_copy(
                 update={
                     "status": NarrationFittingStatus.FAILED,
                     "terminal_at": self._aware_now(),
-                    "safe_error_code": "provider_error",
+                    "safe_error_code": exc.safe_error_code,
+                    "retryable": exc.retryable,
+                    "http_status": exc.http_status,
+                    "provider_request_id": exc.provider_request_id,
+                    "response_headers_received": exc.response_headers_received,
+                    "response_received": exc.response_received,
+                    "provider_retry_count": exc.provider_retry_count,
                 }
             )
             manifest = await self._replace_fitting_record(
@@ -746,6 +761,10 @@ class SpeechGenerationHandler:
                     "status": NarrationFittingStatus.FAILED,
                     "terminal_at": self._aware_now(),
                     "safe_error_code": "revision_contract",
+                    "retryable": False,
+                    "response_received": result.response_received,
+                    "response_headers_received": result.response_headers_received,
+                    "provider_retry_count": result.provider_retry_count,
                 }
             )
             manifest = await self._replace_fitting_record(
@@ -767,6 +786,10 @@ class SpeechGenerationHandler:
                 "total_tokens": result.total_tokens,
                 "reported_cost_usd": result.reported_cost_usd,
                 "finish_reason": result.finish_reason,
+                "response_headers_received": result.response_headers_received,
+                "response_received": result.response_received,
+                "provider_retry_count": result.provider_retry_count,
+                "retryable": False,
             }
         )
         manifest = await self._replace_fitting_record(
@@ -782,6 +805,8 @@ class SpeechGenerationHandler:
         source: ReadSpeechSourceScript,
         entry: SpeechSegmentManifestEntry,
         attempt: int,
+        *,
+        maximum_provider_retries: int,
     ) -> NarrationFittingRequest:
         assert entry.duration_ms is not None and entry.target_duration_ms is not None
         return NarrationFittingRequest(
@@ -794,6 +819,7 @@ class SpeechGenerationHandler:
             target_duration_ms=entry.target_duration_ms,
             language=source.script.language,
             tone=source.script.tone,
+            maximum_provider_retries=maximum_provider_retries,
         )
 
     def _prepared_fitting_record(
@@ -803,8 +829,15 @@ class SpeechGenerationHandler:
         source: ReadSpeechSourceScript,
         entry: SpeechSegmentManifestEntry,
         attempt: int,
+        maximum_provider_retries: int,
     ) -> NarrationFittingRecord:
-        request = self._fitting_request(command, source, entry, attempt)
+        request = self._fitting_request(
+            command,
+            source,
+            entry,
+            attempt,
+            maximum_provider_retries=maximum_provider_retries,
+        )
         configuration = self._fitting_configuration
         assert configuration.estimated_cost_usd_per_attempt is not None
         assert configuration.maximum_estimated_cost_usd_per_attempt is not None
@@ -837,6 +870,22 @@ class SpeechGenerationHandler:
             fresh_submission_permitted=True,
             prepared_at=self._aware_now(),
         )
+
+    def _maximum_provider_retries(self, manifest: SpeechGenerationManifest) -> int:
+        configuration = self._fitting_configuration
+        assert configuration.estimated_cost_usd_per_attempt is not None
+        assert configuration.maximum_estimated_job_cost_usd is not None
+        spent = sum(
+            (record.estimated_cost_usd for record in manifest.fitting_records),
+            Decimal(0),
+        )
+        available = configuration.maximum_estimated_job_cost_usd - spent
+        retries = configuration.maximum_provider_retries
+        while retries > 0 and available < (
+            configuration.estimated_cost_usd_per_attempt * retries
+        ):
+            retries -= 1
+        return retries
 
     async def _replace_fitting_record(
         self,

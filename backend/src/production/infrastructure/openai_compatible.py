@@ -14,7 +14,16 @@ Sleeper = Callable[[float], Awaitable[None]]
 
 
 class OpenAICompatibleError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        request_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.request_id = request_id
 
 
 class OpenAICompatibleAuthenticationError(OpenAICompatibleError):
@@ -168,8 +177,8 @@ class OpenAICompatibleResponsesClient:
                     timeout=self._timeout,
                     follow_redirects=False,
                 ) as response:
-                    self._raise_for_status(response.status_code)
                     header_request_id = self.safe_string(response.headers.get("x-request-id"))
+                    self._raise_for_status(response.status_code, header_request_id)
                     try:
                         content = await _read_bounded_response(
                             response,
@@ -230,19 +239,32 @@ class OpenAICompatibleResponsesClient:
         raise last_error
 
     @staticmethod
-    def _raise_for_status(status: int) -> None:
+    def _raise_for_status(status: int, request_id: str | None = None) -> None:
         if 200 <= status < 300:
             return
         if status in {401, 403}:
-            raise OpenAICompatibleAuthenticationError("provider rejected authentication")
+            raise OpenAICompatibleAuthenticationError(
+                "provider rejected authentication",
+                status_code=status,
+                request_id=request_id,
+            )
         if status == 429:
-            raise OpenAICompatibleRateLimitError("provider rate limit reached")
+            raise OpenAICompatibleRateLimitError(
+                "provider rate limit reached",
+                status_code=status,
+                request_id=request_id,
+            )
         if status in {408, 425} or status >= 500:
-            raise OpenAICompatibleUnavailableError("provider is unavailable")
+            raise OpenAICompatibleUnavailableError(
+                "provider is unavailable",
+                status_code=status,
+                request_id=request_id,
+            )
         raise OpenAICompatibleProtocolError(
             f"provider returned unsupported status {status}",
             diagnostic_code=OpenAICompatibleProtocolErrorCode.HTTP_STATUS,
             status_code=status,
+            request_id=request_id,
         )
 
     @staticmethod
