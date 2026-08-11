@@ -191,7 +191,7 @@ class SpeechSegmentManifestEntry(ContractModel):
         default=None,
         pattern=r"^segment-[a-f0-9]{32}$",
     )
-    fitting_revision: int = Field(default=0, ge=0, le=5)
+    fitting_revision: int = Field(default=0, ge=0, le=10)
     sequence_index: int = Field(ge=0, le=49)
     source_scene_id: str = Field(pattern=r"^scene-[0-9]{3}$")
     source_shot_id: str | None = Field(
@@ -341,11 +341,12 @@ class SpeechGenerationManifest(ContractModel):
         if indexes != tuple(range(len(self.entries))):
             raise ValueError("speech manifest entries must use deterministic ordering")
         fitting_keys = tuple(
-            (record.scene_id, record.attempt_number) for record in self.fitting_records
+            (record.scene_id, record.attempt_number, record.strategy)
+            for record in self.fitting_records
         )
         if len(fitting_keys) != len(set(fitting_keys)):
             raise ValueError("narration fitting records must be unique per scene and attempt")
-        if tuple(sorted(fitting_keys, key=lambda item: (item[1], item[0]))) != fitting_keys:
+        if tuple(sorted(fitting_keys, key=lambda item: (item[1], item[2], item[0]))) != fitting_keys:
             raise ValueError("narration fitting records must use deterministic ordering")
         if self.summary != summarize_speech_entries(self.entries):
             raise ValueError("speech manifest summary does not match entries")

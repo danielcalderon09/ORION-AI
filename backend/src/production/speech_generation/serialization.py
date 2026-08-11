@@ -23,7 +23,17 @@ def _serialize(value: dict[str, Any]) -> bytes:
 
 
 def serialize_speech_manifest(manifest: SpeechGenerationManifest) -> bytes:
-    return _serialize(manifest.model_dump(mode="json"))
+    payload = manifest.model_dump(mode="json")
+    for record, serialized in zip(
+        manifest.fitting_records,
+        payload.get("fitting_records", ()),
+        strict=True,
+    ):
+        if "strategy" not in record.model_fields_set:
+            serialized.pop("strategy", None)
+        if "rules_applied" not in record.model_fields_set:
+            serialized.pop("rules_applied", None)
+    return _serialize(payload)
 
 
 def deserialize_speech_manifest(content: bytes) -> SpeechGenerationManifest:

@@ -43,6 +43,9 @@ from backend.src.production.speech_generation.fitting_recovery import (
     NarrationFittingRecoveryAuthorization,
     NarrationFittingRecoveryAuthorizationError,
 )
+from backend.src.production.speech_generation.local_narration_fitter import (
+    DeterministicSpanishNarrationFitter,
+)
 from backend.src.production.speech_generation.manifest_writer import (
     speech_manifest_relative_path,
 )
@@ -61,13 +64,16 @@ from backend.src.production.speech_generation.models import (
 )
 from backend.src.production.speech_generation.narration_fitting import (
     DisabledNarrationFittingProvider,
+    LocalNarrationFitter,
     NarrationFittingConfiguration,
     NarrationFittingProvider,
     NarrationFittingProviderError,
     NarrationFittingRecord,
     NarrationFittingRequest,
     NarrationFittingStatus,
+    NarrationFittingStrategy,
     NarrationFittingUncertainError,
+    local_narration_fitting_fingerprint,
     narration_fitting_fingerprint,
     narration_text_hash,
     validate_narration_revision,
@@ -105,6 +111,7 @@ class SpeechGenerationHandler:
         clock: Callable[[], datetime],
         duration_resolution_policy: DurationResolutionPolicy | None = None,
         narration_fitter: NarrationFittingProvider | None = None,
+        local_narration_fitter: LocalNarrationFitter | None = None,
         narration_fitting_configuration: NarrationFittingConfiguration | None = None,
         fitting_recovery_store: (
             FilesystemNarrationFittingRecoveryAuthorizationStore | None
@@ -118,6 +125,9 @@ class SpeechGenerationHandler:
         self._clock = clock
         self._duration_resolution_policy = duration_resolution_policy or DurationResolutionPolicy()
         self._narration_fitter = narration_fitter or DisabledNarrationFittingProvider()
+        self._local_narration_fitter = (
+            local_narration_fitter or DeterministicSpanishNarrationFitter()
+        )
         self._fitting_configuration = (
             narration_fitting_configuration or NarrationFittingConfiguration()
         )
@@ -515,10 +525,12 @@ class SpeechGenerationHandler:
                     )
                 return accepted, stored_assets, None
 
-            if self._fitting_configuration.provider == "disabled":
-                return manifest, stored_assets, "duration_resolution_invalid"
             attempt = 1 + max(
-                (record.attempt_number for record in manifest.fitting_records),
+                (
+                    record.attempt_number
+                    for record in manifest.fitting_records
+                    if record.strategy is NarrationFittingStrategy.REMOTE_PROVIDER
+                ),
                 default=0,
             )
             if attempt > self._fitting_configuration.maximum_attempts:
@@ -533,7 +545,12 @@ class SpeechGenerationHandler:
             if not overrun_candidates:
                 return manifest, stored_assets, "narration_fitting_exhausted"
             candidates = overrun_candidates
-            if attempt > 1:
+            local_round_exists = any(
+                record.attempt_number == attempt
+                and record.strategy is NarrationFittingStrategy.DETERMINISTIC_LOCAL
+                for record in manifest.fitting_records
+            )
+            if attempt > 1 or local_round_exists:
                 assert manifest.duration_resolution is not None
                 excess = (
                     manifest.duration_resolution.resolved_duration_ms
@@ -553,6 +570,57 @@ class SpeechGenerationHandler:
                     if recoverable >= excess:
                         break
                 candidates = tuple(sorted(selected, key=lambda value: value.sequence_index))
+            locally_revised: set[str] = set()
+            for candidate in candidates:
+                manifest, record = await self._completed_local_fitting_record(
+                    command=command,
+                    context=context,
+                    source=source,
+                    manifest=manifest,
+                    entry=candidate,
+                    attempt=attempt,
+                )
+                if record is None:
+                    continue
+                current_entry = next(
+                    item
+                    for item in manifest.entries
+                    if item.source_scene_id == candidate.source_scene_id
+                )
+                if current_entry.normalized_text_hash == record.previous_text_hash:
+                    old_segment_id = current_entry.segment_id
+                    manifest = await self._apply_fitting_record(
+                        context=context,
+                        manifest=manifest,
+                        entry=current_entry,
+                        record=record,
+                    )
+                    stored_assets.pop(old_segment_id, None)
+                    locally_revised.add(candidate.source_scene_id)
+            if locally_revised:
+                for scene_id in sorted(locally_revised):
+                    current_entry = next(
+                        item for item in manifest.entries if item.source_scene_id == scene_id
+                    )
+                    source_segment = next(
+                        item for item in source_segments if item.scene_id == scene_id
+                    )
+                    active_segment = _active_segment(source_segment, current_entry)
+                    manifest, asset, error = await self._generate_fitted_audio(
+                        command=command,
+                        context=context,
+                        manifest=manifest,
+                        segment=active_segment,
+                    )
+                    if error is not None:
+                        return manifest, stored_assets, error
+                    assert asset is not None
+                    stored_assets[active_segment.segment_id] = asset
+                continue
+
+            if self._fitting_configuration.provider == "disabled":
+                return manifest, stored_assets, "duration_resolution_invalid"
+            remotely_revised: set[str] = set()
             for candidate in candidates:
                 manifest, record, error = await self._completed_fitting_record(
                     command=command,
@@ -572,68 +640,22 @@ class SpeechGenerationHandler:
                     for item in manifest.entries
                     if item.source_scene_id == candidate.source_scene_id
                 )
-                if current_entry.fitting_revision < attempt:
+                if current_entry.normalized_text_hash == record.previous_text_hash:
                     old_segment_id = current_entry.segment_id
-                    revised_segment_id = _revised_segment_id(
-                        current_entry.source_segment_id or current_entry.segment_id,
-                        attempt,
-                        record.revised_text_hash,
-                    )
-                    revised_entry = current_entry.model_copy(
-                        update={
-                            "segment_id": revised_segment_id,
-                            "source_segment_id": (
-                                current_entry.source_segment_id or current_entry.segment_id
-                            ),
-                            "fitting_revision": current_entry.fitting_revision + 1,
-                            "narration_text": record.revised_narration,
-                            "normalized_text_hash": record.revised_text_hash,
-                            "status": SpeechSegmentStatus.PENDING,
-                            "audio_binary_asset_id": None,
-                            "audio_artifact_id": None,
-                            "storage_path": None,
-                            "mime_type": None,
-                            "extension": None,
-                            "sha256": None,
-                            "size_bytes": None,
-                            "duration_ms": None,
-                            "sample_rate_hz": None,
-                            "channel_count": None,
-                            "sample_width_bytes": None,
-                            "frame_count": None,
-                            "provider": None,
-                            "generation_started_at": None,
-                            "created_at": None,
-                            "error_code": None,
-                            "metadata": {
-                                "fitting_attempt": attempt,
-                                "previous_duration_ms": record.previous_duration_ms,
-                            },
-                        }
-                    )
-                    revised = replace_speech_entry(
-                        manifest,
-                        revised_entry,
-                        status=SpeechGenerationManifestStatus.IN_PROGRESS,
-                        updated_at=self._aware_now(),
-                    )
-                    await self._writer.checkpoint(
+                    manifest = await self._apply_fitting_record(
                         context=context,
-                        previous=manifest,
-                        current=revised,
+                        manifest=manifest,
+                        entry=current_entry,
+                        record=record,
                     )
-                    manifest = revised
                     stored_assets.pop(old_segment_id, None)
-            for candidate in candidates:
+                    remotely_revised.add(candidate.source_scene_id)
+            for scene_id in sorted(remotely_revised):
                 current_entry = next(
-                    item
-                    for item in manifest.entries
-                    if item.source_scene_id == candidate.source_scene_id
+                    item for item in manifest.entries if item.source_scene_id == scene_id
                 )
                 source_segment = next(
-                    item
-                    for item in source_segments
-                    if item.scene_id == current_entry.source_scene_id
+                    item for item in source_segments if item.scene_id == scene_id
                 )
                 active_segment = _active_segment(source_segment, current_entry)
                 if current_entry.status is not SpeechSegmentStatus.STORED:
@@ -647,6 +669,142 @@ class SpeechGenerationHandler:
                         return manifest, stored_assets, error
                     assert asset is not None
                     stored_assets[active_segment.segment_id] = asset
+
+    async def _completed_local_fitting_record(
+        self,
+        *,
+        command: StageCommand,
+        context: StageContext,
+        source: ReadSpeechSourceScript,
+        manifest: SpeechGenerationManifest,
+        entry: SpeechSegmentManifestEntry,
+        attempt: int,
+    ) -> tuple[SpeechGenerationManifest, NarrationFittingRecord | None]:
+        existing = next(
+            (
+                record
+                for record in manifest.fitting_records
+                if record.scene_id == entry.source_scene_id
+                and record.attempt_number == attempt
+                and record.strategy is NarrationFittingStrategy.DETERMINISTIC_LOCAL
+            ),
+            None,
+        )
+        if existing is not None:
+            return manifest, existing
+        request = self._fitting_request(
+            command,
+            source,
+            entry,
+            attempt,
+            maximum_provider_retries=0,
+        )
+        result = self._local_narration_fitter.revise(request)
+        if result is None:
+            return manifest, None
+        revised = validate_narration_revision(entry.narration_text, result.revised_narration)
+        assert entry.duration_ms is not None and entry.target_duration_ms is not None
+        assert entry.audio_binary_asset_id is not None
+        assert entry.storage_path is not None
+        assert entry.sha256 is not None
+        overrun = entry.duration_ms - entry.target_duration_ms
+        now = self._aware_now()
+        record = NarrationFittingRecord(
+            scene_id=entry.source_scene_id,
+            sequence_index=entry.sequence_index,
+            attempt_number=attempt,
+            strategy=NarrationFittingStrategy.DETERMINISTIC_LOCAL,
+            rules_applied=result.rules_applied,
+            previous_text_hash=entry.normalized_text_hash,
+            revised_text_hash=narration_text_hash(revised),
+            revised_narration=revised,
+            previous_duration_ms=entry.duration_ms,
+            previous_audio_binary_asset_id=entry.audio_binary_asset_id,
+            previous_audio_storage_path=entry.storage_path,
+            previous_audio_sha256=entry.sha256,
+            target_duration_ms=entry.target_duration_ms,
+            overrun_ms=overrun,
+            overrun_ratio=Decimal(overrun) / Decimal(entry.target_duration_ms),
+            provider=self._local_narration_fitter.name,
+            model=self._local_narration_fitter.model,
+            estimated_cost_usd=Decimal(0),
+            maximum_authorized_cost_usd=Decimal(0),
+            request_fingerprint=local_narration_fitting_fingerprint(
+                request,
+                revised_narration=revised,
+                rules_applied=result.rules_applied,
+                model=self._local_narration_fitter.model,
+            ),
+            status=NarrationFittingStatus.COMPLETED,
+            fresh_submission_permitted=False,
+            prepared_at=now,
+            terminal_at=now,
+            retryable=False,
+        )
+        current = manifest.model_copy(
+            update={
+                "fitting_records": (*manifest.fitting_records, record),
+                "status": SpeechGenerationManifestStatus.IN_PROGRESS,
+                "updated_at": now,
+            }
+        )
+        await self._writer.checkpoint(context=context, previous=manifest, current=current)
+        return current, record
+
+    async def _apply_fitting_record(
+        self,
+        *,
+        context: StageContext,
+        manifest: SpeechGenerationManifest,
+        entry: SpeechSegmentManifestEntry,
+        record: NarrationFittingRecord,
+    ) -> SpeechGenerationManifest:
+        assert record.revised_narration is not None
+        assert record.revised_text_hash is not None
+        revision = entry.fitting_revision + 1
+        revised_entry = entry.model_copy(
+            update={
+                "segment_id": _revised_segment_id(
+                    entry.source_segment_id or entry.segment_id,
+                    revision,
+                    record.revised_text_hash,
+                ),
+                "source_segment_id": entry.source_segment_id or entry.segment_id,
+                "fitting_revision": revision,
+                "narration_text": record.revised_narration,
+                "normalized_text_hash": record.revised_text_hash,
+                "status": SpeechSegmentStatus.PENDING,
+                "audio_binary_asset_id": None,
+                "audio_artifact_id": None,
+                "storage_path": None,
+                "mime_type": None,
+                "extension": None,
+                "sha256": None,
+                "size_bytes": None,
+                "duration_ms": None,
+                "sample_rate_hz": None,
+                "channel_count": None,
+                "sample_width_bytes": None,
+                "frame_count": None,
+                "provider": None,
+                "generation_started_at": None,
+                "created_at": None,
+                "error_code": None,
+                "metadata": {
+                    "fitting_attempt": record.attempt_number,
+                    "fitting_strategy": record.strategy.value,
+                    "previous_duration_ms": record.previous_duration_ms,
+                },
+            }
+        )
+        revised = replace_speech_entry(
+            manifest,
+            revised_entry,
+            status=SpeechGenerationManifestStatus.IN_PROGRESS,
+            updated_at=self._aware_now(),
+        )
+        await self._writer.checkpoint(context=context, previous=manifest, current=revised)
+        return revised
 
     async def _completed_fitting_record(
         self,
@@ -663,7 +821,9 @@ class SpeechGenerationHandler:
             (
                 record
                 for record in manifest.fitting_records
-                if record.scene_id == entry.source_scene_id and record.attempt_number == attempt
+                if record.scene_id == entry.source_scene_id
+                and record.attempt_number == attempt
+                and record.strategy is NarrationFittingStrategy.REMOTE_PROVIDER
             ),
             None,
         )
@@ -902,6 +1062,7 @@ class SpeechGenerationHandler:
             scene_id=entry.source_scene_id,
             sequence_index=entry.sequence_index,
             attempt_number=attempt,
+            strategy=NarrationFittingStrategy.REMOTE_PROVIDER,
             previous_text_hash=entry.normalized_text_hash,
             previous_duration_ms=entry.duration_ms,
             previous_audio_binary_asset_id=entry.audio_binary_asset_id,
@@ -976,7 +1137,9 @@ class SpeechGenerationHandler:
     ) -> SpeechGenerationManifest:
         records = tuple(
             record
-            if item.scene_id == record.scene_id and item.attempt_number == record.attempt_number
+            if item.scene_id == record.scene_id
+            and item.attempt_number == record.attempt_number
+            and item.strategy is record.strategy
             else item
             for item in manifest.fitting_records
         )

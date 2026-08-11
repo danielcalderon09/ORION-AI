@@ -147,6 +147,7 @@ def _handler(
     writer=None,
     fitting_configuration=None,
     fitting_recovery_store=None,
+    source=None,
 ):
     configuration = speech_configuration(
         provider="openrouter",
@@ -154,7 +155,7 @@ def _handler(
         max_audio_bytes=500_000,
     )
     return SpeechGenerationHandler(
-        script_reader=FakeSourceReader(_source()),
+        script_reader=FakeSourceReader(source or _source()),
         provider=speech,
         audio_store=audio_store(tmp_path, configuration),
         manifest_writer=writer or InMemorySpeechManifestWriter(),

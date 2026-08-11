@@ -68,6 +68,33 @@ The sequence is therefore:
 
 `TTS -> MEASURE -> RESOLVE -> [FIT TEXT -> RE-TTS -> MEASURE -> RESOLVE] -> VIDEO`
 
+### Deterministic local fitting before remote fitting
+
+Small Spanish-language overruns first pass through a deterministic local fitter.
+It applies a versioned allow-list of conservative grammatical reductions, such as
+shortening verbose purpose, time, location, ability, and threshold constructions.
+It never slices text, drops a sentence blindly, changes playback speed, or invents
+content. Named entities, negations, and numeric expressions are checked after the
+rewrite; large overruns and candidates outside the bounded retention policy are
+reported as not applicable.
+
+A successful local candidate is synthesized once and measured like any other
+narration revision. If that WAV fits, no remote fitting request or fitting budget
+is consumed. If the measured candidate remains too long, the existing OpenRouter
+fitter remains available in the same logical fitting round and retains all of its
+authorization and retry guards.
+
+Local revisions are durable `deterministic_local` fitting records with source and
+candidate hashes, target duration, rules applied, and a deterministic fingerprint.
+They carry zero provider cost, no provider request ID, and no HTTP lifecycle. A
+completed local record and its revised WAV are reused during recovery. Historical
+OpenRouter records without strategy fields keep their original serialized shape
+and fingerprint behavior.
+
+The effective order is:
+
+`TTS -> MEASURE -> LOCAL FIT -> RE-TTS -> MEASURE -> [REMOTE FIT FALLBACK] -> VIDEO`
+
 OpenRouter fitting is disabled and non-billable in committed defaults. Activation
 requires explicit per-attempt and aggregate-job cost authorization through the
 `ORION_NARRATION_FITTING_*` settings. Because revised scenes create additional TTS
