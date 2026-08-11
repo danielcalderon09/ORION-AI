@@ -373,3 +373,23 @@ duration, motion, strategy, or acquisition drift fails closed before FFmpeg.
 The active production container is unchanged in SHORT-V1.4. Narration, music,
 subtitles, the audio-first ordering, and historical rendering remain on their
 existing paths until the reviewed hybrid runtime integration phase.
+
+### SHORT-V1.5 hybrid video-generation boundary
+
+The offline hybrid video boundary consumes the durable visual strategy, aggregate
+visual budget, and completed hybrid acquisition manifest. It does not select a
+strategy or recalculate purchases. Before the first provider call it pins and
+validates the strategy, budget, acquisition manifest, video requirement, provider
+duration, and first-frame SHA-256.
+
+Only `GENERATED_VIDEO` entries receive a provider request. `GENERATED_IMAGE` and
+`REUSED_IMAGE` remain image references, while `REUSED_VIDEO` becomes a durable
+video reference with zero provider cost and no remote generation identity. The
+provider duration is still the purchased 4/6/8-second duration; editorial duration
+remains independent for local trim and composition without playback loops.
+
+The hybrid manifest is strict, versioned, deterministic, and fingerprinted.
+Completed entries are immutable, transient failures resume selectively, and
+uncertain submissions fail closed pending reconciliation. This boundary is not
+registered in the production container or stage registry, so existing full-video
+jobs continue through the legacy handler unchanged.
