@@ -10,6 +10,12 @@ from backend.src.production.speech_generation.models import (
     SpeechSegmentManifestEntry,
     SpeechSegmentStatus,
 )
+from backend.src.production.speech_generation.uncertainty_resolution import (
+    SpeechSubmissionResolution,
+    SpeechSubmissionResolutionProvenance,
+    SpeechSubmissionResolutionStatus,
+    SpeechUncertaintyResolver,
+)
 
 __all__ = [
     "SpeechGenerationConfiguration",
@@ -18,4 +24,8 @@ __all__ = [
     "SpeechGenerationSummary",
     "SpeechSegmentManifestEntry",
     "SpeechSegmentStatus",
+    "SpeechSubmissionResolution",
+    "SpeechSubmissionResolutionProvenance",
+    "SpeechSubmissionResolutionStatus",
+    "SpeechUncertaintyResolver",
 ]

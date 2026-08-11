@@ -124,3 +124,7 @@ class RemoteSpeechJobConflictError(RemoteSpeechJobStoreError):
 
 class RemoteSpeechJobCorruptError(RemoteSpeechJobStoreError):
     pass
+
+
+class SpeechUncertaintyResolutionError(SpeechRemotePreparationError):
+    """A durable uncertain-submission resolution is invalid or conflicts."""

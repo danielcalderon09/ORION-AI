@@ -462,3 +462,26 @@ fully-reported flag. It also audits accounted image/video cost against the immut
 aggregate visual budget. Local MVP output includes a backward-compatible optional
 `cost_summary` with per-stage accounted cost and total coverage fields. No API keys,
 headers, signed URLs, or provider bodies participate in accounting.
+
+## SHORT-V1.10C uncertain TTS submission resolution
+
+When a billable remote speech submission begins but ORION cannot durably determine
+whether the provider accepted it, the remote speech record becomes `uncertain` and
+`fresh_submission_permitted` remains false. This is a fail-closed terminal checkpoint:
+the normal recovery command never resends that request automatically.
+
+An explicit, provider-neutral `SpeechSubmissionResolution` sidecar can be written
+only after validating the job, attempt, scene, segment, and exact request fingerprint
+against the uncertain remote record and speech manifest. Supported resolutions are
+`confirmed_completed`, `confirmed_not_submitted`, `confirmed_failed`, and
+`unresolved`. The sidecar is versioned, canonical, fingerprinted, write-once, and
+idempotent; a conflicting second resolution fails closed. It stores bounded evidence
+identities only, never credentials, headers, signed URLs, or raw provider bodies.
+
+Resolution is deliberately separate from resubmission. A `confirmed_not_submitted`
+resolution requires explicit operator acknowledgement and only makes a future fresh
+request eligible; it does not submit anything. A future recovery operation must create
+a new request identity and new accounting entry. `confirmed_completed` is recoverable
+without resubmission, while `confirmed_failed` and `unresolved` remain blocked until
+the applicable recovery policy is explicitly satisfied. Historical uncertain cost
+exposure remains counted once, so resolution cannot double-count or erase it.
