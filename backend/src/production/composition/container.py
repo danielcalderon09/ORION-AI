@@ -1381,6 +1381,13 @@ def _build_scripting_provider(
         max_output_tokens=settings.ORION_SCRIPTING_MAX_OUTPUT_TOKENS,
         temperature=settings.ORION_SCRIPTING_TEMPERATURE,
         max_response_bytes=settings.ORION_SCRIPTING_MAX_RESPONSE_BYTES,
+        max_duration_policy_retries=(
+            settings.ORION_SCRIPTING_MAX_DURATION_POLICY_RETRIES
+        ),
+        max_requests_per_job=settings.ORION_SCRIPTING_MAX_REQUESTS_PER_JOB,
+        maximum_authorized_job_cost_usd=(
+            settings.ORION_SCRIPTING_MAX_ESTIMATED_JOB_COST_USD
+        ),
         http_referer=settings.ORION_OPENROUTER_HTTP_REFERER,
         app_title=settings.ORION_OPENROUTER_APP_TITLE,
         clock=clock,

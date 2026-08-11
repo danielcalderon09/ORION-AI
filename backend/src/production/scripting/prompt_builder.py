@@ -2,13 +2,17 @@
 
 import hashlib
 import json
+from dataclasses import dataclass
 from typing import cast
 
 from pydantic import Field
 
 from backend.src.production.domain.base import ContractModel
 from backend.src.production.planning.prompt_builder import PlanningPromptBuilder
-from backend.src.production.scripting.duration_policy import narration_word_count_bounds
+from backend.src.production.scripting.duration_policy import (
+    narration_scene_word_budgets,
+    narration_word_count_bounds,
+)
 from backend.src.production.scripting.models import ProductionScript
 from backend.src.production.scripting.ports import ScriptingProviderRequest
 
@@ -20,8 +24,27 @@ class ScriptingPrompt(ContractModel):
     response_schema: dict[str, object]
 
 
+@dataclass(frozen=True, slots=True)
+class NarrativeRetryContext:
+    premise: str
+    opening_hook: str
+    central_question: str
+    progression: tuple[str, ...]
+    intended_payoff: str
+    ending_state: str
+    story_beats: tuple[dict[str, object], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DurationPolicyRetryContext:
+    retry_number: int
+    maximum_total_words: int
+    scene_word_budgets: tuple[int, ...]
+    narrative_context: NarrativeRetryContext
+
+
 class ScriptingPromptBuilder:
-    scripting_prompt_version = "2.2.0"
+    scripting_prompt_version = "2.3.0"
     structured_output_mode = "json_schema"
     system_instruction = (
         "Create a production-ready voice-over script from the supplied durable production "
@@ -50,9 +73,21 @@ class ScriptingPromptBuilder:
             raise ValueError("maximum prompt plan size must be positive")
         self._max_plan_bytes = max_plan_bytes
 
-    def build(self, request: ScriptingProviderRequest) -> ScriptingPrompt:
+    def build(
+        self,
+        request: ScriptingProviderRequest,
+        *,
+        retry_context: DurationPolicyRetryContext | None = None,
+    ) -> ScriptingPrompt:
         plan_payload = request.plan.model_dump(mode="json", exclude={"metadata"})
         minimum_words, maximum_words = narration_word_count_bounds(
+            target_duration_seconds=request.target_duration_seconds,
+            scene_count=len(request.plan.scenes),
+            reading_speed_words_per_minute=(
+                request.configuration.reading_speed_words_per_minute
+            ),
+        )
+        scene_word_budgets = narration_scene_word_budgets(
             target_duration_seconds=request.target_duration_seconds,
             scene_count=len(request.plan.scenes),
             reading_speed_words_per_minute=(
@@ -67,10 +102,36 @@ class ScriptingPromptBuilder:
             "narration_word_count_policy": {
                 "maximum_total_words": maximum_words,
                 "minimum_total_words": minimum_words,
+                "maximum_words_per_scene": scene_word_budgets,
+                "scene_word_budgets": [
+                    {
+                        "scene_number": index + 1,
+                        "maximum_words": budget,
+                    }
+                    for index, budget in enumerate(scene_word_budgets)
+                ],
                 "scope": "all_scenes_combined",
             },
             "target_duration_seconds": request.target_duration_seconds,
         }
+        if retry_context is not None:
+            user_payload["duration_policy_retry"] = {
+                "attempt": retry_context.retry_number,
+                "previous_output_exceeded_budget": True,
+                "maximum_total_words": retry_context.maximum_total_words,
+                "maximum_words_per_scene": retry_context.scene_word_budgets,
+                "preserve_premise_arc_beats_and_key_facts": True,
+                "shorten_narration_without_repeating_or_changing_language": True,
+                "narrative_context": {
+                    "premise": retry_context.narrative_context.premise,
+                    "opening_hook": retry_context.narrative_context.opening_hook,
+                    "central_question": retry_context.narrative_context.central_question,
+                    "progression": retry_context.narrative_context.progression,
+                    "intended_payoff": retry_context.narrative_context.intended_payoff,
+                    "ending_state": retry_context.narrative_context.ending_state,
+                    "story_beats": retry_context.narrative_context.story_beats,
+                },
+            }
         user = json.dumps(
             user_payload,
             allow_nan=False,

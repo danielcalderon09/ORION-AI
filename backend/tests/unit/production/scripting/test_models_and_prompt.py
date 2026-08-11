@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from backend.src.production.scripting.configuration import ScriptingConfiguration
+from backend.src.production.scripting.duration_policy import narration_scene_word_budgets
 from backend.src.production.scripting.models import (
     ProductionScript,
     ProductionScriptScene,
@@ -78,7 +79,7 @@ def test_prompt_is_deterministic_strict_and_excludes_internal_metadata(
     builder = ScriptingPromptBuilder(max_plan_bytes=100_000)
     first = builder.build(scripting_request)
     assert first == builder.build(scripting_request)
-    assert first.version == "2.2.0"
+    assert first.version == "2.3.0"
     assert "Every scene must add new information" in first.system
     assert "omit a call to action" in first.system
     assert first.response_schema["additionalProperties"] is False
@@ -87,6 +88,11 @@ def test_prompt_is_deterministic_strict_and_excludes_internal_metadata(
     assert user_payload["narration_word_count_policy"] == {
         "maximum_total_words": 80,
         "minimum_total_words": 10,
+        "maximum_words_per_scene": [39, 41],
+        "scene_word_budgets": [
+            {"maximum_words": 39, "scene_number": 1},
+            {"maximum_words": 41, "scene_number": 2},
+        ],
         "scope": "all_scenes_combined",
     }
     with pytest.raises(ValueError, match="prompt limit"):
@@ -114,5 +120,29 @@ def test_four_second_prompt_exposes_the_exact_short_narration_bound(
     assert json.loads(prompt.user)["narration_word_count_policy"] == {
         "maximum_total_words": 16,
         "minimum_total_words": 2,
+        "maximum_words_per_scene": [16],
+        "scene_word_budgets": [{"maximum_words": 16, "scene_number": 1}],
         "scope": "all_scenes_combined",
     }
+
+
+def test_story_aware_word_budgets_scale_and_remain_within_global_limit() -> None:
+    short = narration_scene_word_budgets(
+        target_duration_seconds=8,
+        scene_count=2,
+        reading_speed_words_per_minute=150,
+    )
+    long_form = narration_scene_word_budgets(
+        target_duration_seconds=45,
+        scene_count=5,
+        reading_speed_words_per_minute=150,
+    )
+    assert short == (16, 16)
+    assert long_form == (32, 37, 40, 38, 33)
+    assert sum(short) == 32
+    assert sum(long_form) == 180
+    assert narration_scene_word_budgets(
+        target_duration_seconds=45,
+        scene_count=5,
+        reading_speed_words_per_minute=150,
+    ) == long_form

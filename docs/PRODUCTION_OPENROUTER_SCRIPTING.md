@@ -103,7 +103,10 @@ well as the existing short test profile. It estimates narration at the
 configured words-per-minute rate, requires non-empty narration per scene, and
 accepts a deliberately broad deterministic word-count band: at least two words
 per scene and 20% of nominal speech, up to 160% of nominal speech. Exact spoken
-duration is not claimed. Out-of-policy output fails without a paid retry.
+duration is not claimed. The prompt exposes the global maximum and deterministic
+per-scene budgets derived from adaptive narrative roles. An otherwise valid
+response that exceeds this policy may receive one bounded correction request;
+other contract failures never use this duration-only retry.
 
 ## Deterministic identity
 
@@ -133,14 +136,18 @@ and authorization data are never persisted.
 
 The billable gate checks the durable `prepared` checkpoint and cost authority
 before transitioning to `submitting`. Only then may the controlled transport
-be invoked. The default maximum transport attempts is exactly one.
+be invoked. The default maximum transport attempts is exactly one. The
+duration-policy correction budget is separate: at most one additional durable
+request attempt per job, subject to request-count and optional job-cost ceilings.
 
 OpenRouter documents that requests without returned content can still incur a
 charge in some failure cases; see [Errors and debugging](https://openrouter.ai/docs/api-reference/errors-and-debugging).
 Accordingly, a timeout, connection loss, cancellation, or ambiguous service
 failure after the durable submitting checkpoint becomes `uncertain`. ORION
 never automatically resubmits an uncertain request. A deterministic provider
-rejection becomes `failed` and also has no automatic paid retry.
+rejection becomes `failed`. Only `duration_policy` can enter the bounded
+correction path; after its final permitted attempt it fails closed as
+`scripting_duration_policy_exhausted`.
 
 ## Usage and cost metadata
 
@@ -156,7 +163,8 @@ invented. Full response bodies and headers are not durable.
 - Prepared: continue only after explicit authorization.
 - Submitting without a durable result: classify `uncertain`; never resend.
 - Completed with matching validated script: reuse without transport.
-- Failed or uncertain: require deliberate local intervention.
+- Failed or uncertain: require deliberate local intervention, except that a
+  duration-policy failure is eligible for its one bounded correction attempt.
 - Configuration or planning identity changed: reject stale/conflicting state.
 - Malformed provider response: emit no script and do not retry.
 
@@ -175,7 +183,7 @@ the official privacy controls described in
 [OpenRouter provider routing](https://openrouter.ai/docs/guides/routing/provider-selection).
 
 No test contacts OpenRouter. No startup probe or background request exists.
-There are no automatic retries, provider SDK, arbitrary provider URL, shell
+There are no transport automatic retries, provider SDK, arbitrary provider URL, shell
 command, subprocess, UI key storage, or raw provider response artifact.
 
 ## First controlled live-test prerequisites

@@ -28,12 +28,16 @@ from backend.src.production.infrastructure.openai_compatible import (
     load_strict_json_object,
 )
 from backend.src.production.scripting.duration_policy import (
+    narration_scene_word_budgets,
+    narration_word_count_bounds,
     validate_openrouter_duration_policy,
 )
 from backend.src.production.scripting.exceptions import (
     ScriptingProviderAuthenticationError,
     ScriptingProviderConfigurationError,
     ScriptingProviderContractError,
+    ScriptingProviderDurationPolicyBudgetError,
+    ScriptingProviderDurationPolicyExhaustedError,
     ScriptingProviderRateLimitError,
     ScriptingProviderResponseError,
     ScriptingProviderTimeoutError,
@@ -68,7 +72,11 @@ from backend.src.production.scripting.ports import (
     ScriptingProviderRequest,
     ScriptingProviderResponse,
 )
-from backend.src.production.scripting.prompt_builder import ScriptingPromptBuilder
+from backend.src.production.scripting.prompt_builder import (
+    DurationPolicyRetryContext,
+    NarrativeRetryContext,
+    ScriptingPromptBuilder,
+)
 from backend.src.production.scripting.serialization import serialize_production_script
 
 
@@ -91,6 +99,14 @@ class _ValidationFailure:
     message: str
 
 
+class _DurationPolicyRejectedError(ScriptingProviderContractError):
+    """Internal marker for the only contract failure eligible for one retry."""
+
+    def __init__(self, message: str, *, script: ProductionScript) -> None:
+        super().__init__(message)
+        self.script = script
+
+
 class OpenRouterScriptingProvider:
     """Submit at most once after a durable checkpoint and strict local validation."""
 
@@ -109,6 +125,9 @@ class OpenRouterScriptingProvider:
         max_output_tokens: int = 8192,
         temperature: float = 0.2,
         max_response_bytes: int = 2_000_000,
+        max_duration_policy_retries: int = 1,
+        max_requests_per_job: int = 2,
+        maximum_authorized_job_cost_usd: Decimal | None = None,
         http_referer: str | None = None,
         app_title: str | None = None,
         client: httpx.AsyncClient | None = None,
@@ -133,6 +152,21 @@ class OpenRouterScriptingProvider:
         if max_output_tokens < 1 or not 0 <= temperature <= 2:
             raise ScriptingProviderConfigurationError(
                 "scripting output token or temperature setting is invalid"
+            )
+        if not 0 <= max_duration_policy_retries <= 1:
+            raise ScriptingProviderConfigurationError(
+                "scripting duration-policy retries must be 0 or 1"
+            )
+        if not 1 <= max_requests_per_job <= 2:
+            raise ScriptingProviderConfigurationError(
+                "scripting requests per job must be 1 or 2"
+            )
+        if (
+            maximum_authorized_job_cost_usd is not None
+            and maximum_authorized_job_cost_usd <= 0
+        ):
+            raise ScriptingProviderConfigurationError(
+                "scripting job cost authorization must be positive"
             )
         if not billable_policy.allow_billable_requests:
             raise ScriptingProviderConfigurationError(
@@ -170,13 +204,67 @@ class OpenRouterScriptingProvider:
         self._gate = gate or OpenRouterScriptingBillableGate()
         self._max_output_tokens = max_output_tokens
         self._temperature = temperature
+        self._max_duration_policy_retries = max_duration_policy_retries
+        self._max_requests_per_job = max_requests_per_job
+        self._maximum_authorized_job_cost_usd = maximum_authorized_job_cost_usd
         self._monotonic = monotonic_clock
         self._clock = clock
 
     async def generate_script(self, request: ScriptingProviderRequest) -> ScriptingProviderResponse:
+        previous_script: ProductionScript | None = None
+        for retry_number in range(self._max_duration_policy_retries + 1):
+            if retry_number > 0:
+                await self._authorize_duration_retry(request)
+            try:
+                return await self._generate_script_once(
+                    request,
+                    duration_retry_number=retry_number,
+                    previous_script=previous_script,
+                )
+            except _DurationPolicyRejectedError as exc:
+                previous_script = exc.script
+                if retry_number >= self._max_duration_policy_retries:
+                    raise ScriptingProviderDurationPolicyExhaustedError(
+                        "scripting duration-policy retry budget is exhausted"
+                    ) from exc
+        raise AssertionError("scripting duration retry loop did not return")
+
+    async def _generate_script_once(
+        self,
+        request: ScriptingProviderRequest,
+        *,
+        duration_retry_number: int,
+        previous_script: ProductionScript | None,
+    ) -> ScriptingProviderResponse:
+        request = request.model_copy(
+            update={"attempt_number": request.attempt_number + duration_retry_number}
+        )
+        retry_context = None
+        if duration_retry_number > 0:
+            _, maximum_words = narration_word_count_bounds(
+                target_duration_seconds=request.target_duration_seconds,
+                scene_count=len(request.plan.scenes),
+                reading_speed_words_per_minute=(
+                    request.configuration.reading_speed_words_per_minute
+                ),
+            )
+            retry_context = DurationPolicyRetryContext(
+                retry_number=duration_retry_number,
+                maximum_total_words=maximum_words,
+                scene_word_budgets=narration_scene_word_budgets(
+                    target_duration_seconds=request.target_duration_seconds,
+                    scene_count=len(request.plan.scenes),
+                    reading_speed_words_per_minute=(
+                        request.configuration.reading_speed_words_per_minute
+                    ),
+                ),
+                narrative_context=_narrative_retry_context(previous_script),
+            )
         try:
-            prompt = self._prompt_builder.build(request)
-            fingerprint_input = self._fingerprint_input(request)
+            prompt = self._prompt_builder.build(request, retry_context=retry_context)
+            fingerprint_input = self._fingerprint_input(
+                request,
+            )
             fingerprint = openrouter_scripting_request_fingerprint(fingerprint_input)
         except (TypeError, ValueError) as exc:
             raise ScriptingProviderContractError(
@@ -186,6 +274,7 @@ class OpenRouterScriptingProvider:
             request=request,
             fingerprint_input=fingerprint_input,
             fingerprint=fingerprint,
+            duration_retry_number=duration_retry_number,
         )
         if record.status is OpenRouterScriptingRequestStatus.COMPLETED:
             return self._response_from_record(record, recovered=True)
@@ -219,6 +308,7 @@ class OpenRouterScriptingProvider:
             }
             for item in records
         )
+        self._authorize_submission_budget(record=record, records=records)
         self._gate.authorize(
             policy=self._policy,
             record=record,
@@ -406,16 +496,18 @@ class OpenRouterScriptingProvider:
                 ),
             )
         except ValueError as exc:
-            await self._raise_structured_output_failure(
-                submitting,
-                response_metadata=response_metadata,
-                failure=_ValidationFailure(
-                    code=OpenRouterScriptingValidationErrorCode.DURATION_POLICY,
-                    path="scenes",
-                    message=_duration_policy_message(exc),
-                ),
-                cause=exc,
+            failure = _ValidationFailure(
+                code=OpenRouterScriptingValidationErrorCode.DURATION_POLICY,
+                path="scenes",
+                message=_duration_policy_message(exc),
             )
+            await self._mark_failed(
+                submitting,
+                "invalid_structured_output",
+                response_metadata=response_metadata,
+                validation_failure=failure,
+            )
+            raise _DurationPolicyRejectedError(failure.message, script=script) from exc
         try:
             validate_narration_repetition(script)
         except ValueError as exc:
@@ -456,12 +548,56 @@ class OpenRouterScriptingProvider:
     async def close(self) -> None:
         await self._transport.close()
 
+    async def _authorize_duration_retry(
+        self,
+        request: ScriptingProviderRequest,
+    ) -> None:
+        records = await self._store.list_for_job(job_id=request.job_id)
+        submitted = tuple(item for item in records if item.submission_started_at is not None)
+        if len(submitted) >= self._max_requests_per_job:
+            raise ScriptingProviderDurationPolicyBudgetError(
+                "scripting duration-policy retry exceeds the job request limit"
+            )
+        assert self._policy.estimated_cost_usd is not None
+        if self._maximum_authorized_job_cost_usd is not None:
+            estimated_total = sum(
+                (item.estimated_cost_usd for item in submitted),
+                self._policy.estimated_cost_usd,
+            )
+            if estimated_total > self._maximum_authorized_job_cost_usd:
+                raise ScriptingProviderDurationPolicyBudgetError(
+                    "scripting duration-policy retry exceeds the job cost limit"
+                )
+
+    def _authorize_submission_budget(
+        self,
+        *,
+        record: OpenRouterScriptingRequestRecord,
+        records: tuple[OpenRouterScriptingRequestRecord, ...],
+    ) -> None:
+        submitted = tuple(item for item in records if item.submission_started_at is not None)
+        if len(submitted) >= self._max_requests_per_job:
+            raise ScriptingProviderDurationPolicyBudgetError(
+                "scripting request exceeds the job request limit"
+            )
+        if self._maximum_authorized_job_cost_usd is None:
+            return
+        estimated_total = sum(
+            (item.estimated_cost_usd for item in submitted),
+            record.estimated_cost_usd,
+        )
+        if estimated_total > self._maximum_authorized_job_cost_usd:
+            raise ScriptingProviderDurationPolicyBudgetError(
+                "scripting request exceeds the job cost limit"
+            )
+
     async def _load_or_prepare(
         self,
         *,
         request: ScriptingProviderRequest,
         fingerprint_input: OpenRouterScriptingFingerprintInput,
         fingerprint: str,
+        duration_retry_number: int,
     ) -> tuple[
         OpenRouterScriptingRequestRecord,
         tuple[OpenRouterScriptingRequestRecord, ...],
@@ -498,6 +634,14 @@ class OpenRouterScriptingProvider:
             return current, records
         assert self._policy.estimated_cost_usd is not None
         assert self._policy.maximum_authorized_cost_usd is not None
+        metadata: dict[str, bool | int | str] = {"raw_response_persisted": False}
+        if duration_retry_number > 0:
+            metadata.update(
+                {
+                    "duration_policy_retry_number": duration_retry_number,
+                    "duration_policy_retry": True,
+                }
+            )
         prepared = OpenRouterScriptingRequestRecord(
             job_id=request.job_id,
             attempt_number=request.attempt_number,
@@ -509,7 +653,7 @@ class OpenRouterScriptingProvider:
             prepared_at=self._aware_now(),
             fresh_submission_permitted=True,
             requested_model=self._model,
-            metadata={"raw_response_persisted": False},
+            metadata=metadata,
         )
         try:
             await self._store.create(prepared)
@@ -673,6 +817,37 @@ class OpenRouterScriptingProvider:
                 "OpenRouter scripting clock must be timezone-aware"
             )
         return value
+
+
+def _narrative_retry_context(script: ProductionScript | None) -> NarrativeRetryContext:
+    if script is None:
+        raise ScriptingProviderContractError(
+            "duration-policy retry has no previous validated script"
+        )
+    resolved = ensure_narrative_progression(script)
+    assert resolved.narrative_arc is not None
+    return NarrativeRetryContext(
+        premise=resolved.narrative_arc.premise,
+        opening_hook=resolved.narrative_arc.opening_hook,
+        central_question=resolved.narrative_arc.central_question,
+        progression=resolved.narrative_arc.progression,
+        intended_payoff=resolved.narrative_arc.intended_payoff,
+        ending_state=resolved.narrative_arc.ending_state,
+        story_beats=tuple(
+            {
+                "scene_number": scene.scene_number,
+                "role": scene.story_beat.role.value,
+                "information_introduced": scene.story_beat.information_introduced,
+                "prior_context": scene.story_beat.prior_context,
+                "new_information": scene.story_beat.new_information,
+                "open_question": scene.story_beat.open_question,
+                "transition_intent": scene.story_beat.transition_intent,
+                "avoid_repetition": scene.story_beat.avoid_repetition,
+            }
+            for scene in resolved.scenes
+            if scene.story_beat is not None
+        ),
+    )
 
 
 def _safe_response_metadata(
