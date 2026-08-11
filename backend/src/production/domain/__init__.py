@@ -14,6 +14,12 @@ from backend.src.production.domain.enums import (
 from backend.src.production.domain.production_job import ProductionJob
 from backend.src.production.domain.production_plan import ProductionPlan
 from backend.src.production.domain.scene_plan import ScenePlan
+from backend.src.production.domain.visual_strategy import (
+    VisualGenerationPriority,
+    VisualImportance,
+    VisualMode,
+    VisualMotionMode,
+)
 
 __all__ = [
     "Artifact",
@@ -29,4 +35,8 @@ __all__ = [
     "ProductionStage",
     "ScenePlan",
     "TransitionType",
+    "VisualGenerationPriority",
+    "VisualImportance",
+    "VisualMode",
+    "VisualMotionMode",
 ]

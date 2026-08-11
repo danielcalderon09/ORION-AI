@@ -1,5 +1,11 @@
 """Provider-neutral planning contracts for the PLANNING stage."""
 
+from backend.src.production.domain.visual_strategy import (
+    VisualGenerationPriority,
+    VisualImportance,
+    VisualMode,
+    VisualMotionMode,
+)
 from backend.src.production.planning.models import (
     PlanningJobConfiguration,
     ProductionPlan,
@@ -28,6 +34,7 @@ from backend.src.production.planning.provider_budget_planner import (
     resolve_editorial_audio_first,
 )
 from backend.src.production.planning.serialization import serialize_production_plan
+from backend.src.production.planning.visual_strategy import LegacyFullVideoStrategy
 
 __all__ = [
     "PlanningJobConfiguration",
@@ -54,4 +61,9 @@ __all__ = [
     "cover_duration_with_provider_clips",
     "propose_scene_count",
     "resolve_editorial_audio_first",
+    "LegacyFullVideoStrategy",
+    "VisualGenerationPriority",
+    "VisualImportance",
+    "VisualMode",
+    "VisualMotionMode",
 ]

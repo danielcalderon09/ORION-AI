@@ -19,6 +19,12 @@ from backend.src.production.domain.duration_resolution import (
     DurationResolutionPolicy,
     resolve_audio_first_durations,
 )
+from backend.src.production.domain.visual_strategy import (
+    VisualGenerationPriority,
+    VisualImportance,
+    VisualMode,
+    VisualMotionMode,
+)
 from backend.src.production.scripting.models import NarrativeRole
 
 
@@ -111,6 +117,12 @@ class BoundVisualShot(ContractModel):
 
 
 class VisualShotAllocation(ContractModel):
+    """One editorial visual slot, independent from a provider purchase.
+
+    Legacy full-video values are omitted from canonical serialization so old
+    shot-expansion payloads and fingerprints retain their exact shape.
+    """
+
     scene_id: str = Field(pattern=r"^scene-[0-9]{3}$")
     shot_id: str = Field(pattern=r"^scene-[0-9]{3}-shot-[0-9]{3}$")
     shot_sequence_index: int = Field(ge=0, le=49)
@@ -120,8 +132,57 @@ class VisualShotAllocation(ContractModel):
     narrative_role: NarrativeRole
     visual_function: VisualShotFunction
     intent_key: str = Field(min_length=1, max_length=300)
-    provider_duration_seconds: int = Field(gt=0, le=600)
     usable_duration_ms: int = Field(gt=0, le=600_000)
+    visual_mode: VisualMode = Field(
+        default=VisualMode.GENERATED_VIDEO,
+        exclude_if=lambda value: value is VisualMode.GENERATED_VIDEO,
+    )
+    motion_mode: VisualMotionMode = Field(
+        default=VisualMotionMode.STATIC,
+        exclude_if=lambda value: value is VisualMotionMode.STATIC,
+    )
+    source_asset_id: str | None = Field(
+        default=None,
+        min_length=3,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        exclude_if=lambda value: value is None,
+    )
+    importance: VisualImportance = Field(
+        default=VisualImportance.MEDIUM,
+        exclude_if=lambda value: value is VisualImportance.MEDIUM,
+    )
+    generation_priority: VisualGenerationPriority = Field(
+        default=VisualGenerationPriority.NORMAL,
+        exclude_if=lambda value: value is VisualGenerationPriority.NORMAL,
+    )
+    provider_duration_seconds: int | None = Field(
+        default=None,
+        gt=0,
+        le=600,
+        exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def validate_visual_strategy(self) -> VisualShotAllocation:
+        reused = self.visual_mode in {
+            VisualMode.REUSED_IMAGE,
+            VisualMode.REUSED_VIDEO,
+        }
+        if reused != (self.source_asset_id is not None):
+            raise ValueError("only reused visual shots require source_asset_id")
+        if self.visual_mode is VisualMode.GENERATED_VIDEO:
+            if self.provider_duration_seconds is None:
+                raise ValueError("generated video requires provider purchase duration")
+        elif self.provider_duration_seconds is not None:
+            raise ValueError("only generated video may define provider purchase duration")
+        if (
+            self.motion_mode is not VisualMotionMode.STATIC
+            and self.visual_mode
+            not in {VisualMode.GENERATED_IMAGE, VisualMode.REUSED_IMAGE}
+        ):
+            raise ValueError("local pan and zoom motion requires an image visual mode")
+        return self
 
 
 class AudioFirstNarrativePlan(ContractModel):
@@ -419,6 +480,12 @@ def build_video_purchase_plan(
         )
         clips: list[VisualClipPurchase] = []
         for allocation in allocations:
+            duration = allocation.provider_duration_seconds
+            if (
+                allocation.visual_mode is not VisualMode.GENERATED_VIDEO
+                or duration is None
+            ):
+                raise ValueError("full-video purchase planning requires generated video shots")
             clips.append(
                 VisualClipPurchase(
                     clip_id=f"{allocation.shot_id}-clip-001",
@@ -432,21 +499,21 @@ def build_video_purchase_plan(
                     source_image_sha256=hashlib.sha256(
                         f"source:{allocation.visual_asset_id}".encode()
                     ).hexdigest(),
-                    provider_duration_seconds=allocation.provider_duration_seconds,
+                    provider_duration_seconds=duration,
                     usable_duration_ms=allocation.usable_duration_ms,
                     adaptation=(
                         "trim"
                         if allocation.usable_duration_ms
-                        < allocation.provider_duration_seconds * 1_000
+                        < duration * 1_000
                         else "none"
                     ),
                     estimated_cost_usd=(
                         price_per_second_usd
-                        * allocation.provider_duration_seconds
+                        * duration
                     ),
                 )
             )
-        purchased = sum(item.provider_duration_seconds for item in allocations)
+        purchased = sum(clip.provider_duration_seconds for clip in clips)
         scenes.append(
             SceneProviderPurchasePlan(
                 scene_id=scene.scene_id,
@@ -532,8 +599,12 @@ def allocate_visual_shots(
                     f"{scene.scene_id}:{scene.narrative_role.value}:{function.value}:"
                     f"{shot_number}-of-{len(durations)}"
                 ),
-                provider_duration_seconds=duration,
                 usable_duration_ms=usable,
+                visual_mode=VisualMode.GENERATED_VIDEO,
+                motion_mode=VisualMotionMode.STATIC,
+                importance=VisualImportance.MEDIUM,
+                generation_priority=VisualGenerationPriority.NORMAL,
+                provider_duration_seconds=duration,
             )
         )
         remaining -= usable

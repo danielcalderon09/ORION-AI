@@ -15,6 +15,7 @@ from backend.src.production.planning.provider_budget_planner import (
     VisualShotAllocation,
     allocate_visual_shots,
 )
+from backend.src.production.planning.visual_strategy import LegacyFullVideoStrategy
 from backend.src.production.scene_planning.models import (
     ProductionCamera,
     ProductionScene,
@@ -101,16 +102,18 @@ def build_post_tts_shot_expansion(
     for sequence_index, scene in enumerate(scene_plan.scenes):
         timing = by_scene[scene.scene_id]
         role = scene.story_beat.role if scene.story_beat is not None else NarrativeRole.DEVELOPMENT
-        allocations = allocate_visual_shots(
-            ResolvedNarrativeScene(
-                scene_id=scene.scene_id,
-                sequence_index=sequence_index,
-                narrative_role=role,
-                editorial_target_ms=timing.planned_duration_ms,
-                actual_narration_ms=timing.actual_narration_duration_ms,
-                resolved_duration_ms=timing.resolved_duration_ms,
-            ),
-            supported_durations_seconds=supported,
+        allocations = LegacyFullVideoStrategy().apply(
+            allocate_visual_shots(
+                ResolvedNarrativeScene(
+                    scene_id=scene.scene_id,
+                    sequence_index=sequence_index,
+                    narrative_role=role,
+                    editorial_target_ms=timing.planned_duration_ms,
+                    actual_narration_ms=timing.actual_narration_duration_ms,
+                    resolved_duration_ms=timing.resolved_duration_ms,
+                ),
+                supported_durations_seconds=supported,
+            )
         )
         all_allocations.extend(allocations)
         expanded_scenes.append(_expanded_scene(scene, allocations))

@@ -38,6 +38,7 @@ from backend.src.production.visual_asset_planning.providers import (
     SimulatedVisualAssetPlanningProvider,
 )
 from backend.src.production.visual_asset_planning.shot_expansion import (
+    PostTtsShotExpansion,
     build_post_tts_shot_expansion,
 )
 from backend.tests.unit.production.image_acquisition.test_handler_manifest_recovery import (
@@ -229,6 +230,32 @@ def test_single_9s_narrative_scene_expands_to_distinct_6_plus_4_shots() -> None:
         for shot in expansion.expanded_scene_plan.scenes[0].shots
     ) == (6, 3)
     assert expansion.plan_fingerprint == expansion.calculated_fingerprint()
+
+
+def test_historical_shot_expansion_shape_and_fingerprint_remain_compatible() -> None:
+    expansion = build_post_tts_shot_expansion(
+        job_id=JOB_ID,
+        source_scene_plan_artifact_id=SCENE_ARTIFACT_ID,
+        source_scene_plan_sha256="c" * 64,
+        source_duration_artifact_id=DURATION_ARTIFACT_ID,
+        source_duration_sha256="b" * 64,
+        scene_plan=_scene_plan(),
+        duration_resolution=_resolution().resolution,
+        supported_provider_durations_seconds=(4, 6, 8),
+    )
+    historical_payload = expansion.model_dump(mode="json")
+
+    assert all(
+        "visual_mode" not in allocation
+        and "motion_mode" not in allocation
+        and "source_asset_id" not in allocation
+        and "importance" not in allocation
+        and "generation_priority" not in allocation
+        for allocation in historical_payload["allocations"]
+    )
+    restored = PostTtsShotExpansion.model_validate(historical_payload)
+    assert restored.model_dump(mode="json") == historical_payload
+    assert restored.plan_fingerprint == restored.calculated_fingerprint()
 
 
 @pytest.mark.asyncio

@@ -277,3 +277,21 @@ image or video requests. Existing single-shot visual plans without expansion
 provenance remain readable and reusable. Composition uses the immutable purchase
 plan's usable shot intervals when present, preserving contiguous scene coverage,
 `playback_mode=once`, and `loop_count=1`.
+
+## Production Short V1 visual strategy contract
+
+Post-TTS visual shots now distinguish editorial duration from provider purchase
+duration. Every shot always owns `usable_duration_ms`, while
+`provider_duration_seconds` is present only for generated video. The provider-neutral
+visual modes are `generated_video`, `generated_image`, `reused_video`, and
+`reused_image`; image shots can also declare static, pan, zoom-in, zoom-out, or
+combined pan-and-zoom intent. Reused modes require a durable `source_asset_id` and
+never carry provider purchase duration.
+
+Bounded importance and generation-priority enums prepare deterministic hybrid
+selection without accepting arbitrary scores from a model. Phase SHORT-V1.1 keeps
+the runtime in `LegacyFullVideoStrategy`: every newly expanded shot remains generated
+video with static local motion. Legacy defaults are omitted from canonical JSON, so
+historical shot-expansion payloads and fingerprints retain their exact serialized
+shape. Image-motion rendering, runtime reuse, and hybrid spending are intentionally
+not enabled in this phase.
