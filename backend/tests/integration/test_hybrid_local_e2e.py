@@ -85,6 +85,10 @@ async def test_balanced_runtime_routes_only_selected_shots_and_muxes_audio(tmp_p
         ) == pytest.approx(24, abs=0.01)
         assert report.output.duration_ms == pytest.approx(20_000, abs=500)
         assert report.visual_summary is not None
+        assert report.cost_summary is not None
+        assert report.cost_summary.total_accounted_cost_usd
+        assert report.cost_summary.total_reported_cost_usd
+        assert report.cost_summary.reported_cost_coverage_percent
         assert report.visual_summary.visual_strategy == "hybrid_balanced"
         assert report.visual_summary.generated_video_shots > 0
         assert report.visual_summary.generated_image_shots > 0

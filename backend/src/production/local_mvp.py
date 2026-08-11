@@ -24,6 +24,11 @@ from backend.src.production.application.services.production_jobs import (
     ListProductionEventsService,
 )
 from backend.src.production.binary_assets.workspace import WorkspaceConfinement
+from backend.src.production.cost_accounting import (
+    JobCostCategory,
+    ProductionJobCostSummary,
+    derive_durable_job_cost_summary,
+)
 from backend.src.production.domain.base import ContractModel
 from backend.src.production.domain.enums import (
     ArtifactStatus,
@@ -128,6 +133,20 @@ class LocalMvpVisualSummary(ContractModel):
     image_estimated_fallback_request_count: int = Field(default=0, ge=0)
 
 
+class LocalMvpCostSummary(ContractModel):
+    scripting_accounted_cost_usd: str
+    tts_accounted_cost_usd: str
+    fitting_accounted_cost_usd: str
+    image_accounted_cost_usd: str
+    video_accounted_cost_usd: str
+    total_accounted_cost_usd: str
+    total_reported_cost_usd: str
+    total_estimated_cost_usd: str
+    reported_cost_coverage_percent: str
+    fully_reported: bool
+    fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class LocalMvpReport(ContractModel):
     mode: Literal["local_simulated_e2e"] = LOCAL_MVP_MODE
     job_id: UUID
@@ -142,6 +161,7 @@ class LocalMvpReport(ContractModel):
     output: LocalMvpOutput | None = None
     failure: LocalMvpFailure | None = None
     visual_summary: LocalMvpVisualSummary | None = None
+    cost_summary: LocalMvpCostSummary | None = None
 
 
 class LocalMvpApplication:
@@ -332,6 +352,7 @@ class LocalMvpApplication:
                     ),
                     recommended_action=f"Inspect durable final validation: {str(exc)[:200]}",
                 ),
+                cost_summary=self._load_cost_summary(job.job_id),
             )
         return LocalMvpReport(
             job_id=job.job_id,
@@ -345,7 +366,15 @@ class LocalMvpApplication:
             progress=progress,
             output=output,
             visual_summary=await self._load_visual_summary(job.job_id),
+            cost_summary=self._load_cost_summary(job.job_id),
         )
+
+    def _load_cost_summary(self, job_id: UUID) -> LocalMvpCostSummary:
+        job_root = self._workspace.resolve(
+            f"production/{job_id}", require_exists=False
+        )
+        summary = derive_durable_job_cost_summary(job_id=job_id, job_root=job_root)
+        return _local_cost_summary(summary)
 
     async def _load_visual_summary(self, job_id: UUID) -> LocalMvpVisualSummary | None:
         page = await self._list_artifacts.execute(job_id)
@@ -444,6 +473,7 @@ class LocalMvpApplication:
                 completed_artifact_count=len(artifacts.items),
                 recommended_action=_recommended_action(job.status, code),
             ),
+            cost_summary=self._load_cost_summary(job.job_id),
         )
 
     async def _load_output(self, job: ProductionJob) -> LocalMvpOutput:
@@ -606,6 +636,32 @@ def _recommended_action(status: ProductionJobStatus, code: str) -> str:
     if code in {"local_iteration_limit_reached", "local_worker_no_progress"}:
         return "Inspect the current durable stage and resume the same job."
     return "Inspect the durable stage error; do not reset or delete completed artifacts."
+
+
+def _local_cost_summary(summary: ProductionJobCostSummary) -> LocalMvpCostSummary:
+    return LocalMvpCostSummary(
+        scripting_accounted_cost_usd=str(
+            summary.category(JobCostCategory.SCRIPTING).accounted_cost_usd
+        ),
+        tts_accounted_cost_usd=str(
+            summary.category(JobCostCategory.SPEECH).accounted_cost_usd
+        ),
+        fitting_accounted_cost_usd=str(
+            summary.category(JobCostCategory.NARRATION_FITTING).accounted_cost_usd
+        ),
+        image_accounted_cost_usd=str(
+            summary.category(JobCostCategory.IMAGES).accounted_cost_usd
+        ),
+        video_accounted_cost_usd=str(
+            summary.category(JobCostCategory.VIDEO).accounted_cost_usd
+        ),
+        total_accounted_cost_usd=str(summary.total_accounted_cost_usd),
+        total_reported_cost_usd=str(summary.total_reported_cost_usd),
+        total_estimated_cost_usd=str(summary.total_estimated_cost_usd),
+        reported_cost_coverage_percent=str(summary.reported_cost_coverage_percent),
+        fully_reported=summary.fully_reported,
+        fingerprint=summary.fingerprint,
+    )
 
 
 def _file_identity(path: Path) -> tuple[int, str]:

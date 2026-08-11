@@ -440,3 +440,25 @@ attempts. Only a new submission creates a new telemetry record, so completed
 requests are not double-counted. Uncertain submission remains fail-closed and
 cannot be retried automatically. Older acquisition manifests without telemetry
 fields remain readable and retain their original fingerprints.
+
+## SHORT-V1.9 durable total job cost accounting
+
+ORION derives a strict, versioned, fingerprinted `ProductionJobCostSummary` from
+existing durable provider sidecars. It does not persist a second mutable cost
+artifact: scripting requests, remote speech jobs, narration fitting attempts,
+hybrid image telemetry, historical image estimates, and remote video jobs remain
+the source of truth. This keeps completed and failed jobs auditable offline without
+creating reconciliation drift.
+
+Each real provider submission is identified by its durable request fingerprint and
+attempt identity. Recovery copies are deduplicated, while an actual retry remains a
+separate cost record. Local deterministic fitting and reused media create no remote
+request or provider cost. Missing reported cost uses the authorized estimate as an
+explicit `estimated_fallback`; it is never interpreted as zero.
+
+The summary exposes estimated, reported, fallback, and accounted subtotals for
+scripting, TTS, fitting, images, and video, plus request-count coverage and a
+fully-reported flag. It also audits accounted image/video cost against the immutable
+aggregate visual budget. Local MVP output includes a backward-compatible optional
+`cost_summary` with per-stage accounted cost and total coverage fields. No API keys,
+headers, signed URLs, or provider bodies participate in accounting.

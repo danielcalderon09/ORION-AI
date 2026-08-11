@@ -146,6 +146,10 @@ async def test_bounded_loop_preserves_job_and_reports_limit(tmp_path) -> None:
     assert report.status is ProductionJobStatus.RUNNING
     assert report.failure is not None
     assert report.failure.error_code == "local_iteration_limit_reached"
+    assert report.cost_summary is not None
+    assert report.cost_summary.total_accounted_cost_usd == "0"
+    assert report.cost_summary.reported_cost_coverage_percent == "100.00"
+    assert report.cost_summary.fully_reported is True
     assert worker.calls == 3
     assert get_job.job.status is ProductionJobStatus.RUNNING
 
