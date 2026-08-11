@@ -126,6 +126,13 @@ class ImageAcquisitionProviderResponse(ContractModel):
     finish_reason: str | None = Field(default=None, max_length=100)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("cost_usd", mode="before")
+    @classmethod
+    def reject_float_cost(cls, value: Any) -> Any:
+        if isinstance(value, float):
+            raise ValueError("reported image cost must use Decimal text")
+        return value
+
     @field_validator("metadata")
     @classmethod
     def validate_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:

@@ -32,6 +32,9 @@ from backend.src.production.domain.enums import (
     ProductionStage,
 )
 from backend.src.production.domain.production_job import ProductionJob
+from backend.src.production.image_acquisition.hybrid_acquisition import (
+    deserialize_hybrid_acquisition_manifest,
+)
 from backend.src.production.planning.aggregate_visual_budget import (
     deserialize_aggregate_visual_budget_plan,
 )
@@ -118,6 +121,11 @@ class LocalMvpVisualSummary(ContractModel):
     video_requests: int = Field(ge=0)
     purchased_video_seconds: int = Field(ge=0)
     estimated_visual_cost_usd: str
+    image_estimated_cost_usd: str = "0"
+    image_reported_cost_usd: str = "0"
+    image_accounted_cost_usd: str = "0"
+    image_reported_cost_request_count: int = Field(default=0, ge=0)
+    image_estimated_fallback_request_count: int = Field(default=0, ge=0)
 
 
 class LocalMvpReport(ContractModel):
@@ -355,6 +363,11 @@ class LocalMvpApplication:
             return None
         budget_artifact = max(budgets, key=lambda item: item.relative_path)
         strategy_artifact = max(strategies, key=lambda item: item.relative_path)
+        acquisitions = tuple(
+            item.artifact
+            for item in page.items
+            if item.artifact.artifact_type is ArtifactType.HYBRID_ASSET_ACQUISITION_MANIFEST
+        )
         budget = deserialize_aggregate_visual_budget_plan(
             self._workspace.resolve(
                 budget_artifact.relative_path, require_exists=True
@@ -365,6 +378,15 @@ class LocalMvpApplication:
                 strategy_artifact.relative_path, require_exists=True
             ).read_bytes()
         )
+        accounting = None
+        if acquisitions:
+            acquisition = deserialize_hybrid_acquisition_manifest(
+                self._workspace.resolve(
+                    max(acquisitions, key=lambda item: item.relative_path).relative_path,
+                    require_exists=True,
+                ).read_bytes()
+            )
+            accounting = acquisition.accounting
         return LocalMvpVisualSummary(
             visual_strategy=strategy.strategy_name.value,
             visual_shots=strategy.summary.visual_shot_count,
@@ -376,6 +398,21 @@ class LocalMvpApplication:
             video_requests=budget.video_requests,
             purchased_video_seconds=budget.purchased_video_seconds,
             estimated_visual_cost_usd=str(budget.estimated_total_visual_cost_usd),
+            image_estimated_cost_usd=str(
+                accounting.estimated_image_cost_usd if accounting else budget.estimated_image_cost_usd
+            ),
+            image_reported_cost_usd=str(
+                accounting.reported_image_cost_usd if accounting else 0
+            ),
+            image_accounted_cost_usd=str(
+                accounting.accounted_image_cost_usd if accounting else budget.estimated_image_cost_usd
+            ),
+            image_reported_cost_request_count=(
+                accounting.reported_cost_request_count if accounting else 0
+            ),
+            image_estimated_fallback_request_count=(
+                accounting.estimated_fallback_request_count if accounting else 0
+            ),
         )
 
     async def _failure_report(

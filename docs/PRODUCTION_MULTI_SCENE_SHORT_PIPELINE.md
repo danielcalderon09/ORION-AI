@@ -421,3 +421,22 @@ a render interruption. A changed expansion, strategy, budget, acquisition manife
 video manifest, composition plan, source checksum, or execution plan fails closed.
 Historical jobs without hybrid artifacts continue to select the legacy full-video
 source reader and retain their historical serialization and fingerprints.
+
+## SHORT-V1.8 durable image provider telemetry
+
+Hybrid image acquisition checkpoints persist sanitized evidence for each actual
+provider submission. Records include the shot, image purpose (`video_first_frame`
+or `image_visual`), provider/model, HTTP status, provider request ID when supplied,
+timestamps, retry number, terminal status, and the stored artifact checksum.
+
+Money is represented with `Decimal`. A provider-reported cost is accounted as
+`reported`; when no reported cost is available, ORION accounts the configured
+estimate as `estimated_fallback`. The durable acquisition accounting keeps the
+estimated total, reported subtotal, accounted total, and counts for each cost
+source separate. Consequently, a missing provider cost is never treated as zero.
+
+Recovery retains completed entries and historical failed/uncertain provider
+attempts. Only a new submission creates a new telemetry record, so completed
+requests are not double-counted. Uncertain submission remains fail-closed and
+cannot be retried automatically. Older acquisition manifests without telemetry
+fields remain readable and retain their original fingerprints.

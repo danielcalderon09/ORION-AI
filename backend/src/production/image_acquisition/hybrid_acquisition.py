@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime
+from decimal import Decimal
 from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
@@ -15,6 +17,7 @@ from backend.src.production.domain.visual_strategy import VisualMode, VisualMoti
 from backend.src.production.image_acquisition.configuration import (
     ImageAcquisitionConfiguration,
 )
+from backend.src.production.image_acquisition.exceptions import ImageAcquisitionProviderError
 from backend.src.production.image_acquisition.ports import (
     ImageAcquisitionProvider,
     ImageAcquisitionProviderRequest,
@@ -50,6 +53,91 @@ class ReusableAssetType(StrEnum):
 class HybridAcquisitionManifestStatus(StrEnum):
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
+
+
+class HybridImageProviderAttemptStatus(StrEnum):
+    SUBMITTED = "submitted"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    UNCERTAIN = "uncertain"
+
+
+class HybridImageCostSource(StrEnum):
+    REPORTED = "reported"
+    ESTIMATED_FALLBACK = "estimated_fallback"
+
+
+class HybridImageProviderAttempt(ContractModel):
+    """Sanitized durable evidence for one provider submission."""
+
+    job_id: UUID
+    stage_attempt_number: int = Field(ge=1)
+    scene_id: str = Field(pattern=r"^scene-[0-9]{3}$")
+    attempt_number: int = Field(ge=1)
+    purpose: ImageRequirementKind
+    provider: str = Field(min_length=1, max_length=100)
+    model: str | None = Field(default=None, max_length=300)
+    estimated_cost_usd: Decimal = Field(ge=0, max_digits=18, decimal_places=9)
+    reported_cost_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=18, decimal_places=9
+    )
+    accounted_cost_usd: Decimal = Field(ge=0, max_digits=18, decimal_places=9)
+    cost_source: HybridImageCostSource
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    provider_request_id: str | None = Field(default=None, max_length=200)
+    provider_retry_count: int = Field(default=0, ge=0, le=50)
+    submission_started_at: datetime
+    submitted_at: datetime | None = None
+    terminal_at: datetime
+    status: HybridImageProviderAttemptStatus
+    safe_error_code: str | None = Field(default=None, pattern=r"^[a-z0-9_]{1,100}$")
+    artifact_relative_path: str | None = Field(default=None, max_length=1000)
+    artifact_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    artifact_size_bytes: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_accounting(self) -> HybridImageProviderAttempt:
+        expected = (
+            self.reported_cost_usd
+            if self.reported_cost_usd is not None
+            else self.estimated_cost_usd
+        )
+        if self.accounted_cost_usd != expected:
+            raise ValueError("image provider accounted cost differs from source")
+        if self.cost_source is HybridImageCostSource.REPORTED:
+            if self.reported_cost_usd is None:
+                raise ValueError("reported cost source requires reported cost")
+        elif self.reported_cost_usd is not None:
+            raise ValueError("fallback cost source cannot contain reported cost")
+        if (
+            self.status is HybridImageProviderAttemptStatus.COMPLETED
+            and (self.artifact_sha256 is None or self.artifact_relative_path is None)
+        ):
+            raise ValueError("completed image attempt requires artifact identity")
+        if self.submitted_at is not None and self.submitted_at < self.submission_started_at:
+            raise ValueError("image submission timestamp precedes start")
+        if self.terminal_at < self.submission_started_at:
+            raise ValueError("image terminal timestamp precedes start")
+        return self
+
+
+class HybridImageAcquisitionAccounting(ContractModel):
+    image_request_count: int = Field(ge=0)
+    first_frame_request_count: int = Field(ge=0)
+    final_image_request_count: int = Field(ge=0)
+    estimated_image_cost_usd: Decimal = Field(ge=0, max_digits=18, decimal_places=9)
+    reported_image_cost_usd: Decimal = Field(ge=0, max_digits=18, decimal_places=9)
+    accounted_image_cost_usd: Decimal = Field(ge=0, max_digits=18, decimal_places=9)
+    reported_cost_request_count: int = Field(ge=0)
+    estimated_fallback_request_count: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> HybridImageAcquisitionAccounting:
+        if self.first_frame_request_count + self.final_image_request_count > self.image_request_count:
+            raise ValueError("image purpose counts exceed image requests")
+        if self.reported_cost_request_count + self.estimated_fallback_request_count != self.image_request_count:
+            raise ValueError("image cost source counts differ from requests")
+        return self
 
 
 class ReusableVisualAsset(ContractModel):
@@ -95,6 +183,12 @@ class HybridAssetAcquisitionEntry(ContractModel):
     strategy_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     budget_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     request_identity: str = Field(pattern=r"^[a-f0-9]{64}$")
+    estimated_cost_usd: Decimal | None = Field(
+        default=None, ge=0, max_digits=18, decimal_places=9
+    )
+    provider_attempts: tuple[HybridImageProviderAttempt, ...] = Field(
+        default=(), max_length=50
+    )
     status: HybridAssetStatus
     provider_image_generated: bool = False
     reused: bool = False
@@ -153,10 +247,17 @@ class HybridAssetAcquisitionManifest(ContractModel):
     budget_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     status: HybridAcquisitionManifestStatus
     entries: tuple[HybridAssetAcquisitionEntry, ...] = Field(min_length=1, max_length=500)
+    accounting: HybridImageAcquisitionAccounting | None = None
     fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
 
     def calculated_fingerprint(self) -> str:
-        return _sha256_json(self.model_dump(mode="json", exclude={"fingerprint"}))
+        payload = self.model_dump(mode="json", exclude={"fingerprint"})
+        if self.accounting is None:
+            payload.pop("accounting", None)
+            for entry in payload["entries"]:
+                entry.pop("estimated_cost_usd", None)
+                entry.pop("provider_attempts", None)
+        return _sha256_json(payload)
 
     @model_validator(mode="after")
     def validate_manifest(self) -> HybridAssetAcquisitionManifest:
@@ -174,6 +275,10 @@ class HybridAssetAcquisitionManifest(ContractModel):
             for item in self.entries
         ):
             raise ValueError("hybrid acquisition entry provenance differs")
+        if self.accounting is not None:
+            expected_accounting = summarize_hybrid_image_accounting(self.entries)
+            if self.accounting != expected_accounting:
+                raise ValueError("hybrid image accounting differs from entries")
         complete = all(item.status is HybridAssetStatus.RESOLVED for item in self.entries)
         if (self.status is HybridAcquisitionManifestStatus.COMPLETED) != complete:
             raise ValueError("hybrid acquisition completion differs from entries")
@@ -288,17 +393,65 @@ class HybridAssetAcquisitionCoordinator:
                 replacement = _resolved_reused_entry(entry, reusable[entry.shot_id])
             else:
                 spec = assets[entry.visual_asset_id]
-                response = await self._provider.generate_image(
-                    ImageAcquisitionProviderRequest(
-                        job_id=source.strategy_plan.job_id,
-                        command_id=command_id,
-                        correlation_id=context.correlation_id,
-                        attempt_number=context.attempt_number,
-                        visual_asset=spec,
-                        video_identity=source.visual_asset_plan.video_identity,
-                        configuration=self._configuration,
+                provider_attempt_number = len(entry.provider_attempts) + 1
+                started = _now()
+                try:
+                    response = await self._provider.generate_image(
+                        ImageAcquisitionProviderRequest(
+                            job_id=source.strategy_plan.job_id,
+                            command_id=command_id,
+                            correlation_id=context.correlation_id,
+                            attempt_number=context.attempt_number,
+                            visual_asset=spec,
+                            video_identity=source.visual_asset_plan.video_identity,
+                            configuration=self._configuration,
+                        )
                     )
-                )
+                except ImageAcquisitionProviderError as exc:
+                    failed_attempt = _provider_attempt_from_error(
+                        entry=entry,
+                        attempt_number=provider_attempt_number,
+                        started=started,
+                        error=exc,
+                        job_id=source.strategy_plan.job_id,
+                        stage_attempt_number=context.attempt_number,
+                    )
+                    failed_entry = entry.model_copy(
+                        update={
+                            "provider_attempts": (
+                                *entry.provider_attempts,
+                                failed_attempt,
+                            )
+                        }
+                    )
+                    failed_manifest = _replace_entry(current, failed_entry)
+                    await self._manifest_writer.checkpoint(current, failed_manifest)
+                    current = failed_manifest
+                    raise
+                except Exception:
+                    failed_attempt = _provider_attempt(
+                        entry=entry,
+                        attempt_number=provider_attempt_number,
+                        status=HybridImageProviderAttemptStatus.FAILED,
+                        started=started,
+                        terminal=_now(),
+                        provider="unknown",
+                        model=None,
+                        safe_error_code="provider_error",
+                        job_id=source.strategy_plan.job_id,
+                        stage_attempt_number=context.attempt_number,
+                    )
+                    failed_entry = entry.model_copy(
+                        update={
+                            "provider_attempts": (
+                                *entry.provider_attempts,
+                                failed_attempt,
+                            )
+                        }
+                    )
+                    failed_manifest = _replace_entry(current, failed_entry)
+                    await self._manifest_writer.checkpoint(current, failed_manifest)
+                    raise
                 if len(response.images) != 1:
                     raise HybridAssetAcquisitionError(
                         "hybrid image provider must return exactly one image"
@@ -315,6 +468,23 @@ class HybridAssetAcquisitionCoordinator:
                     width=width,
                     height=height,
                 )
+                completed_attempt = _provider_attempt(
+                    entry=entry,
+                    attempt_number=provider_attempt_number,
+                    status=HybridImageProviderAttemptStatus.COMPLETED,
+                    started=started,
+                    terminal=_now(),
+                    provider=response.provider,
+                    model=response.reported_model or response.requested_model,
+                    reported_cost=response.cost_usd,
+                    http_status=response.http_status,
+                    provider_request_id=response.request_id,
+                    artifact_relative_path=stored.storage_reference,
+                    artifact_sha256=stored.sha256,
+                    artifact_size_bytes=len(payload.content),
+                    job_id=source.strategy_plan.job_id,
+                    stage_attempt_number=context.attempt_number,
+                )
                 replacement = entry.model_copy(
                     update={
                         "status": HybridAssetStatus.RESOLVED,
@@ -326,6 +496,10 @@ class HybridAssetAcquisitionCoordinator:
                         "height": stored.height,
                         "storage_reference": stored.storage_reference,
                         "provenance": stored.provenance,
+                        "provider_attempts": (
+                            *entry.provider_attempts,
+                            completed_attempt,
+                        ),
                     }
                 )
             updated = _replace_entry(current, replacement)
@@ -420,6 +594,11 @@ def build_hybrid_acquisition_manifest(
                     shot=shot.model_dump(mode="json"),
                     visual_asset=spec.model_dump(mode="json"),
                 ),
+                estimated_cost_usd=(
+                    requirement.estimated_cost_usd
+                    if requirement is not None
+                    else None
+                ),
                 status=HybridAssetStatus.PENDING,
                 reused=shot.visual_mode in {VisualMode.REUSED_IMAGE, VisualMode.REUSED_VIDEO},
             )
@@ -433,12 +612,138 @@ def build_hybrid_acquisition_manifest(
     )
 
 
+def summarize_hybrid_image_accounting(
+    entries: tuple[HybridAssetAcquisitionEntry, ...],
+) -> HybridImageAcquisitionAccounting:
+    attempts = tuple(
+        attempt
+        for entry in entries
+        for attempt in entry.provider_attempts
+    )
+    return HybridImageAcquisitionAccounting(
+        image_request_count=len(attempts),
+        first_frame_request_count=sum(
+            attempt.purpose is ImageRequirementKind.VIDEO_FIRST_FRAME for attempt in attempts
+        ),
+        final_image_request_count=sum(
+            attempt.purpose is ImageRequirementKind.IMAGE_VISUAL for attempt in attempts
+        ),
+        estimated_image_cost_usd=sum(
+            (attempt.estimated_cost_usd for attempt in attempts), Decimal("0")
+        ),
+        reported_image_cost_usd=sum(
+            (
+                attempt.reported_cost_usd
+                for attempt in attempts
+                if attempt.reported_cost_usd is not None
+            ),
+            Decimal("0"),
+        ),
+        accounted_image_cost_usd=sum(
+            (attempt.accounted_cost_usd for attempt in attempts), Decimal("0")
+        ),
+        reported_cost_request_count=sum(
+            attempt.reported_cost_usd is not None for attempt in attempts
+        ),
+        estimated_fallback_request_count=sum(
+            attempt.reported_cost_usd is None for attempt in attempts
+        ),
+    )
+
+
 def serialize_hybrid_acquisition_manifest(manifest: HybridAssetAcquisitionManifest) -> bytes:
     return _canonical_json(manifest.model_dump(mode="json"))
 
 
 def deserialize_hybrid_acquisition_manifest(content: bytes) -> HybridAssetAcquisitionManifest:
     return HybridAssetAcquisitionManifest.model_validate(_strict_json(content))
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _provider_attempt(
+    *,
+    entry: HybridAssetAcquisitionEntry,
+    attempt_number: int,
+    status: HybridImageProviderAttemptStatus,
+    started: datetime,
+    terminal: datetime,
+    provider: str,
+    model: str | None,
+    reported_cost: Decimal | None = None,
+    http_status: int | None = None,
+    provider_request_id: str | None = None,
+    safe_error_code: str | None = None,
+    artifact_relative_path: str | None = None,
+    artifact_sha256: str | None = None,
+    artifact_size_bytes: int | None = None,
+    job_id: UUID,
+    stage_attempt_number: int,
+) -> HybridImageProviderAttempt:
+    estimated = entry.estimated_cost_usd or Decimal("0")
+    return HybridImageProviderAttempt(
+        job_id=job_id,
+        stage_attempt_number=stage_attempt_number,
+        scene_id=entry.shot_id.split("-shot-", 1)[0],
+        attempt_number=attempt_number,
+        purpose=entry.image_requirement or ImageRequirementKind.IMAGE_VISUAL,
+        provider=provider,
+        model=model,
+        estimated_cost_usd=estimated,
+        reported_cost_usd=reported_cost,
+        accounted_cost_usd=(reported_cost if reported_cost is not None else estimated),
+        cost_source=(
+            HybridImageCostSource.REPORTED
+            if reported_cost is not None
+            else HybridImageCostSource.ESTIMATED_FALLBACK
+        ),
+        http_status=http_status,
+        provider_request_id=provider_request_id,
+        provider_retry_count=0,
+        submission_started_at=started,
+        submitted_at=started,
+        terminal_at=terminal,
+        status=status,
+        safe_error_code=safe_error_code,
+        artifact_relative_path=artifact_relative_path,
+        artifact_sha256=artifact_sha256,
+        artifact_size_bytes=artifact_size_bytes,
+    )
+
+
+def _provider_attempt_from_error(
+    *,
+    entry: HybridAssetAcquisitionEntry,
+    attempt_number: int,
+    started: datetime,
+    error: ImageAcquisitionProviderError,
+    job_id: UUID,
+    stage_attempt_number: int,
+) -> HybridImageProviderAttempt:
+    subtype = getattr(error, "diagnostic_subtype", None)
+    code = subtype.value if subtype is not None else "provider_error"
+    uncertain = error.__class__.__name__.endswith("UncertainException")
+    return _provider_attempt(
+        entry=entry,
+        attempt_number=attempt_number,
+        status=(
+            HybridImageProviderAttemptStatus.UNCERTAIN
+            if uncertain
+            else HybridImageProviderAttemptStatus.FAILED
+        ),
+        started=started,
+        terminal=_now(),
+        provider="openrouter",
+        model=getattr(error, "requested_model", None),
+        reported_cost=getattr(error, "cost_usd", None),
+        http_status=getattr(error, "http_status", None),
+        provider_request_id=getattr(error, "provider_request_id", None),
+        safe_error_code=code,
+        job_id=job_id,
+        stage_attempt_number=stage_attempt_number,
+    )
 
 
 def _new_manifest(
@@ -456,6 +761,7 @@ def _new_manifest(
         budget_fingerprint=budget_fingerprint,
         status=HybridAcquisitionManifestStatus.IN_PROGRESS,
         entries=entries,
+        accounting=summarize_hybrid_image_accounting(entries),
         fingerprint="0" * 64,
     )
     return HybridAssetAcquisitionManifest(
@@ -465,6 +771,7 @@ def _new_manifest(
         budget_fingerprint=budget_fingerprint,
         status=HybridAcquisitionManifestStatus.IN_PROGRESS,
         entries=entries,
+        accounting=summarize_hybrid_image_accounting(entries),
         fingerprint=provisional.calculated_fingerprint(),
     )
 
@@ -500,6 +807,7 @@ def _replace_manifest(
         budget_fingerprint=manifest.budget_fingerprint,
         status=resolved_status,
         entries=resolved_entries,
+        accounting=summarize_hybrid_image_accounting(resolved_entries),
         fingerprint="0" * 64,
     )
     return HybridAssetAcquisitionManifest(
@@ -510,6 +818,7 @@ def _replace_manifest(
         budget_fingerprint=manifest.budget_fingerprint,
         status=resolved_status,
         entries=resolved_entries,
+        accounting=summarize_hybrid_image_accounting(resolved_entries),
         fingerprint=provisional.calculated_fingerprint(),
     )
 
@@ -674,6 +983,10 @@ __all__ = [
     "HybridAssetOrigin",
     "HybridAssetStatus",
     "HybridAcquisitionManifestStatus",
+    "HybridImageAcquisitionAccounting",
+    "HybridImageCostSource",
+    "HybridImageProviderAttempt",
+    "HybridImageProviderAttemptStatus",
     "HybridGeneratedAssetStore",
     "InMemoryHybridAssetAcquisitionManifestWriter",
     "ReusableAssetType",
@@ -683,4 +996,5 @@ __all__ = [
     "build_hybrid_acquisition_manifest",
     "deserialize_hybrid_acquisition_manifest",
     "serialize_hybrid_acquisition_manifest",
+    "summarize_hybrid_image_accounting",
 ]

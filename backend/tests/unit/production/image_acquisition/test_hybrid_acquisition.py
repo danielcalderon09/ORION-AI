@@ -24,6 +24,10 @@ from backend.src.production.image_acquisition.hybrid_acquisition import (
     deserialize_hybrid_acquisition_manifest,
     serialize_hybrid_acquisition_manifest,
 )
+from backend.src.production.image_acquisition.ports import (
+    GeneratedImagePayload,
+    ImageAcquisitionProviderResponse,
+)
 from backend.src.production.image_acquisition.providers import (
     SimulatedImageAcquisitionProvider,
 )
@@ -69,6 +73,27 @@ class CountingProvider(SimulatedImageAcquisitionProvider):
         if self.fail_on_call == len(self.calls):
             raise RuntimeError("simulated transient image failure")
         return await super().generate_image(request)
+
+
+class CostedProvider(CountingProvider):
+    def __init__(self, reported_costs: tuple[str | None, ...]) -> None:
+        super().__init__()
+        self.reported_costs = reported_costs
+
+    async def generate_image(self, request):
+        response = await super().generate_image(request)
+        index = len(self.calls) - 1
+        return response.model_copy(
+            update={
+                "cost_usd": (
+                    Decimal(self.reported_costs[index])
+                    if self.reported_costs[index] is not None
+                    else None
+                ),
+                "http_status": 200,
+                "request_id": f"image-request-{index + 1}",
+            }
+        )
 
 
 class MemoryGeneratedStore:
@@ -420,6 +445,94 @@ async def test_partial_recovery_reuses_completed_images() -> None:
     await _run(source, provider=provider, writer=writer)
     assert len(provider.calls) == 11
     assert provider.calls[:4] != provider.calls[5:9]
+
+
+@pytest.mark.asyncio
+async def test_provider_telemetry_and_mixed_decimal_accounting_are_durable() -> None:
+    source = _source(_strategy(VisualStrategyName.HYBRID_BALANCED))
+    provider = CostedProvider(("0.031", None, "0.029", "0.031", None, "0.029", "0.031", None, "0.029", "0.031"))
+    manifest, provider, _, _ = await _run(source, provider=provider)
+
+    assert manifest.accounting is not None
+    assert manifest.accounting.image_request_count == 10
+    assert manifest.accounting.first_frame_request_count == 5
+    assert manifest.accounting.final_image_request_count == 5
+    assert manifest.accounting.estimated_image_cost_usd == Decimal("0.40")
+    assert manifest.accounting.reported_image_cost_usd == Decimal("0.211")
+    assert manifest.accounting.accounted_image_cost_usd == Decimal("0.331")
+    assert manifest.accounting.reported_cost_request_count == 7
+    assert manifest.accounting.estimated_fallback_request_count == 3
+    attempt = manifest.entries[0].provider_attempts[0]
+    assert attempt.http_status == 200
+    assert attempt.provider_request_id == "image-request-1"
+    assert attempt.purpose.value in {"video_first_frame", "image_visual"}
+    assert attempt.cost_source.value == "reported"
+    assert serialize_hybrid_acquisition_manifest(manifest) == serialize_hybrid_acquisition_manifest(
+        deserialize_hybrid_acquisition_manifest(serialize_hybrid_acquisition_manifest(manifest))
+    )
+
+
+@pytest.mark.asyncio
+async def test_reference_three_request_accounting_shape() -> None:
+    base = _strategy(VisualStrategyName.HYBRID_BALANCED)
+    strategy = build_hybrid_visual_strategy_plan(
+        job_id=base.job_id,
+        source_shot_expansion_artifact_id=base.source_shot_expansion_artifact_id,
+        source_shot_expansion_sha256=base.source_shot_expansion_sha256,
+        source_shot_expansion_fingerprint=base.source_shot_expansion_fingerprint,
+        shots=base.shots[:3],
+        strategy_name=VisualStrategyName.HYBRID_BALANCED,
+    )
+    source = _source(strategy)
+    manifest, _, _, _ = await _run(
+        source,
+        provider=CostedProvider(("0.031", None, "0.029")),
+    )
+    assert manifest.accounting is not None
+    assert manifest.accounting.image_request_count == 3
+    assert manifest.accounting.first_frame_request_count == 2
+    assert manifest.accounting.final_image_request_count == 1
+    assert manifest.accounting.estimated_image_cost_usd == Decimal("0.12")
+    assert manifest.accounting.reported_image_cost_usd == Decimal("0.060")
+    assert manifest.accounting.accounted_image_cost_usd == Decimal("0.100")
+    assert manifest.accounting.reported_cost_request_count == 2
+    assert manifest.accounting.estimated_fallback_request_count == 1
+
+
+def test_invalid_float_reported_cost_is_rejected() -> None:
+    with pytest.raises(ValueError, match="reported image cost"):
+        ImageAcquisitionProviderResponse(
+            images=(
+                GeneratedImagePayload(
+                    content=b"image",
+                    mime_type="image/png",
+                    index=0,
+                ),
+            ),
+            provider="fixture",
+            cost_usd=0.1,
+            latency_ms=0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_partial_failure_persists_attempt_without_double_counting_completed_entries() -> None:
+    source = _source(_strategy(VisualStrategyName.HYBRID_BALANCED))
+    writer = InMemoryHybridAssetAcquisitionManifestWriter()
+    provider = CountingProvider(fail_on_call=5)
+    with pytest.raises(RuntimeError):
+        await _run(source, provider=provider, writer=writer)
+    checkpoint = await writer.read()
+    assert checkpoint is not None
+    assert checkpoint.accounting is not None
+    assert checkpoint.accounting.image_request_count == 5
+    assert len(checkpoint.entries[4].provider_attempts) == 1
+    assert checkpoint.entries[4].provider_attempts[0].status.value == "failed"
+
+    provider.fail_on_call = None
+    completed = await _run(source, provider=provider, writer=writer)
+    assert completed[0].accounting is not None
+    assert completed[0].accounting.image_request_count == 11
 
 
 @pytest.mark.asyncio
