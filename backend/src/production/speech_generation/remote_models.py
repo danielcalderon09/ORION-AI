@@ -101,6 +101,17 @@ class RemoteSpeechSubmissionCheckpoint(ContractModel):
         return self
 
 
+class RemoteSpeechTransportDiagnostic(ContractModel):
+    """Sanitized diagnostics for an ambiguous transport interruption."""
+
+    timeout_seconds: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
+    exception_class: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,100}$")
+    elapsed_seconds: Decimal | None = Field(
+        default=None, ge=0, max_digits=18, decimal_places=6
+    )
+    endpoint_family: str = Field(pattern=r"^[a-z0-9_]{1,100}$")
+
+
 class RemoteSpeechJobRecord(ContractModel):
     schema_version: str = Field(default="1.0.0", pattern=r"^\d+\.\d+\.\d+$")
     job_id: UUID
@@ -135,6 +146,7 @@ class RemoteSpeechJobRecord(ContractModel):
     output: RemoteSpeechOutputMetadata | None = None
     fresh_submission_permitted: bool
     safe_error_code: str | None = Field(default=None, pattern=r"^[a-z0-9_]{1,100}$")
+    transport_diagnostic: RemoteSpeechTransportDiagnostic | None = None
     options: dict[str, bool | int | str] = Field(default_factory=dict)
     metadata: dict[str, bool | int | str] = Field(default_factory=dict)
 

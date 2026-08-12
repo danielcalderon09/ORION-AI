@@ -511,7 +511,20 @@ request eligible; it does not submit anything. A future recovery operation must 
 a new request identity and new accounting entry. `confirmed_completed` is recoverable
 without resubmission, while `confirmed_failed` and `unresolved` remain blocked until
 the applicable recovery policy is explicitly satisfied. Historical uncertain cost
-exposure remains counted once, so resolution cannot double-count or erase it.
+ exposure remains counted once, so resolution cannot double-count or erase it.
+
+### TTS transport-timeout diagnostics
+
+An OpenRouter speech timeout is recorded with the semantic status `uncertain`;
+it is never treated as proof that the provider did not receive the request and
+never becomes an automatic retry. The durable record additionally uses the
+sanitized `speech_transport_timeout` error code and may retain the configured
+timeout, exception class, elapsed time, and endpoint family. Network resets use
+`speech_transport_error`. These diagnostics contain no credentials, headers,
+provider bodies, or signed URLs. Historical remote speech records without the
+optional diagnostic remain readable. The speech timeout is bounded by Settings
+(`120` seconds by default, up to `300` seconds); changing it does not alter the
+fail-closed recovery policy.
 
 ## SHORT-V1.10E risk-authorized unresolved TTS replacement
 

@@ -150,3 +150,36 @@ def test_speech_settings_reject_unsafe_limits(tmp_path, name, value) -> None:
             TEMP_DIR=tmp_path / "temp",
             **{name: value},
         )
+
+
+@pytest.mark.parametrize("timeout", [120, 180, 300])
+def test_speech_openrouter_timeout_accepts_bounded_values(tmp_path, timeout) -> None:
+    from backend.src.infrastructure.config.settings import Settings
+
+    settings = Settings(
+        _env_file=None,
+        ORION_HOME=tmp_path / "home",
+        MODELS_DIR=tmp_path / "models",
+        PROJECTS_DIR=tmp_path / "projects",
+        TEMP_DIR=tmp_path / "temp",
+        ORION_SPEECH_GENERATION_OPENROUTER_TIMEOUT_SECONDS=timeout,
+    )
+
+    assert timeout == settings.ORION_SPEECH_GENERATION_OPENROUTER_TIMEOUT_SECONDS
+
+
+@pytest.mark.parametrize("timeout", [0, -1, 301, 10_000])
+def test_speech_openrouter_timeout_rejects_unsafe_values(tmp_path, timeout) -> None:
+    from pydantic import ValidationError
+
+    from backend.src.infrastructure.config.settings import Settings
+
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            ORION_HOME=tmp_path / "home",
+            MODELS_DIR=tmp_path / "models",
+            PROJECTS_DIR=tmp_path / "projects",
+            TEMP_DIR=tmp_path / "temp",
+            ORION_SPEECH_GENERATION_OPENROUTER_TIMEOUT_SECONDS=timeout,
+        )

@@ -5,7 +5,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -178,7 +178,9 @@ class Settings(BaseSettings):
     ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST: Decimal | None = None
     ORION_SPEECH_GENERATION_MAX_REQUESTS_PER_JOB: int = 1
     ORION_SPEECH_GENERATION_OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
-    ORION_SPEECH_GENERATION_OPENROUTER_TIMEOUT_SECONDS: float = 120
+    ORION_SPEECH_GENERATION_OPENROUTER_TIMEOUT_SECONDS: float = Field(
+        default=120, gt=0, le=300
+    )
     ORION_SPEECH_GENERATION_REMOTE_MAX_POLL_ATTEMPTS: int = 120
     ORION_SPEECH_GENERATION_REMOTE_POLL_INTERVAL_SECONDS: float = 5
     ORION_SPEECH_GENERATION_REMOTE_JOB_MAX_BYTES: int = 1_000_000

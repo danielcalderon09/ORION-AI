@@ -185,7 +185,35 @@ async def test_timeout_is_uncertain_and_never_submits_again() -> None:
     with pytest.raises(SpeechProviderUncertainError):
         await provider.generate(_request())
     assert calls == 1
-    assert (await store.list_records())[0].status is RemoteSpeechJobStatus.UNCERTAIN
+    record = (await store.list_records())[0]
+    assert record.status is RemoteSpeechJobStatus.UNCERTAIN
+    assert record.safe_error_code == "speech_transport_timeout"
+    assert record.submitted_at is None
+    assert record.remote_generation_id is None
+    assert record.transport_diagnostic is not None
+    assert record.transport_diagnostic.timeout_seconds == Decimal("120")
+    assert record.transport_diagnostic.exception_class == "ReadTimeout"
+    assert record.transport_diagnostic.elapsed_seconds is not None
+    assert record.transport_diagnostic.endpoint_family == "api_v1_audio_speech"
+    assert "fake-key-never-real" not in record.model_dump_json()
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_request_error_is_uncertain_but_distinguishable_from_timeout() -> None:
+    store = InMemoryRemoteSpeechJobStore()
+
+    def reset(request: httpx.Request) -> httpx.Response:
+        raise httpx.NetworkError("offline reset", request=request)
+
+    provider = _provider(httpx.MockTransport(reset), store=store)
+    with pytest.raises(SpeechProviderUncertainError):
+        await provider.generate(_request())
+    record = (await store.list_records())[0]
+    assert record.status is RemoteSpeechJobStatus.UNCERTAIN
+    assert record.safe_error_code == "speech_transport_error"
+    assert record.transport_diagnostic is not None
+    assert record.transport_diagnostic.exception_class == "NetworkError"
     await provider.close()
 
 

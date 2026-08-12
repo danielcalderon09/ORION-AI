@@ -59,6 +59,7 @@ from backend.src.production.speech_generation.remote_models import (
     RemoteSpeechJobStatus,
     RemoteSpeechOutputExpectation,
     RemoteSpeechOutputMetadata,
+    RemoteSpeechTransportDiagnostic,
 )
 from backend.src.production.speech_generation.remote_ports import RemoteSpeechJobStore
 from backend.src.production.speech_generation.unresolved_replacement import (
@@ -274,8 +275,21 @@ class OpenRouterSpeechGenerationProvider:
             await self._mark_uncertain(submitting)
             raise
 
-        except (httpx.TimeoutException, httpx.RequestError) as exc:
-            await self._mark_uncertain(submitting)
+        except httpx.TimeoutException as exc:
+            await self._mark_uncertain(
+                submitting,
+                safe_error_code="speech_transport_timeout",
+                diagnostic=self._transport_diagnostic(submitting, exc),
+            )
+            raise SpeechProviderUncertainError(
+                "OpenRouter speech submission outcome is uncertain"
+            ) from exc
+        except httpx.RequestError as exc:
+            await self._mark_uncertain(
+                submitting,
+                safe_error_code="speech_transport_error",
+                diagnostic=self._transport_diagnostic(submitting, exc),
+            )
             raise SpeechProviderUncertainError(
                 "OpenRouter speech submission outcome is uncertain"
             ) from exc
@@ -568,7 +582,31 @@ class OpenRouterSpeechGenerationProvider:
             }
         )
 
-    async def _mark_uncertain(self, record: RemoteSpeechJobRecord) -> None:
+    def _transport_diagnostic(
+        self,
+        record: RemoteSpeechJobRecord,
+        exception: httpx.RequestError,
+    ) -> RemoteSpeechTransportDiagnostic:
+        if record.submission_started_at is None:
+            raise ValueError("uncertain speech record lacks submission start time")
+        elapsed = max(
+            Decimal("0"),
+            Decimal(str((self._now() - record.submission_started_at).total_seconds())),
+        ).quantize(Decimal("0.000001"))
+        return RemoteSpeechTransportDiagnostic(
+            timeout_seconds=Decimal(str(self._timeout.read)),
+            exception_class=type(exception).__name__,
+            elapsed_seconds=elapsed,
+            endpoint_family="api_v1_audio_speech",
+        )
+
+    async def _mark_uncertain(
+        self,
+        record: RemoteSpeechJobRecord,
+        *,
+        safe_error_code: str = "submission_outcome_uncertain",
+        diagnostic: RemoteSpeechTransportDiagnostic | None = None,
+    ) -> None:
         current = await self._store.read(
             job_id=record.job_id,
             attempt_number=record.attempt_number,
@@ -578,7 +616,8 @@ class OpenRouterSpeechGenerationProvider:
             uncertain = record.model_copy(
                 update={
                     "status": RemoteSpeechJobStatus.UNCERTAIN,
-                    "safe_error_code": "submission_outcome_uncertain",
+                    "safe_error_code": safe_error_code,
+                    "transport_diagnostic": diagnostic,
                 }
             )
             await self._store.checkpoint(previous=record, current=uncertain)
