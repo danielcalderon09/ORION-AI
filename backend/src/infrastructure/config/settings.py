@@ -696,7 +696,8 @@ class Settings(BaseSettings):
             and self.ORION_VIDEO_CLIP_GENERATION_PROVIDER != "openrouter"
         ):
             raise ValueError("billable video authorization requires provider=openrouter")
-        if self.ORION_VIDEO_CLIP_GENERATION_PROVIDER == "openrouter" and (
+        video_runtime_required = self.ORION_VISUAL_STRATEGY != "image_only"
+        if video_runtime_required and self.ORION_VIDEO_CLIP_GENERATION_PROVIDER == "openrouter" and (
             not self.ORION_VIDEO_CLIP_GENERATION_MODEL.strip()
             or self.ORION_VIDEO_CLIP_GENERATION_MODEL == "simulated-video-v1"
         ):
@@ -705,7 +706,7 @@ class Settings(BaseSettings):
             self.ORION_ASSET_PUBLISHING_PUBLISHER != "filesystem"
         ):
             raise ValueError("filesystem video frames require filesystem asset publishing")
-        if self.ORION_VIDEO_CLIP_GENERATION_PROVIDER == "openrouter" and (
+        if video_runtime_required and self.ORION_VIDEO_CLIP_GENERATION_PROVIDER == "openrouter" and (
             self.ORION_VIDEO_CLIP_GENERATION_FRAME_PUBLISHER != "filesystem"
         ):
             raise ValueError("OpenRouter video requires filesystem first-frame publishing")

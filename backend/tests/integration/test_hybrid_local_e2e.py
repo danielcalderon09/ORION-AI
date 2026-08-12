@@ -23,7 +23,14 @@ from backend.src.production.video_clip_generation.hybrid_generation import (
 )
 
 
-def _settings(tmp_path, *, strategy: str, maximum_total: str = "3.00") -> Settings:
+def _settings(
+    tmp_path,
+    *,
+    strategy: str,
+    maximum_total: str = "3.00",
+    video_provider: str = "simulated",
+    video_billable: bool = False,
+) -> Settings:
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
     if ffmpeg is None or ffprobe is None:
@@ -42,6 +49,8 @@ def _settings(tmp_path, *, strategy: str, maximum_total: str = "3.00") -> Settin
         ORION_VIDEO_CLIP_GENERATION_MAX_REQUESTS_PER_JOB=20,
         ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_COST_USD=Decimal("0.30"),
         ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_JOB_COST_USD=Decimal("2.50"),
+        ORION_VIDEO_CLIP_GENERATION_PROVIDER=video_provider,
+        ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS=video_billable,
         ORION_MAX_TOTAL_VISUAL_COST_USD=Decimal(maximum_total),
         ORION_VIDEO_CLIP_GENERATION_FFMPEG_PATH=ffmpeg,
         ORION_VIDEO_CLIP_GENERATION_FFPROBE_PATH=ffprobe,
@@ -213,7 +222,12 @@ async def test_45_second_hybrid_runtime_is_deterministic(
 async def test_image_only_runtime_renders_mp4_without_video_provider_calls(
     tmp_path, monkeypatch
 ) -> None:
-    settings = _settings(tmp_path, strategy="image_only")
+    settings = _settings(
+        tmp_path,
+        strategy="image_only",
+        video_provider="openrouter",
+        video_billable=False,
+    )
     container = build_production_container(settings)
     ProductionBase.metadata.create_all(container.engine)
     application = LocalMvpApplication(
@@ -299,6 +313,25 @@ async def test_image_only_runtime_renders_mp4_without_video_provider_calls(
         )
         assert all(entry.provider_call_count == 0 for entry in video_manifest.entries)
         assert any(item.artifact_type is ArtifactType.SUBTITLES for item in artifacts)
+    finally:
+        await container.aclose()
+
+
+@pytest.mark.asyncio
+async def test_image_only_container_starts_with_disabled_openrouter_video(
+    tmp_path,
+) -> None:
+    settings = _settings(
+        tmp_path,
+        strategy="image_only",
+        video_provider="openrouter",
+        video_billable=False,
+    )
+    container = build_production_container(settings)
+    try:
+        assert container.video_clip_generation_provider.__class__.__name__ == (
+            "DisabledVideoClipGenerationProvider"
+        )
     finally:
         await container.aclose()
 

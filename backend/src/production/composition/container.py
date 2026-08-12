@@ -374,6 +374,7 @@ from backend.src.production.video_clip_generation.ports import (
     VideoClipGenerationProvider,
 )
 from backend.src.production.video_clip_generation.providers import (
+    DisabledVideoClipGenerationProvider,
     SimulatedVideoClipGenerationProvider,
 )
 from backend.src.production.video_clip_generation.providers.availability import (
@@ -777,10 +778,14 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         binary_assets=filesystem_binary_asset_store,
         video_clips=filesystem_video_clip_store,
     )
-    video_clip_generation_provider = _build_video_clip_generation_provider(
-        settings,
-        asset_publisher=asset_publisher,
-        clock=clock,
+    video_clip_generation_provider = (
+        DisabledVideoClipGenerationProvider()
+        if visual_strategy is VisualStrategyName.IMAGE_ONLY
+        else _build_video_clip_generation_provider(
+            settings,
+            asset_publisher=asset_publisher,
+            clock=clock,
+        )
     )
     image_acquisition_manifest_reader = DurableImageAcquisitionManifestReader(
         workspace_root=settings.PROJECTS_DIR,

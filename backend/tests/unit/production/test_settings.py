@@ -117,6 +117,13 @@ def test_visual_strategy_accepts_image_only_without_changing_default(tmp_path) -
         Settings(**values, ORION_VISUAL_STRATEGY="image_only").ORION_VISUAL_STRATEGY
         == "image_only"
     )
+    image_only = Settings(
+        **values,
+        ORION_VISUAL_STRATEGY="image_only",
+        ORION_VIDEO_CLIP_GENERATION_PROVIDER="openrouter",
+        ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS=False,
+    )
+    assert image_only.ORION_VIDEO_CLIP_GENERATION_PROVIDER == "openrouter"
 
 
 @pytest.mark.parametrize(
