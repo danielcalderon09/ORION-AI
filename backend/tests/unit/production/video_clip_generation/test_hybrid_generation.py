@@ -311,6 +311,7 @@ async def _execute(source, *, provider=None, writer=None):
         (VisualStrategyName.HYBRID_BALANCED, 5, 34),
         (VisualStrategyName.HYBRID_ECONOMY, 3, 20),
         (VisualStrategyName.FULL_VIDEO, 10, 54),
+        (VisualStrategyName.IMAGE_ONLY, 0, 0),
     ),
 )
 async def test_executes_only_authorized_generated_video_requirements(

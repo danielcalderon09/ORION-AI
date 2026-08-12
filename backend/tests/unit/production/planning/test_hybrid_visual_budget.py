@@ -124,6 +124,32 @@ def _synthetic_shots(count: int) -> tuple[VisualShotAllocation, ...]:
     )
 
 
+def _educational_api_shots() -> tuple[VisualShotAllocation, ...]:
+    roles = adaptive_narrative_roles(5)
+    layout = (
+        (1, 1, 0, roles[0], VisualShotFunction.ESTABLISH),
+        (1, 2, 1, roles[0], VisualShotFunction.ADVANCE),
+        (2, 1, 0, roles[1], VisualShotFunction.PRIMARY),
+        (3, 1, 0, roles[2], VisualShotFunction.REVEAL),
+        (4, 1, 0, roles[3], VisualShotFunction.ADVANCE),
+        (5, 1, 0, roles[4], VisualShotFunction.RESOLVE),
+    )
+    return tuple(
+        VisualShotAllocation(
+            scene_id=f"scene-{scene:03d}",
+            shot_id=f"scene-{scene:03d}-shot-{shot:03d}",
+            shot_sequence_index=sequence,
+            visual_asset_id=f"asset-s{scene:03d}-q{shot:03d}-v001",
+            narrative_role=role,
+            visual_function=function,
+            intent_key=f"api:{scene}:{shot}:{function.value}",
+            usable_duration_ms=5_000,
+            provider_duration_seconds=6,
+        )
+        for scene, shot, sequence, role, function in layout
+    )
+
+
 @pytest.mark.parametrize(
     ("name", "videos", "seconds", "images", "total"),
     (
@@ -157,6 +183,92 @@ def test_reference_45s_strategy_and_cost_accounting(
         shot.shot_id
         for shot in strategy.shots
         if shot.visual_mode is VisualMode.GENERATED_VIDEO
+    }
+
+
+def test_image_only_api_fixture_is_all_images_with_zero_video_exposure() -> None:
+    strategy = _strategy(
+        VisualStrategyName.IMAGE_ONLY,
+        shots=_educational_api_shots(),
+    )
+    budget = build_aggregate_visual_budget_plan(
+        strategy_plan=strategy,
+        authorization=_authorization(
+            maximum_image_requests=6,
+            maximum_video_requests=0,
+            maximum_image_cost="0.24",
+            maximum_video_cost_per_request="0",
+            maximum_video_cost="0",
+            maximum_total_cost="0.24",
+        ),
+    )
+
+    assert strategy.summary.visual_shot_count == 6
+    assert strategy.summary.generated_image_shots == 6
+    assert strategy.summary.generated_video_shots == 0
+    assert strategy.summary.reused_image_shots == 0
+    assert strategy.summary.reused_video_shots == 0
+    assert strategy.summary.quality_floor_pass is True
+    assert all(shot.visual_mode is VisualMode.GENERATED_IMAGE for shot in strategy.shots)
+    assert all(shot.source_asset_id is None for shot in strategy.shots)
+    assert all(shot.provider_duration_seconds is None for shot in strategy.shots)
+    assert len({shot.motion_mode for shot in strategy.shots}) > 1
+    assert budget.image_requests == 6
+    assert budget.video_requests == 0
+    assert budget.purchased_video_seconds == 0
+    assert budget.estimated_image_cost_usd == Decimal("0.24")
+    assert budget.estimated_video_cost_usd == Decimal("0")
+    assert budget.estimated_total_visual_cost_usd == Decimal("0.24")
+    assert {item.requirement.value for item in budget.image_requirements} == {
+        "image_visual"
+    }
+    assert budget.budget_pass is True
+
+
+def test_image_only_image_and_total_gates_fail_but_zero_video_gate_passes() -> None:
+    strategy = _strategy(
+        VisualStrategyName.IMAGE_ONLY,
+        shots=_educational_api_shots(),
+    )
+    image_rejected = build_aggregate_visual_budget_plan(
+        strategy_plan=strategy,
+        authorization=_authorization(
+            maximum_image_requests=5,
+            maximum_video_requests=0,
+            maximum_video_cost_per_request="0",
+            maximum_video_cost="0",
+        ),
+    )
+    total_rejected = build_aggregate_visual_budget_plan(
+        strategy_plan=strategy,
+        authorization=_authorization(
+            maximum_image_requests=6,
+            maximum_video_requests=0,
+            maximum_image_cost="0.24",
+            maximum_video_cost_per_request="0",
+            maximum_video_cost="0",
+            maximum_total_cost="0.23",
+        ),
+    )
+
+    assert image_rejected.video_requests == 0
+    assert image_rejected.budget_pass is False
+    assert total_rejected.video_requests == 0
+    assert total_rejected.budget_pass is False
+
+
+def test_strategy_comparison_preserves_existing_allocations() -> None:
+    shots = _educational_api_shots()
+    counts = {
+        name: _strategy(name, shots=shots).summary.generated_video_shots
+        for name in VisualStrategyName
+    }
+
+    assert counts == {
+        VisualStrategyName.FULL_VIDEO: 6,
+        VisualStrategyName.HYBRID_BALANCED: 3,
+        VisualStrategyName.HYBRID_ECONOMY: 2,
+        VisualStrategyName.IMAGE_ONLY: 0,
     }
 
 

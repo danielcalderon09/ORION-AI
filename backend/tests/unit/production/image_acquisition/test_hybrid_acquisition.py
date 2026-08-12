@@ -373,6 +373,7 @@ async def _run(source, *, provider=None, writer=None, catalog=None):
         (VisualStrategyName.HYBRID_BALANCED, 10, 5, 5),
         (VisualStrategyName.HYBRID_ECONOMY, 10, 3, 7),
         (VisualStrategyName.FULL_VIDEO, 10, 10, 0),
+        (VisualStrategyName.IMAGE_ONLY, 10, 0, 10),
     ),
 )
 async def test_generated_modes_match_exact_authorized_image_requirements(

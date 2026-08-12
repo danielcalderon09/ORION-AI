@@ -11,6 +11,9 @@ import pytest
 from backend.src.infrastructure.config.settings import Settings
 from backend.src.production.composition import build_production_container
 from backend.src.production.domain.enums import ArtifactType, ProductionJobStatus
+from backend.src.production.image_acquisition import (
+    deserialize_hybrid_acquisition_manifest,
+)
 from backend.src.production.infrastructure.persistence.models import ProductionBase
 from backend.src.production.infrastructure.persistence.session import sqlite_url_from_path
 from backend.src.production.local_mvp import LocalMvpApplication, LocalMvpRequest
@@ -207,8 +210,105 @@ async def test_45_second_hybrid_runtime_is_deterministic(
 
 
 @pytest.mark.asyncio
-async def test_partial_image_recovery_reuses_completed_assets(tmp_path, monkeypatch) -> None:
-    settings = _settings(tmp_path, strategy="hybrid_balanced")
+async def test_image_only_runtime_renders_mp4_without_video_provider_calls(
+    tmp_path, monkeypatch
+) -> None:
+    settings = _settings(tmp_path, strategy="image_only")
+    container = build_production_container(settings)
+    ProductionBase.metadata.create_all(container.engine)
+    application = LocalMvpApplication(
+        create_job=container.create_job,
+        get_job=container.get_job,
+        list_artifacts=container.list_artifacts,
+        list_events=container.list_events,
+        worker=container.worker,
+        workspace_root=settings.PROJECTS_DIR,
+        configured_renderer="ffmpeg",
+    )
+
+    async def forbid_video_provider_call(request):
+        raise AssertionError(f"image_only attempted video request for {request.shot_id}")
+
+    monkeypatch.setattr(
+        container.video_clip_generation_provider,
+        "generate_clip",
+        forbid_video_provider_call,
+    )
+    try:
+        report = await application.run(
+            LocalMvpRequest(
+                prompt="Explica qué es una API con ejemplos visuales claros.",
+                target_duration_seconds=30,
+                scene_count_hint=5,
+                aspect_ratio="9:16",
+            )
+        )
+
+        assert report.success is True, report.failure
+        assert report.output is not None
+        assert report.output.duration_ms == pytest.approx(30_000, abs=500)
+        assert report.output.video_codec == "h264"
+        assert report.output.audio_codec == "aac"
+        assert (report.output.width, report.output.height) == (720, 1280)
+        assert (
+            report.output.frame_rate_numerator / report.output.frame_rate_denominator
+        ) == pytest.approx(24, abs=0.01)
+
+        assert report.visual_summary is not None
+        visual = report.visual_summary
+        assert visual.visual_strategy == "image_only"
+        assert visual.visual_shots > 0
+        assert visual.generated_image_shots == visual.visual_shots
+        assert visual.generated_video_shots == 0
+        assert visual.image_requests == visual.visual_shots
+        assert visual.video_requests == 0
+        assert visual.purchased_video_seconds == 0
+        assert Decimal(visual.image_accounted_cost_usd) > 0
+        assert Decimal(visual.estimated_visual_cost_usd) == Decimal(
+            visual.image_estimated_cost_usd
+        )
+
+        assert report.cost_summary is not None
+        assert Decimal(report.cost_summary.image_accounted_cost_usd) > 0
+        assert Decimal(report.cost_summary.video_accounted_cost_usd) == 0
+
+        page = await container.list_artifacts.execute(report.job_id)
+        artifacts = tuple(item.artifact for item in page.items)
+        acquisition_artifact = next(
+            item
+            for item in artifacts
+            if item.artifact_type is ArtifactType.HYBRID_ASSET_ACQUISITION_MANIFEST
+        )
+        acquisition = deserialize_hybrid_acquisition_manifest(
+            (settings.PROJECTS_DIR / acquisition_artifact.relative_path).read_bytes()
+        )
+        assert all(
+            entry.image_requirement is not None
+            and entry.image_requirement.value == "image_visual"
+            for entry in acquisition.entries
+        )
+        assert len({entry.motion_mode for entry in acquisition.entries}) > 1
+
+        video_artifact = next(
+            item
+            for item in artifacts
+            if item.artifact_type is ArtifactType.HYBRID_VIDEO_GENERATION_MANIFEST
+        )
+        video_manifest = deserialize_hybrid_video_manifest(
+            (settings.PROJECTS_DIR / video_artifact.relative_path).read_bytes()
+        )
+        assert all(entry.provider_call_count == 0 for entry in video_manifest.entries)
+        assert any(item.artifact_type is ArtifactType.SUBTITLES for item in artifacts)
+    finally:
+        await container.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strategy", ("hybrid_balanced", "image_only"))
+async def test_partial_image_recovery_reuses_completed_assets(
+    tmp_path, monkeypatch, strategy: str
+) -> None:
+    settings = _settings(tmp_path, strategy=strategy)
     container = build_production_container(settings)
     ProductionBase.metadata.create_all(container.engine)
     application = LocalMvpApplication(
@@ -249,6 +349,8 @@ async def test_partial_image_recovery_reuses_completed_assets(tmp_path, monkeypa
         assert calls.count(calls[2]) == 2
         assert completed.visual_summary is not None
         assert len(calls) == completed.visual_summary.image_requests + 1
+        if strategy == "image_only":
+            assert completed.visual_summary.video_requests == 0
     finally:
         await container.aclose()
 
@@ -304,7 +406,10 @@ async def test_partial_video_recovery_reuses_completed_clips(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_render_recovery_reuses_provider_outputs(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("strategy", ("hybrid_balanced", "image_only"))
+async def test_render_recovery_reuses_provider_outputs(
+    tmp_path, monkeypatch, strategy: str
+) -> None:
     original_render = LocalHybridImageMotionRenderer.render
     render_calls = 0
 
@@ -316,7 +421,7 @@ async def test_render_recovery_reuses_provider_outputs(tmp_path, monkeypatch) ->
         return await original_render(self, composition=composition, execution=execution)
 
     monkeypatch.setattr(LocalHybridImageMotionRenderer, "render", fail_render_once)
-    settings = _settings(tmp_path, strategy="hybrid_balanced")
+    settings = _settings(tmp_path, strategy=strategy)
     container = build_production_container(settings)
     ProductionBase.metadata.create_all(container.engine)
     application = LocalMvpApplication(
@@ -355,6 +460,8 @@ async def test_render_recovery_reuses_provider_outputs(tmp_path, monkeypatch) ->
         assert completed.visual_summary is not None
         assert video_calls == calls_before_recovery
         assert video_calls == completed.visual_summary.video_requests
+        if strategy == "image_only":
+            assert video_calls == 0
         assert render_calls == 2
     finally:
         await container.aclose()

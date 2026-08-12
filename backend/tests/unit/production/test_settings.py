@@ -101,6 +101,24 @@ def test_production_defaults_are_offline_and_non_billable(tmp_path) -> None:
     assert settings.ORION_VIDEO_CLIP_GENERATION_OPENROUTER_API_KEY is None
 
 
+def test_visual_strategy_accepts_image_only_without_changing_default(tmp_path) -> None:
+    from backend.src.infrastructure.config.settings import Settings
+
+    values = {
+        "_env_file": None,
+        "ORION_HOME": tmp_path / "home",
+        "MODELS_DIR": tmp_path / "models",
+        "PROJECTS_DIR": tmp_path / "projects",
+        "TEMP_DIR": tmp_path / "temp",
+    }
+
+    assert Settings(**values).ORION_VISUAL_STRATEGY == "full_video"
+    assert (
+        Settings(**values, ORION_VISUAL_STRATEGY="image_only").ORION_VISUAL_STRATEGY
+        == "image_only"
+    )
+
+
 @pytest.mark.parametrize(
     ("name", "value"),
     [

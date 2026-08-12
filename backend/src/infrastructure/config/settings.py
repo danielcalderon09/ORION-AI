@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     ORION_VISUAL_ASSET_PLANNING_MAX_SCENE_PLAN_BYTES: int = 4_000_000
     ORION_VISUAL_ASSET_PLANNING_MAX_ARTIFACT_BYTES: int = 8_000_000
     ORION_VISUAL_STRATEGY: Literal[
-        "full_video", "hybrid_balanced", "hybrid_economy"
+        "full_video", "hybrid_balanced", "hybrid_economy", "image_only"
     ] = "full_video"
     ORION_HYBRID_IMAGE_ESTIMATED_COST_USD: Decimal = Decimal("0.04")
     ORION_HYBRID_VIDEO_PRICE_PER_SECOND_USD: Decimal = Decimal("0.03")

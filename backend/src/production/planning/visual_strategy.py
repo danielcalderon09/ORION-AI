@@ -30,6 +30,7 @@ class VisualStrategyName(StrEnum):
     FULL_VIDEO = "full_video"
     HYBRID_BALANCED = "hybrid_balanced"
     HYBRID_ECONOMY = "hybrid_economy"
+    IMAGE_ONLY = "image_only"
 
 
 class VisualStrategyQualityError(ValueError):
@@ -196,6 +197,20 @@ def build_hybrid_visual_strategy_plan(
         strategic = tuple(_strategic_from_allocation(shot) for shot in allocated)
         quality_floor_pass = True
         degradation_authorized = False
+    elif strategy_name is VisualStrategyName.IMAGE_ONLY:
+        strategic = tuple(
+            _strategic_from_allocation(
+                shot,
+                visual_mode=VisualMode.GENERATED_IMAGE,
+                motion_mode=_image_only_motion(shot, canonical_index),
+                provider_duration_seconds=None,
+                preserve_provider_duration=False,
+                preserve_source_asset_id=False,
+            )
+            for canonical_index, shot in enumerate(canonical)
+        )
+        quality_floor_pass = True
+        degradation_authorized = False
     else:
         strategic, quality_floor_pass = _build_hybrid_shots(
             canonical,
@@ -295,6 +310,8 @@ def _build_hybrid_shots(
 
 
 def _desired_video_count(count: int, strategy_name: VisualStrategyName) -> int:
+    if strategy_name is VisualStrategyName.IMAGE_ONLY:
+        return 0
     if strategy_name is VisualStrategyName.HYBRID_BALANCED:
         return max(1, ceil(count * 0.50))
     if strategy_name is VisualStrategyName.HYBRID_ECONOMY:
@@ -447,10 +464,33 @@ def _image_motion(shot: VisualShotAllocation) -> VisualMotionMode:
     )
 
 
+def _image_only_motion(
+    shot: VisualShotAllocation, canonical_index: int
+) -> VisualMotionMode:
+    """Select deterministic local motion while avoiding a uniform slideshow."""
+
+    cycle = (
+        VisualMotionMode.PAN,
+        VisualMotionMode.ZOOM_IN,
+        VisualMotionMode.PAN_AND_ZOOM,
+        VisualMotionMode.ZOOM_OUT,
+        VisualMotionMode.STATIC,
+    )
+    semantic_offset = cycle.index(_image_motion(shot))
+    return cycle[(semantic_offset + canonical_index) % len(cycle)]
+
+
 def _quality_floor_passes(
     shots: tuple[StrategicVisualShot, ...],
     strategy_name: VisualStrategyName,
 ) -> bool:
+    if strategy_name is VisualStrategyName.IMAGE_ONLY:
+        return all(
+            shot.visual_mode is VisualMode.GENERATED_IMAGE
+            and shot.source_asset_id is None
+            and shot.provider_duration_seconds is None
+            for shot in shots
+        )
     video_modes = {VisualMode.GENERATED_VIDEO, VisualMode.REUSED_VIDEO}
     video = tuple(shot for shot in shots if shot.visual_mode in video_modes)
     hooks = tuple(shot for shot in shots if shot.narrative_role is NarrativeRole.HOOK)
@@ -516,6 +556,7 @@ def _strategic_from_allocation(
     motion_mode: VisualMotionMode | None = None,
     provider_duration_seconds: int | None = None,
     preserve_provider_duration: bool = True,
+    preserve_source_asset_id: bool = True,
 ) -> StrategicVisualShot:
     duration = (
         shot.provider_duration_seconds
@@ -534,7 +575,7 @@ def _strategic_from_allocation(
         usable_duration_ms=shot.usable_duration_ms,
         visual_mode=visual_mode or shot.visual_mode,
         motion_mode=motion_mode or shot.motion_mode,
-        source_asset_id=shot.source_asset_id,
+        source_asset_id=(shot.source_asset_id if preserve_source_asset_id else None),
         importance=shot.importance,
         generation_priority=shot.generation_priority,
         provider_duration_seconds=duration,

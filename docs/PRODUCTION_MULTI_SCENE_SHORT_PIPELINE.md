@@ -298,8 +298,9 @@ not enabled in this phase.
 
 ### SHORT-V1.2 hybrid strategy and aggregate exposure
 
-The pure visual strategy planner canonicalizes post-TTS shots and supports three
-durable policies: `full_video`, `hybrid_balanced`, and `hybrid_economy`. Selection
+The pure visual strategy planner canonicalizes post-TTS shots and supports four
+durable policies: `full_video`, `hybrid_balanced`, `hybrid_economy`, and
+`image_only`. Selection
 uses bounded importance, generation priority, narrative role, shot function, and
 stable scene/shot identity. Balanced planning targets half of the visual shots and
 spreads video moments across the timeline; economy targets roughly thirty percent
@@ -396,9 +397,9 @@ jobs continue through the legacy handler unchanged.
 ## SHORT-V1.6 hybrid production runtime
 
 Hybrid execution is explicitly opt-in through `ORION_VISUAL_STRATEGY`. Its accepted
-values are `full_video`, `hybrid_balanced`, and `hybrid_economy`; the default remains
-`full_video`, so existing jobs and configurations continue through the historical
-handlers and manifests.
+values are `full_video`, `hybrid_balanced`, `hybrid_economy`, and `image_only`; the
+default remains `full_video`, so existing jobs and configurations continue through
+the historical handlers and manifests.
 
 For either hybrid strategy, final visual planning remains post-TTS and audio-first.
 The `visual_asset_planning` stage additionally persists the immutable
@@ -421,6 +422,32 @@ a render interruption. A changed expansion, strategy, budget, acquisition manife
 video manifest, composition plan, source checksum, or execution plan fails closed.
 Historical jobs without hybrid artifacts continue to select the legacy full-video
 source reader and retain their historical serialization and fingerprints.
+
+## SHORT-V1.11 image-only visual strategy
+
+`image_only` is the strict still-source strategy for educational, social, and
+explainer content such as APIs, databases, cloud computing, Git, and authentication.
+Post-TTS shot expansion remains audio-first and may create multiple shots per scene;
+every resulting shot is realized as `GENERATED_IMAGE`, with one `image_visual`
+(`FINAL_IMAGE`) acquisition and no video first-frame requirement. The strategy
+therefore authorizes zero video requests, zero purchased video seconds, and zero
+video cost. This invariant is enforced by the strategy and aggregate budget plans,
+then preserved by the hybrid video boundary, which never calls its provider for an
+image entry.
+
+Image request and total-visual budget gates remain mandatory and fail closed. Video
+request, per-request, and job-cost limits cannot block a valid zero-video plan, so a
+disabled video provider is supported. Recovery reuses completed images and reruns
+only unresolved image acquisitions or local rendering; strategy or artifact drift
+still fails closed.
+
+Motion is selected deterministically in canonical shot order across `STATIC`, `PAN`,
+`ZOOM_IN`, `ZOOM_OUT`, and `PAN_AND_ZOOM`, avoiding uniform motion while remaining
+reproducible. `image_only` changes the visual source and cost profile, not the output
+format: the normal pipeline still emits a vertical H.264/AAC MP4 with narration,
+subtitles, editorial timing, and locally rendered image motion. Existing
+`full_video`, `hybrid_balanced`, and `hybrid_economy` behavior and the `full_video`
+default remain unchanged.
 
 ## SHORT-V1.8 durable image provider telemetry
 
