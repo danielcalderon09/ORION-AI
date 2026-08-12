@@ -16,6 +16,12 @@ from backend.src.production.cost_accounting.models import (
     VisualCostAudit,
     build_job_cost_summary,
 )
+from backend.src.production.video_clip_generation.hybrid_generation import (
+    deserialize_hybrid_video_manifest,
+)
+from backend.src.production.video_clip_generation.retry_budget_models import (
+    deserialize_video_retry_budget_authorization,
+)
 
 _MAX_JSON_BYTES = 20_000_000
 
@@ -220,7 +226,7 @@ def _visual_audit(
     accounted = images + video
     estimated = _money(budget.get("estimated_total_visual_cost_usd"))
     image_respected = images <= _money(budget.get("maximum_authorized_image_cost_usd"))
-    video_respected = video <= _money(budget.get("maximum_authorized_video_cost_usd"))
+    video_respected = video <= _effective_video_ceiling(root, budget)
     total_respected = accounted <= _money(
         budget.get("maximum_authorized_total_visual_cost_usd")
     )
@@ -233,6 +239,34 @@ def _visual_audit(
         video_budget_respected=video_respected,
         total_visual_budget_respected=total_respected,
     )
+
+
+def _effective_video_ceiling(root: Path, budget: dict[str, Any]) -> Decimal:
+    original = _money(budget.get("maximum_authorized_video_cost_usd"))
+    paths = tuple(
+        root.glob("generating_video_clips/attempt-*/video-retry-budget-authorization.json")
+    )
+    if not paths:
+        return original
+    authorization = deserialize_video_retry_budget_authorization(
+        _bytes(max(paths, key=_attempt_key))
+    )
+    if authorization.original_authorized_video_job_cost_usd != original:
+        raise ValueError("video retry authorization original ceiling drifted")
+    if authorization.original_aggregate_visual_budget_fingerprint != _required_text(
+        budget, "fingerprint"
+    ):
+        raise ValueError("video retry authorization budget fingerprint drifted")
+    manifest_path = (
+        root
+        / "generating_video_clips"
+        / f"attempt-{authorization.source_stage_attempt}"
+        / "hybrid-video-generation-manifest.json"
+    )
+    manifest = deserialize_hybrid_video_manifest(_bytes(manifest_path))
+    if manifest.fingerprint != authorization.original_video_generation_manifest_fingerprint:
+        raise ValueError("video retry authorization manifest fingerprint drifted")
+    return authorization.new_authorized_video_job_cost_usd
 
 
 def _record(
@@ -278,12 +312,19 @@ def _attempt_key(path: Path) -> tuple[int, str]:
 
 
 def _object(path: Path) -> dict[str, Any]:
-    if not path.is_file() or path.stat().st_size > _MAX_JSON_BYTES:
-        raise ValueError("cost source artifact is missing or oversized")
-    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw = json.loads(_bytes(path).decode("utf-8", errors="strict"))
     if not isinstance(raw, dict):
         raise ValueError("cost source artifact must be an object")
     return raw
+
+
+def _bytes(path: Path) -> bytes:
+    if not path.is_file() or path.stat().st_size > _MAX_JSON_BYTES:
+        raise ValueError("cost source artifact is missing or oversized")
+    content = path.read_bytes()
+    if not content:
+        raise ValueError("cost source artifact is empty")
+    return content
 
 
 def _required_object(raw: dict[str, Any], key: str) -> dict[str, Any]:

@@ -7,6 +7,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -69,6 +70,10 @@ from backend.src.production.video_clip_generation.hybrid_generation import (
 from backend.src.production.video_clip_generation.ports import (
     VideoClipGenerationProvider,
     VideoClipProviderRequest,
+)
+from backend.src.production.video_clip_generation.retry_budget import (
+    FilesystemVideoRetryBudgetAuthorizationStore,
+    VideoRetryBudgetAuthorizationError,
 )
 
 VIDEO_MANIFEST_FILENAME = "hybrid-video-generation-manifest.json"
@@ -253,6 +258,8 @@ class HybridVideoGenerationStageHandler:
         renderer: LocalHybridImageMotionRenderer,
         clock: Callable[[], datetime],
         uuid_factory: Callable[[], UUID],
+        retry_budget_store: FilesystemVideoRetryBudgetAuthorizationStore | None = None,
+        maximum_video_job_cost_usd: Decimal | None = None,
     ) -> None:
         self._fs = HybridRuntimeFilesystem(workspace_root)
         self._provider = provider
@@ -260,12 +267,29 @@ class HybridVideoGenerationStageHandler:
         self._renderer = renderer
         self._clock = clock
         self._uuid_factory = uuid_factory
+        self._retry_budget_store = retry_budget_store
+        self._maximum_video_job_cost_usd = maximum_video_job_cost_usd
 
     async def execute(
         self, command: StageCommand, context: StageContext
     ) -> StageExecutionOutput:
         started = self._aware_now()
         try:
+            if context.attempt_number > 1:
+                if (
+                    self._retry_budget_store is None
+                    or self._maximum_video_job_cost_usd is None
+                ):
+                    raise VideoRetryBudgetAuthorizationError(
+                        "hybrid video recovery budget guard is unavailable"
+                    )
+                await self._retry_budget_store.require_for_recovery(
+                    job_id=command.job_id,
+                    target_stage_attempt=context.attempt_number,
+                    current_settings_video_job_ceiling_usd=(
+                        self._maximum_video_job_cost_usd
+                    ),
+                )
             source = self._read_source(command.job_id)
             writer = FilesystemHybridVideoManifestWriter(self._fs, context)
             coordinator = HybridVideoGenerationCoordinator(
@@ -356,6 +380,21 @@ class HybridVideoGenerationStageHandler:
                 },
             )
             return StageExecutionOutput(result=result, artifacts=artifacts)
+        except VideoRetryBudgetAuthorizationError as exc:
+            return StageExecutionOutput(
+                result=StageResult(
+                    command_id=command.command_id,
+                    job_id=command.job_id,
+                    stage=command.stage,
+                    outcome=StageOutcome.FAILED_PERMANENT,
+                    started_at=started,
+                    finished_at=self._aware_now(),
+                    progress_percent=0,
+                    error_code="hybrid_video_retry_budget_not_authorized",
+                    error_message=str(exc),
+                    metadata={"handler": type(self).__name__},
+                )
+            )
         except (HybridVideoGenerationError, OSError, ValueError) as exc:
             transient = (
                 "transient hybrid video failure" in str(exc)

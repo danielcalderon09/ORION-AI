@@ -391,6 +391,9 @@ from backend.src.production.video_clip_generation.reader import (
 from backend.src.production.video_clip_generation.reconciliation import (
     FilesystemVideoClipReconciler,
 )
+from backend.src.production.video_clip_generation.retry_budget import (
+    FilesystemVideoRetryBudgetAuthorizationStore,
+)
 from backend.src.production.video_clip_generation.video_store import (
     FilesystemVideoClipBinaryStore,
 )
@@ -1121,6 +1124,12 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                 ),
                 clock=clock,
                 uuid_factory=uuid4,
+                retry_budget_store=FilesystemVideoRetryBudgetAuthorizationStore(
+                    settings.PROJECTS_DIR
+                ),
+                maximum_video_job_cost_usd=(
+                    settings.ORION_VIDEO_CLIP_GENERATION_MAX_ESTIMATED_JOB_COST_USD
+                ),
             )
         final_render_validation_handler = FinalRenderValidationHandler(
             source_reader=VerifiedFinalRenderSourceReader(

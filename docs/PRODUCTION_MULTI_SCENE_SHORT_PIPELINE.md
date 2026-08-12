@@ -508,3 +508,35 @@ Completed narration segments remain reusable and normal pending segments proceed
 only after the authorized replacement completes. The original uncertain record and
 its estimated fallback exposure remain immutable, while any replacement cost is
 accounted independently.
+
+## SHORT-V1.10I durable video retry budget authorization
+
+A known, safely retryable video failure can consume billable exposure before the
+remaining planned clips are submitted. ORION therefore evaluates recovery against
+the cumulative durable video cost, rather than only the original purchase-plan
+estimate. An HTTP response such as `500` is eligible only when the response and
+failed status are durable; an unknown submission outcome remains uncertain and is
+rejected by this mechanism.
+
+When cumulative recovery exposure exceeds the immutable video-job ceiling, an
+operator can create a `VideoRetryBudgetAuthorization`. This strict, fingerprinted,
+write-once overlay pins the job and attempt lineage, aggregate-budget and source
+video-manifest fingerprints, already-accounted image/video costs, original and new
+video ceilings, remaining request capacity, per-request ceiling, total-visual
+ceiling, operator, and timestamp. The original `AggregateVisualBudgetPlan` is never
+rewritten. Identical authorization is idempotent; conflicting or drifted evidence
+fails closed.
+
+The authorized ceiling must be the minimum cumulative exposure required by the
+durable retry: already-accounted video cost plus the estimates of unresolved
+generated-video entries. Existing request-count and per-request limits remain in
+force, and projected image plus video exposure must fit the original total-visual
+ceiling. Current Settings may impose an equal or tighter global ceiling, but changing
+Settings alone cannot substitute for the job-scoped durable overlay.
+
+Authorization and retry are separate operations. Creating the sidecar performs no
+provider request and does not requeue the job. On the later retry, the runtime checks
+the overlay before constructing the provider adapter, reuses completed video,
+image, and narration artifacts, and accounts every new provider submission
+independently. Failed historical exposure remains present; authorization artifacts
+themselves never count as spend.
