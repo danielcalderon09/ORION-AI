@@ -1,5 +1,7 @@
 """Offline one-shot authorization tests for unresolved TTS replacement."""
 
+import hashlib
+import json
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -44,8 +46,10 @@ from backend.src.production.speech_generation.uncertainty_resolution import (
 )
 from backend.src.production.speech_generation.unresolved_replacement import (
     SpeechUnresolvedReplacementAuthorization,
+    SpeechUnresolvedReplacementConsumption,
     SpeechUnresolvedReplacementPermit,
     SpeechUnresolvedReplacementStore,
+    replacement_submission_identity,
 )
 from backend.tests.unit.production.speech_generation.conftest import (
     NOW,
@@ -476,6 +480,213 @@ async def test_later_stage_attempt_uses_authorized_remote_attempt_three(
 
 
 @pytest.mark.asyncio
+async def test_historical_raw_record_hash_covers_consumed_ancestor(
+    tmp_path: Path,
+) -> None:
+    remote_store, replacement_store, first, second, historical_bytes = (
+        await _historical_hash_lineage(tmp_path)
+    )
+    canonical_bytes = serialize_remote_speech_job(first)
+
+    assert b'"transport_diagnostic"' not in historical_bytes
+    assert b'"transport_diagnostic":null' in canonical_bytes
+    assert hashlib.sha256(historical_bytes).digest() != hashlib.sha256(
+        canonical_bytes
+    ).digest()
+    assert await replacement_store.uncertainty_is_covered(
+        record=first,
+        job_records=(first, second),
+    )
+    assert not await replacement_store.uncertainty_is_covered(
+        record=second,
+        job_records=(first, second),
+    )
+
+    provider = _provider(
+        tmp_path,
+        remote_store,
+        lambda _: pytest.fail("provider called"),
+        replacement_store=replacement_store,
+        estimated_cost=Decimal("0.001"),
+    )
+    plan = await provider._submission_plan(_request(attempt=5), (first, second))
+
+    assert plan.remote_attempt_number == 3
+    assert plan.replacement_source == second
+    assert plan.replacement_permit is not None
+    assert plan.replacement_permit.authorization.source_attempt_number == 2
+    assert plan.replacement_permit.authorization.target_attempt_number == 3
+    assert not (
+        tmp_path
+        / "production"
+        / str(first.job_id)
+        / "generating_narration"
+        / "attempt-3"
+        / "speech-rc"
+        / f"{SEGMENT_ID}.json"
+    ).exists()
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_current_canonical_record_hash_remains_valid(tmp_path: Path) -> None:
+    _, _, _, store, authorization = await _authorization(tmp_path)
+
+    permit = await store.permit(
+        job_id=authorization.job_id,
+        target_attempt_number=authorization.target_attempt_number,
+        segment_id=authorization.segment_id,
+        estimated_cost_usd=Decimal("0.001"),
+    )
+
+    assert permit is not None
+    assert permit.authorization == authorization
+
+
+@pytest.mark.asyncio
+async def test_historical_raw_record_hash_validates_unconsumed_permit(
+    tmp_path: Path,
+) -> None:
+    _, replacement_store, first, _, _ = await _historical_hash_lineage(tmp_path)
+    consumption_path = (
+        tmp_path
+        / "production"
+        / str(first.job_id)
+        / "generating_narration"
+        / "attempt-2"
+        / "speech-rc"
+        / f"{SEGMENT_ID}.json"
+    )
+    consumption_path.unlink()
+
+    permit = await replacement_store.permit(
+        job_id=first.job_id,
+        target_attempt_number=2,
+        segment_id=SEGMENT_ID,
+        estimated_cost_usd=Decimal("0.001"),
+    )
+
+    assert permit is not None
+    assert permit.authorization.original_uncertain_record_sha256 == hashlib.sha256(
+        _remote_record_path(tmp_path, first, attempt=1).read_bytes()
+    ).hexdigest()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "authorization_update",
+    [
+        {"original_uncertain_record_sha256": "f" * 64},
+        {"original_request_fingerprint": "e" * 64},
+        {"segment_id": "segment-" + "d" * 32},
+        {"unresolved_resolution_fingerprint": "c" * 64},
+    ],
+    ids=("neither-hash", "request-fingerprint", "segment", "resolution-fingerprint"),
+)
+async def test_historical_raw_hash_does_not_bypass_authorization_semantics(
+    tmp_path: Path,
+    authorization_update: dict[str, object],
+) -> None:
+    _, replacement_store, first, second, _ = await _historical_hash_lineage(tmp_path)
+    second = _rewrite_ancestor_authorization(
+        tmp_path,
+        first,
+        second,
+        **authorization_update,
+    )
+
+    assert not await replacement_store.uncertainty_is_covered(
+        record=first,
+        job_records=(first, second),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("attempt_number", 9),
+        ("segment_id", "segment-" + "d" * 32),
+    ],
+)
+async def test_historical_raw_hash_rejects_durable_source_identity_drift(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    _, replacement_store, first, second, _ = await _historical_hash_lineage(tmp_path)
+    first_path = _remote_record_path(tmp_path, first, attempt=1)
+    payload = json.loads(first_path.read_bytes())
+    payload[field] = value
+    drifted_bytes = _json_bytes(payload)
+    first_path.write_bytes(drifted_bytes)
+    _rewrite_ancestor_authorization(
+        tmp_path,
+        first,
+        second,
+        original_uncertain_record_sha256=hashlib.sha256(drifted_bytes).hexdigest(),
+    )
+
+    with pytest.raises((SpeechUncertaintyResolutionError, ValueError)):
+        await replacement_store.uncertainty_is_covered(
+            record=first,
+            job_records=(first, second),
+        )
+
+
+@pytest.mark.asyncio
+async def test_historical_raw_hash_requires_matching_replacement_child_identity(
+    tmp_path: Path,
+) -> None:
+    _, replacement_store, first, second, _ = await _historical_hash_lineage(tmp_path)
+    mismatched_child = second.model_copy(
+        update={
+            "metadata": {
+                **second.metadata,
+                "replacement_submission_identity": "f" * 64,
+            }
+        }
+    )
+
+    assert not await replacement_store.uncertainty_is_covered(
+        record=first,
+        job_records=(first, mismatched_child),
+    )
+
+
+@pytest.mark.asyncio
+async def test_malformed_historical_remote_record_is_rejected(tmp_path: Path) -> None:
+    _, replacement_store, first, second, _ = await _historical_hash_lineage(tmp_path)
+    _remote_record_path(tmp_path, first, attempt=1).write_bytes(b'{"job_id":')
+
+    with pytest.raises((SpeechUncertaintyResolutionError, ValueError)):
+        await replacement_store.uncertainty_is_covered(
+            record=first,
+            job_records=(first, second),
+        )
+
+
+@pytest.mark.asyncio
+async def test_outside_file_digest_is_not_accepted_as_source_evidence(
+    tmp_path: Path,
+) -> None:
+    _, replacement_store, first, second, _ = await _historical_hash_lineage(tmp_path)
+    outside = tmp_path / "outside-remote-speech-job.json"
+    outside.write_bytes(b"outside compatibility evidence must not be read")
+    second = _rewrite_ancestor_authorization(
+        tmp_path,
+        first,
+        second,
+        original_uncertain_record_sha256=hashlib.sha256(outside.read_bytes()).hexdigest(),
+    )
+
+    assert not await replacement_store.uncertainty_is_covered(
+        record=first,
+        job_records=(first, second),
+    )
+
+
+@pytest.mark.asyncio
 async def test_later_stage_timeout_persists_remote_three_diagnostic_once(
     tmp_path: Path,
 ) -> None:
@@ -800,6 +1011,221 @@ async def _two_uncertain_attempts(
     second = await submit_uncertain(2)
     await _resolve_and_authorize(root, second)
     return remote_store, replacement_store, first, second
+
+
+async def _historical_hash_lineage(
+    root: Path,
+) -> tuple[
+    LocalRemoteSpeechJobStore,
+    SpeechUnresolvedReplacementStore,
+    RemoteSpeechJobRecord,
+    RemoteSpeechJobRecord,
+    bytes,
+]:
+    first, resolution, remote_store = await _unresolved_workspace(root)
+    replacement_store = SpeechUnresolvedReplacementStore(root)
+    first_path = (
+        root
+        / "production"
+        / str(first.job_id)
+        / "generating_narration"
+        / "attempt-1"
+        / "remote-speech-jobs"
+        / f"{SEGMENT_ID}.json"
+    )
+    historical_payload = json.loads(first_path.read_bytes())
+    assert historical_payload.pop("transport_diagnostic") is None
+    historical_bytes = (
+        json.dumps(
+            historical_payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode()
+    first_path.write_bytes(historical_bytes)
+
+    authorization = SpeechUnresolvedReplacementAuthorization.create(
+        job_id=first.job_id,
+        source_attempt_number=1,
+        target_attempt_number=2,
+        scene_id="scene-001",
+        segment_id=SEGMENT_ID,
+        original_request_fingerprint=first.request_fingerprint,
+        original_uncertain_record_sha256=hashlib.sha256(historical_bytes).hexdigest(),
+        unresolved_resolution_fingerprint=resolution.fingerprint,
+        maximum_additional_provider_requests=1,
+        maximum_additional_estimated_cost_usd=Decimal("0.001"),
+        authorized_at=first.submission_started_at + timedelta(minutes=2),
+        operator_id="operator-1",
+        acknowledge_duplicate_charge_risk=True,
+    )
+    identity = replacement_submission_identity(authorization)
+    consumption = SpeechUnresolvedReplacementConsumption.create(
+        job_id=first.job_id,
+        target_attempt_number=2,
+        segment_id=SEGMENT_ID,
+        authorization_fingerprint=authorization.fingerprint,
+        replacement_submission_identity=identity,
+        estimated_cost_usd=Decimal("0.001"),
+        consumed_at=first.submission_started_at + timedelta(minutes=3),
+    )
+    _write_replacement_contract(root, authorization, attempt=2, directory="speech-ra")
+    _write_replacement_contract(root, consumption, attempt=2, directory="speech-rc")
+
+    permit = SpeechUnresolvedReplacementPermit(
+        authorization=authorization,
+        replacement_submission_identity=identity,
+    )
+    provider = _provider(
+        root,
+        remote_store,
+        lambda _: pytest.fail("provider called"),
+        replacement_store=replacement_store,
+        estimated_cost=Decimal("0.001"),
+    )
+    prepared = provider._prepared_record(
+        _request(attempt=2),
+        remote_attempt_number=2,
+        replacement_permit=permit,
+    )
+    second = prepared.model_copy(
+        update={
+            "status": RemoteSpeechJobStatus.UNCERTAIN,
+            "submission_started_at": prepared.prepared_at,
+            "fresh_submission_permitted": False,
+            "safe_error_code": "submission_outcome_uncertain",
+            "metadata": {
+                **prepared.metadata,
+                "replacement_permit_fingerprint": authorization.fingerprint,
+                "replacement_submission_identity": identity,
+                "replacement_source_attempt": 1,
+            },
+        }
+    )
+    await remote_store.create(second)
+    await provider.close()
+    await _resolve_and_authorize(root, second)
+    for attempt in (3, 4, 5):
+        _write_local_stage_manifest(root, first, attempt=attempt, failed=attempt < 5)
+    return remote_store, replacement_store, first, second, historical_bytes
+
+
+def _write_replacement_contract(
+    root: Path,
+    value: SpeechUnresolvedReplacementAuthorization
+    | SpeechUnresolvedReplacementConsumption,
+    *,
+    attempt: int,
+    directory: str,
+) -> None:
+    target = (
+        root
+        / "production"
+        / str(value.job_id)
+        / "generating_narration"
+        / f"attempt-{attempt}"
+        / directory
+        / f"{value.segment_id}.json"
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(
+            value.model_dump(mode="json"),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _rewrite_ancestor_authorization(
+    root: Path,
+    first: RemoteSpeechJobRecord,
+    second: RemoteSpeechJobRecord,
+    **updates: object,
+) -> RemoteSpeechJobRecord:
+    authorization_path = (
+        root
+        / "production"
+        / str(first.job_id)
+        / "generating_narration"
+        / "attempt-2"
+        / "speech-ra"
+        / f"{SEGMENT_ID}.json"
+    )
+    current = SpeechUnresolvedReplacementAuthorization.model_validate_json(
+        authorization_path.read_bytes()
+    )
+    values = current.model_dump(mode="python", exclude={"fingerprint"})
+    values.update(updates)
+    authorization = SpeechUnresolvedReplacementAuthorization.create(**values)
+    identity = replacement_submission_identity(authorization)
+    consumption = SpeechUnresolvedReplacementConsumption.create(
+        job_id=authorization.job_id,
+        target_attempt_number=authorization.target_attempt_number,
+        segment_id=authorization.segment_id,
+        authorization_fingerprint=authorization.fingerprint,
+        replacement_submission_identity=identity,
+        estimated_cost_usd=Decimal("0.001"),
+        consumed_at=first.submission_started_at + timedelta(minutes=3),
+    )
+    _write_contract_at(authorization_path, authorization)
+    consumption_path = authorization_path.parent.parent / "speech-rc" / authorization_path.name
+    _write_contract_at(consumption_path, consumption)
+    return second.model_copy(
+        update={
+            "metadata": {
+                **second.metadata,
+                "replacement_permit_fingerprint": authorization.fingerprint,
+                "replacement_submission_identity": identity,
+            }
+        }
+    )
+
+
+def _write_contract_at(
+    target: Path,
+    value: SpeechUnresolvedReplacementAuthorization
+    | SpeechUnresolvedReplacementConsumption,
+) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(_json_bytes(value.model_dump(mode="json")))
+
+
+def _remote_record_path(
+    root: Path,
+    record: RemoteSpeechJobRecord,
+    *,
+    attempt: int,
+) -> Path:
+    return (
+        root
+        / "production"
+        / str(record.job_id)
+        / "generating_narration"
+        / f"attempt-{attempt}"
+        / "remote-speech-jobs"
+        / f"{SEGMENT_ID}.json"
+    )
+
+
+def _json_bytes(value: object) -> bytes:
+    return (
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode()
 
 
 async def _resolve_and_authorize(root: Path, record: RemoteSpeechJobRecord) -> None:

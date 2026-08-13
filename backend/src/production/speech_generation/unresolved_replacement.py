@@ -8,6 +8,7 @@ import json
 import os
 import tempfile
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -34,6 +35,20 @@ from backend.src.production.speech_generation.uncertainty_resolution import (
     SpeechSubmissionResolutionStatus,
     deserialize_speech_submission_resolution,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _SpeechReplacementSource:
+    record: RemoteSpeechJobRecord
+    resolution: SpeechSubmissionResolution
+    durable_record_sha256: str
+    canonical_record_sha256: str
+
+    def matches_record_hash(self, expected_sha256: str) -> bool:
+        return expected_sha256 in {
+            self.durable_record_sha256,
+            self.canonical_record_sha256,
+        }
 
 
 class SpeechUnresolvedReplacementAuthorization(ContractModel):
@@ -270,7 +285,9 @@ class SpeechUnresolvedReplacementStore:
         operator_id: str,
         acknowledge_risk: bool,
     ) -> SpeechUnresolvedReplacementAuthorization:
-        record, resolution = self._source(job_id, source_attempt, segment_id)
+        source = self._source(job_id, source_attempt, segment_id)
+        record = source.record
+        resolution = source.resolution
         if record.status is not RemoteSpeechJobStatus.UNCERTAIN:
             raise SpeechUncertaintyResolutionError("replacement source is not uncertain")
         if record.request_fingerprint != request_fingerprint:
@@ -307,9 +324,7 @@ class SpeechUnresolvedReplacementStore:
             scene_id=scene_id,
             segment_id=segment_id,
             original_request_fingerprint=request_fingerprint,
-            original_uncertain_record_sha256=hashlib.sha256(
-                serialize_remote_speech_job(record)
-            ).hexdigest(),
+            original_uncertain_record_sha256=source.canonical_record_sha256,
             unresolved_resolution_fingerprint=resolution_fingerprint,
             maximum_additional_provider_requests=maximum_requests,
             maximum_additional_estimated_cost_usd=maximum_cost,
@@ -344,17 +359,20 @@ class SpeechUnresolvedReplacementStore:
             )
         if estimated_cost > authorization.maximum_additional_estimated_cost_usd:
             raise SpeechUncertaintyResolutionError("replacement estimated cost exceeds authorization")
-        record, resolution = self._source(
+        source = self._source(
             job_id, authorization.source_attempt_number, segment_id
         )
+        record = source.record
+        resolution = source.resolution
         if (
             record.job_id != authorization.job_id
             or record.attempt_number != authorization.source_attempt_number
             or record.segment_id != authorization.segment_id
             or record.status is not RemoteSpeechJobStatus.UNCERTAIN
             or record.request_fingerprint != authorization.original_request_fingerprint
-            or hashlib.sha256(serialize_remote_speech_job(record)).hexdigest()
-            != authorization.original_uncertain_record_sha256
+            or not source.matches_record_hash(
+                authorization.original_uncertain_record_sha256
+            )
             or resolution.job_id != authorization.job_id
             or resolution.attempt_number != authorization.source_attempt_number
             or resolution.scene_id != authorization.scene_id
@@ -418,16 +436,37 @@ class SpeechUnresolvedReplacementStore:
         consumption = SpeechUnresolvedReplacementConsumption.model_validate(
             _deserialize(self._read(consumption_path))
         )
-        source, resolution = self._source(
+        source = self._source(
             record.job_id, authorization.source_attempt_number, record.segment_id
         )
+        source_record = source.record
+        resolution = source.resolution
         if (
-            source != record
-            or hashlib.sha256(serialize_remote_speech_job(source)).hexdigest()
-            != authorization.original_uncertain_record_sha256
+            authorization.job_id != record.job_id
+            or authorization.source_attempt_number != record.attempt_number
+            or authorization.target_attempt_number != record.attempt_number + 1
+            or authorization.segment_id != record.segment_id
+            or source_record != record
+            or source_record.status is not RemoteSpeechJobStatus.UNCERTAIN
+            or source_record.request_fingerprint
+            != authorization.original_request_fingerprint
+            or not source.matches_record_hash(
+                authorization.original_uncertain_record_sha256
+            )
+            or resolution.job_id != authorization.job_id
+            or resolution.attempt_number != authorization.source_attempt_number
+            or resolution.scene_id != authorization.scene_id
+            or resolution.segment_id != authorization.segment_id
+            or resolution.request_fingerprint
+            != authorization.original_request_fingerprint
             or resolution.fingerprint != authorization.unresolved_resolution_fingerprint
             or resolution.resolution is not SpeechSubmissionResolutionStatus.UNRESOLVED
+            or consumption.job_id != authorization.job_id
+            or consumption.target_attempt_number != authorization.target_attempt_number
+            or consumption.segment_id != authorization.segment_id
             or consumption.authorization_fingerprint != authorization.fingerprint
+            or consumption.replacement_submission_identity
+            != replacement_submission_identity(authorization)
         ):
             return False
         return any(
@@ -440,14 +479,35 @@ class SpeechUnresolvedReplacementStore:
 
     def _source(
         self, job_id: UUID, source_attempt: int, segment_id: str
-    ) -> tuple[RemoteSpeechJobRecord, SpeechSubmissionResolution]:
-        record = deserialize_remote_speech_job(
-            self._read(self._remote_record_path(job_id, source_attempt, segment_id))
+    ) -> _SpeechReplacementSource:
+        record_content = self._read(
+            self._remote_record_path(job_id, source_attempt, segment_id)
         )
-        resolution = deserialize_speech_submission_resolution(
-            self._read(self._resolution_path(job_id, source_attempt, segment_id))
+        resolution_content = self._read(
+            self._resolution_path(job_id, source_attempt, segment_id)
         )
-        return record, resolution
+        record = deserialize_remote_speech_job(record_content)
+        resolution = deserialize_speech_submission_resolution(resolution_content)
+        if (
+            record.job_id != job_id
+            or record.attempt_number != source_attempt
+            or record.segment_id != segment_id
+            or resolution.job_id != job_id
+            or resolution.attempt_number != source_attempt
+            or resolution.segment_id != segment_id
+            or resolution.request_fingerprint != record.request_fingerprint
+        ):
+            raise SpeechUncertaintyResolutionError(
+                "replacement source artifact identity differs"
+            )
+        return _SpeechReplacementSource(
+            record=record,
+            resolution=resolution,
+            durable_record_sha256=hashlib.sha256(record_content).hexdigest(),
+            canonical_record_sha256=hashlib.sha256(
+                serialize_remote_speech_job(record)
+            ).hexdigest(),
+        )
 
     def _remote_record_path(self, job_id: UUID, attempt: int, segment: str) -> Path:
         return self._resolve(
