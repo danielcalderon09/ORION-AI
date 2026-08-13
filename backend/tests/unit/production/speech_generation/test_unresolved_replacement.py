@@ -32,6 +32,9 @@ from backend.src.production.speech_generation.remote_models import (
     RemoteSpeechJobRecord,
     RemoteSpeechJobStatus,
 )
+from backend.src.production.speech_generation.remote_serialization import (
+    serialize_remote_speech_job,
+)
 from backend.src.production.speech_generation.serialization import serialize_speech_manifest
 from backend.src.production.speech_generation.uncertainty_resolution import (
     SpeechSubmissionResolution,
@@ -132,11 +135,14 @@ async def _authorization(root: Path, **updates: object):
 
 
 @pytest.mark.asyncio
-async def test_unresolved_without_authorization_stays_blocked(tmp_path: Path) -> None:
+@pytest.mark.parametrize("stage_attempt", (2, 5))
+async def test_unresolved_without_authorization_stays_blocked(
+    tmp_path: Path, stage_attempt: int
+) -> None:
     record, _, remote_store = await _unresolved_workspace(tmp_path)
     provider = _provider(tmp_path, remote_store, lambda _: pytest.fail("provider called"))
     with pytest.raises(SpeechReplacementLineageError):
-        await provider.generate(_request(attempt=2))
+        await provider.generate(_request(attempt=stage_attempt))
     assert (await remote_store.list_records()) == (record,)
     await provider.close()
 
@@ -150,7 +156,7 @@ async def test_authorization_requires_duplicate_risk_acknowledgement(tmp_path: P
 @pytest.mark.asyncio
 async def test_authorization_target_must_be_source_plus_one(tmp_path: Path) -> None:
     _, _, _, _, authorization = await _authorization(tmp_path)
-    with pytest.raises(ValueError, match="target the next stage attempt"):
+    with pytest.raises(ValueError, match="target the next remote submission attempt"):
         SpeechUnresolvedReplacementAuthorization.create(
             **authorization.model_dump(
                 mode="python",
@@ -386,6 +392,138 @@ async def test_chained_unresolved_replacement_uses_immediate_parent_once(
 
 
 @pytest.mark.asyncio
+async def test_later_stage_attempt_uses_authorized_remote_attempt_three(
+    tmp_path: Path,
+) -> None:
+    remote_store, replacement_store, first, second = await _two_uncertain_attempts(
+        tmp_path
+    )
+    for attempt in (3, 4):
+        _write_local_stage_manifest(tmp_path, first, attempt=attempt, failed=True)
+    _write_local_stage_manifest(tmp_path, first, attempt=5, failed=False)
+    before = derive_durable_job_cost_summary(
+        job_id=first.job_id,
+        job_root=tmp_path / "production" / str(first.job_id),
+    ).category(JobCostCategory.SPEECH)
+    calls = 0
+
+    def success(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        consumption = (
+            tmp_path
+            / "production"
+            / str(first.job_id)
+            / "generating_narration"
+            / "attempt-3"
+            / "speech-rc"
+            / f"{SEGMENT_ID}.json"
+        )
+        assert consumption.exists(), "authorization must be consumed before POST"
+        return httpx.Response(
+            200,
+            content=b"\x01\x00" * 4_800,
+            headers={"content-type": "application/octet-stream"},
+        )
+
+    provider = _provider(
+        tmp_path,
+        remote_store,
+        success,
+        replacement_store=replacement_store,
+        estimated_cost=Decimal("0.001"),
+        timeout_seconds=180,
+    )
+    await provider.generate(_request(attempt=5))
+    records = await remote_store.list_records()
+    after = derive_durable_job_cost_summary(
+        job_id=first.job_id,
+        job_root=tmp_path / "production" / str(first.job_id),
+    ).category(JobCostCategory.SPEECH)
+
+    assert before.request_count == 2
+    assert before.accounted_cost_usd == Decimal("0.002")
+    assert calls == 1
+    assert [record.attempt_number for record in records] == [1, 2, 3]
+    assert all(record.attempt_number != 4 for record in records)
+    assert records[0] == first
+    assert records[1] == second
+    assert records[2].status is RemoteSpeechJobStatus.COMPLETED
+    assert records[2].metadata["originating_stage_attempt"] == 5
+    assert records[2].metadata["replacement_source_attempt"] == 2
+    assert len({record.request_fingerprint for record in records}) == 3
+    assert after.request_count == 3
+    assert after.accounted_cost_usd == Decimal("0.003")
+    assert all(
+        (
+            tmp_path
+            / "production"
+            / str(first.job_id)
+            / "generating_narration"
+            / f"attempt-{attempt}"
+            / "speech-generation-manifest.json"
+        ).exists()
+        for attempt in range(1, 6)
+    )
+    with pytest.raises(SpeechUncertaintyResolutionError, match="exhausted"):
+        await replacement_store.permit(
+            job_id=first.job_id,
+            target_attempt_number=3,
+            segment_id=SEGMENT_ID,
+            estimated_cost_usd=Decimal("0.001"),
+        )
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_later_stage_timeout_persists_remote_three_diagnostic_once(
+    tmp_path: Path,
+) -> None:
+    remote_store, replacement_store, first, _ = await _two_uncertain_attempts(tmp_path)
+    for attempt in (3, 4):
+        _write_local_stage_manifest(tmp_path, first, attempt=attempt, failed=True)
+    _write_local_stage_manifest(tmp_path, first, attempt=5, failed=False)
+    calls = 0
+
+    def timeout(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("offline stage-5 remote-3 timeout", request=request)
+
+    provider = _provider(
+        tmp_path,
+        remote_store,
+        timeout,
+        replacement_store=replacement_store,
+        estimated_cost=Decimal("0.001"),
+        timeout_seconds=180,
+    )
+    with pytest.raises(SpeechProviderUncertainError):
+        await provider.generate(_request(attempt=5))
+    records = await remote_store.list_records()
+    remote_three = records[-1]
+    summary = derive_durable_job_cost_summary(
+        job_id=first.job_id,
+        job_root=tmp_path / "production" / str(first.job_id),
+    ).category(JobCostCategory.SPEECH)
+
+    assert calls == 1
+    assert [record.attempt_number for record in records] == [1, 2, 3]
+    assert remote_three.status is RemoteSpeechJobStatus.UNCERTAIN
+    assert remote_three.safe_error_code == "speech_transport_timeout"
+    assert remote_three.transport_diagnostic is not None
+    assert remote_three.transport_diagnostic.timeout_seconds == Decimal("180")
+    assert remote_three.transport_diagnostic.elapsed_seconds is not None
+    assert summary.request_count == 3
+    assert summary.accounted_cost_usd == Decimal("0.003")
+    with pytest.raises(SpeechReplacementLineageError):
+        await provider.generate(_request(attempt=5))
+    assert calls == 1
+    assert all(record.attempt_number != 4 for record in records)
+    await provider.close()
+
+
+@pytest.mark.asyncio
 async def test_chained_third_uncertainty_is_accounted_once_and_stops(
     tmp_path: Path,
 ) -> None:
@@ -471,6 +609,97 @@ async def test_chain_rejects_non_immediate_parent_authorization(tmp_path: Path) 
     with pytest.raises(SpeechReplacementLineageError):
         await provider.generate(_request(attempt=3))
     assert await remote_store.list_records() == (first, second)
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_later_stage_replacement_rejects_ambiguous_uncovered_lineage(
+    tmp_path: Path,
+) -> None:
+    remote_store, replacement_store, first, second = await _two_uncertain_attempts(
+        tmp_path
+    )
+    provider = _provider(
+        tmp_path,
+        remote_store,
+        lambda _: pytest.fail("provider called"),
+        replacement_store=replacement_store,
+        estimated_cost=Decimal("0.001"),
+    )
+    extra_prepared = provider._prepared_record(_request(attempt=1, replacement=False))
+    extra_uncertain = extra_prepared.model_copy(
+        update={
+            "status": RemoteSpeechJobStatus.UNCERTAIN,
+            "submission_started_at": extra_prepared.prepared_at,
+            "fresh_submission_permitted": False,
+        }
+    )
+    await remote_store.create(extra_uncertain)
+
+    with pytest.raises(SpeechReplacementLineageError, match="unique eligible parent"):
+        await provider.generate(_request(attempt=5))
+    assert await remote_store.list_records() == (first, extra_uncertain, second)
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_later_stage_replacement_rejects_existing_remote_child(
+    tmp_path: Path,
+) -> None:
+    remote_store, replacement_store, first, second = await _two_uncertain_attempts(
+        tmp_path
+    )
+    provider = _provider(
+        tmp_path,
+        remote_store,
+        lambda _: pytest.fail("provider called"),
+        replacement_store=replacement_store,
+        estimated_cost=Decimal("0.001"),
+    )
+    conflicting_child = provider._prepared_record(
+        _request(attempt=3), remote_attempt_number=3
+    )
+    await remote_store.create(conflicting_child)
+
+    with pytest.raises(SpeechReplacementLineageError, match="child already exists"):
+        await provider.generate(_request(attempt=5))
+    assert await remote_store.list_records() == (first, second, conflicting_child)
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_later_stage_replacement_rejects_source_fingerprint_drift(
+    tmp_path: Path,
+) -> None:
+    original, _, remote_store, replacement_store, _ = await _authorization(tmp_path)
+    provider = _provider(
+        tmp_path,
+        remote_store,
+        lambda _: pytest.fail("provider called"),
+        replacement_store=replacement_store,
+    )
+    alternate_prepared = provider._prepared_record(_request(attempt=1))
+    alternate = alternate_prepared.model_copy(
+        update={
+            "status": RemoteSpeechJobStatus.UNCERTAIN,
+            "submission_started_at": alternate_prepared.prepared_at,
+            "fresh_submission_permitted": False,
+        }
+    )
+    source_path = (
+        tmp_path
+        / "production"
+        / str(original.job_id)
+        / "generating_narration"
+        / "attempt-1"
+        / "remote-speech-jobs"
+        / f"{SEGMENT_ID}.json"
+    )
+    source_path.write_bytes(serialize_remote_speech_job(alternate))
+
+    with pytest.raises(SpeechReplacementLineageError, match="authorization is invalid"):
+        await provider.generate(_request(attempt=5))
+    assert len(await remote_store.list_records()) == 1
     await provider.close()
 
 
@@ -633,6 +862,44 @@ def _write_uncertain_manifest(root: Path, record: RemoteSpeechJobRecord) -> None
     )
     attempt.mkdir(parents=True, exist_ok=True)
     (attempt / "speech-generation-manifest.json").write_bytes(
+        serialize_speech_manifest(manifest)
+    )
+
+
+def _write_local_stage_manifest(
+    root: Path,
+    record: RemoteSpeechJobRecord,
+    *,
+    attempt: int,
+    failed: bool,
+) -> None:
+    manifest = _initial_manifest().model_copy(update={"attempt_number": attempt})
+    if failed:
+        entry = manifest.entries[0].model_copy(
+            update={
+                "segment_id": record.segment_id,
+                "source_scene_id": "scene-001",
+                "status": SpeechSegmentStatus.FAILED,
+                "error_code": "speech_replacement_lineage_blocked",
+            }
+        )
+        entries = (entry,)
+        manifest = manifest.model_copy(
+            update={
+                "entries": entries,
+                "summary": summarize_speech_entries(entries),
+                "status": SpeechGenerationManifestStatus.FAILED,
+            }
+        )
+    target = (
+        root
+        / "production"
+        / str(record.job_id)
+        / "generating_narration"
+        / f"attempt-{attempt}"
+    )
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "speech-generation-manifest.json").write_bytes(
         serialize_speech_manifest(manifest)
     )
 

@@ -8,6 +8,7 @@ import io
 import re
 import wave
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -72,6 +73,13 @@ _SAFE_ID = re.compile(r"^[A-Za-z0-9_.-]{1,300}$")
 _SAFE_PCM_MIME = frozenset(
     {"audio/pcm", "application/octet-stream", "binary/octet-stream"}
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _RemoteSpeechSubmissionPlan:
+    remote_attempt_number: int
+    replacement_source: RemoteSpeechJobRecord | None = None
+    replacement_permit: SpeechUnresolvedReplacementPermit | None = None
 
 
 class OpenRouterSpeechGenerationProvider:
@@ -145,12 +153,12 @@ class OpenRouterSpeechGenerationProvider:
     async def generate(self, request: SpeechProviderRequest) -> SpeechProviderResult:
         if self._closed:
             raise SpeechProviderClosedError("speech provider is closed")
-        existing = await self._store.read(
+        exact_existing = await self._store.read(
             job_id=request.job_id,
             attempt_number=request.attempt_number,
             segment_id=request.segment.segment_id,
         )
-        if existing is not None:
+        if exact_existing is not None:
             raise SpeechProviderUncertainError(
                 "durable remote speech request already exists without reusable local audio"
             )
@@ -158,10 +166,27 @@ class OpenRouterSpeechGenerationProvider:
         job_records = tuple(record for record in records if record.job_id == request.job_id)
         if len(job_records) >= self._maximum_requests:
             raise SpeechBillableAuthorizationError("speech job request limit was reached")
-        replacement_permit = await self._replacement_permit(request, job_records)
+        plan = await self._submission_plan(request, job_records)
+        existing = await self._store.read(
+            job_id=request.job_id,
+            attempt_number=plan.remote_attempt_number,
+            segment_id=request.segment.segment_id,
+        )
+        if existing is not None:
+            if plan.replacement_permit is not None:
+                raise SpeechReplacementLineageError(
+                    "replacement remote speech child already exists"
+                )
+            raise SpeechProviderUncertainError(
+                "durable remote speech request already exists without reusable local audio"
+            )
 
-        prepared = self._prepared_record(request, replacement_permit=replacement_permit)
-        if replacement_permit is not None:
+        prepared = self._prepared_record(
+            request,
+            remote_attempt_number=plan.remote_attempt_number,
+            replacement_permit=plan.replacement_permit,
+        )
+        if plan.replacement_permit is not None:
             if any(
                 record.request_fingerprint == prepared.request_fingerprint
                 for record in job_records
@@ -174,14 +199,15 @@ class OpenRouterSpeechGenerationProvider:
                     "metadata": {
                         **prepared.metadata,
                         "replacement_permit_fingerprint": (
-                            replacement_permit.authorization.fingerprint
+                            plan.replacement_permit.authorization.fingerprint
                         ),
                         "replacement_submission_identity": (
-                            replacement_permit.replacement_submission_identity
+                            plan.replacement_permit.replacement_submission_identity
                         ),
                         "replacement_source_attempt": (
-                            replacement_permit.authorization.source_attempt_number
+                            plan.replacement_permit.authorization.source_attempt_number
                         ),
+                        "originating_stage_attempt": request.attempt_number,
                     }
                 }
             )
@@ -200,10 +226,10 @@ class OpenRouterSpeechGenerationProvider:
             authorized_at=prepared.prepared_at,
         )
         started = self._now()
-        if replacement_permit is not None:
+        if plan.replacement_permit is not None:
             assert self._replacement_store is not None
             await self._replacement_store.consume(
-                permit=replacement_permit,
+                permit=plan.replacement_permit,
                 estimated_cost_usd=self._estimated_cost,
                 consumed_at=started,
             )
@@ -304,7 +330,7 @@ class OpenRouterSpeechGenerationProvider:
         except SpeechProviderResponseError as exc:
             current = await self._store.read(
                 job_id=request.job_id,
-                attempt_number=request.attempt_number,
+                attempt_number=plan.remote_attempt_number,
                 segment_id=request.segment.segment_id,
             )
             if current == submitting:
@@ -318,16 +344,18 @@ class OpenRouterSpeechGenerationProvider:
                 await self._store.checkpoint(previous=submitting, current=failed)
             raise
 
-    async def _replacement_permit(
+    async def _submission_plan(
         self,
         request: SpeechProviderRequest,
         job_records: tuple[RemoteSpeechJobRecord, ...],
-    ) -> SpeechUnresolvedReplacementPermit | None:
+    ) -> _RemoteSpeechSubmissionPlan:
         uncertain = tuple(
             record for record in job_records if record.status is RemoteSpeechJobStatus.UNCERTAIN
         )
         if not uncertain:
-            return None
+            return _RemoteSpeechSubmissionPlan(
+                remote_attempt_number=request.attempt_number
+            )
         if self._replacement_store is None:
             raise SpeechReplacementLineageError(
                 "uncertain speech submission requires replacement authorization"
@@ -340,30 +368,36 @@ class OpenRouterSpeechGenerationProvider:
             ):
                 uncovered.append(record)
         if not uncovered:
-            return None
-        immediate_parent = tuple(
+            return _RemoteSpeechSubmissionPlan(
+                remote_attempt_number=request.attempt_number
+            )
+        eligible_parent = tuple(
             record
             for record in uncovered
             if record.segment_id == request.segment.segment_id
-            and record.attempt_number + 1 == request.attempt_number
         )
-        if len(immediate_parent) != 1 or len(uncovered) != 1:
+        if len(eligible_parent) != 1 or len(uncovered) != 1:
             raise SpeechReplacementLineageError(
-                "speech replacement does not have one uncovered immediate parent"
+                "speech replacement does not have one unique eligible parent"
             )
-        parent = immediate_parent[0]
+        parent = eligible_parent[0]
+        remote_attempt_number = parent.attempt_number + 1
+        if request.attempt_number < remote_attempt_number:
+            raise SpeechReplacementLineageError(
+                "originating stage attempt predates the remote replacement target"
+            )
         if any(
             record.segment_id == request.segment.segment_id
-            and record.attempt_number >= request.attempt_number
-            for record in uncertain
+            and record.attempt_number >= remote_attempt_number
+            for record in job_records
         ):
             raise SpeechReplacementLineageError(
-                "speech replacement attempt regresses an existing lineage"
+                "replacement remote speech child already exists"
             )
         try:
             permit = await self._replacement_store.permit(
                 job_id=request.job_id,
-                target_attempt_number=request.attempt_number,
+                target_attempt_number=remote_attempt_number,
                 segment_id=request.segment.segment_id,
                 estimated_cost_usd=self._estimated_cost,
             )
@@ -378,7 +412,9 @@ class OpenRouterSpeechGenerationProvider:
         authorization = permit.authorization
         if (
             authorization.source_attempt_number != parent.attempt_number
-            or authorization.target_attempt_number != request.attempt_number
+            or authorization.target_attempt_number != remote_attempt_number
+            or authorization.target_attempt_number
+            != authorization.source_attempt_number + 1
             or authorization.original_request_fingerprint != parent.request_fingerprint
             or authorization.job_id != request.job_id
             or authorization.segment_id != request.segment.segment_id
@@ -386,7 +422,11 @@ class OpenRouterSpeechGenerationProvider:
             raise SpeechReplacementLineageError(
                 "speech replacement authorization does not match its immediate parent"
             )
-        return permit
+        return _RemoteSpeechSubmissionPlan(
+            remote_attempt_number=remote_attempt_number,
+            replacement_source=parent,
+            replacement_permit=permit,
+        )
 
     async def _post_once(
         self, request: SpeechProviderRequest
@@ -416,6 +456,7 @@ class OpenRouterSpeechGenerationProvider:
         self,
         request: SpeechProviderRequest,
         *,
+        remote_attempt_number: int | None = None,
         replacement_permit: SpeechUnresolvedReplacementPermit | None = None,
     ) -> RemoteSpeechJobRecord:
         now = self._now()
@@ -475,7 +516,11 @@ class OpenRouterSpeechGenerationProvider:
         )
         return RemoteSpeechJobRecord(
             job_id=request.job_id,
-            attempt_number=request.attempt_number,
+            attempt_number=(
+                request.attempt_number
+                if remote_attempt_number is None
+                else remote_attempt_number
+            ),
             segment_id=request.segment.segment_id,
             provider="openrouter",
             model=self._model,

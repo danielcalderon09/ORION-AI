@@ -89,7 +89,9 @@ class SpeechUnresolvedReplacementAuthorization(ContractModel):
     @model_validator(mode="after")
     def validate_authorization(self) -> SpeechUnresolvedReplacementAuthorization:
         if self.target_attempt_number != self.source_attempt_number + 1:
-            raise ValueError("replacement authorization must target the next stage attempt")
+            raise ValueError(
+                "replacement authorization must target the next remote submission attempt"
+            )
         if not self.acknowledge_duplicate_charge_risk:
             raise ValueError("duplicate-charge risk acknowledgement is required")
         if self.fingerprint != unresolved_replacement_authorization_fingerprint(self):
