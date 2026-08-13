@@ -342,6 +342,9 @@ from backend.src.production.speech_generation.remote_ports import (
 from backend.src.production.speech_generation.remote_reconciliation import (
     RemoteSpeechJobReconciler,
 )
+from backend.src.production.speech_generation.retry_budget import (
+    FilesystemSpeechRetryBudgetAuthorizationStore,
+)
 from backend.src.production.speech_generation.source_reader import (
     SpeechSourceScriptReaderAdapter,
 )
@@ -866,6 +869,9 @@ def build_production_container(settings: Settings) -> ProductionContainer:
             allow_billable_requests=speech_remote_configuration.allow_billable_requests,
             remote_job_store=remote_speech_job_store,
             unresolved_replacement_store=SpeechUnresolvedReplacementStore(
+                settings.PROJECTS_DIR
+            ),
+            retry_budget_store=FilesystemSpeechRetryBudgetAuthorizationStore(
                 settings.PROJECTS_DIR
             ),
             maximum_requests_per_job=settings.ORION_SPEECH_GENERATION_MAX_REQUESTS_PER_JOB,

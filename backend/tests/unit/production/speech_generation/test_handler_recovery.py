@@ -3,13 +3,17 @@ from contextlib import suppress
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
+
 from backend.src.production.application.results import StageOutcome
 from backend.src.production.composition.audio_first_duration_reader import (
     DurableSpeechDurationResolutionReader,
 )
 from backend.src.production.domain.enums import ArtifactType
 from backend.src.production.speech_generation.exceptions import (
+    SpeechCostLimitExhaustedError,
     SpeechReplacementLineageError,
+    SpeechRequestLimitExhaustedError,
 )
 from backend.src.production.speech_generation.handler import SpeechGenerationHandler
 from backend.src.production.speech_generation.manifest_writer import (
@@ -69,6 +73,17 @@ class BlockingProvider(CountingProvider):
 class LineageBlockedProvider(SimulatedSpeechGenerationProvider):
     async def generate(self, request):
         raise SpeechReplacementLineageError("offline lineage rejection")
+
+
+class BudgetBlockedProvider(SimulatedSpeechGenerationProvider):
+    def __init__(self, error_type) -> None:
+        super().__init__()
+        self.error_type = error_type
+        self.calls = 0
+
+    async def generate(self, request):
+        self.calls += 1
+        raise self.error_type("offline budget rejection")
 
 
 class MutableClock:
@@ -148,6 +163,30 @@ def _eight_second_source():
         )
 
 
+def _five_scene_source():
+    source = source_script()
+    template = source.script.scenes[0]
+    scenes = tuple(
+        template.model_copy(
+            update={
+                "scene_number": number,
+                "source_scene_number": number,
+                "heading": f"Scene {number}",
+                "narration": f"Offline narration number {number}.",
+                "estimated_duration_seconds": 0.5,
+            }
+        )
+        for number in range(1, 6)
+    )
+    return source.model_copy(
+        update={
+            "script": source.script.model_copy(
+                update={"target_duration_seconds": 2.5, "scenes": scenes}
+            )
+        }
+    )
+
+
 async def test_local_lineage_rejection_is_not_provider_uncertainty(tmp_path: Path) -> None:
     configuration = speech_configuration()
     writer = InMemorySpeechManifestWriter()
@@ -166,6 +205,41 @@ async def test_local_lineage_rejection_is_not_provider_uncertainty(tmp_path: Pat
     assert manifest is not None
     assert manifest.entries[0].status is SpeechSegmentStatus.FAILED
     assert manifest.entries[0].error_code == "speech_replacement_lineage_blocked"
+
+
+@pytest.mark.parametrize(
+    ("error_type", "expected_code"),
+    [
+        (SpeechRequestLimitExhaustedError, "speech_request_limit_exhausted"),
+        (SpeechCostLimitExhaustedError, "speech_cost_limit_exhausted"),
+    ],
+)
+async def test_budget_rejection_has_specific_local_error(
+    tmp_path: Path,
+    error_type,
+    expected_code: str,
+) -> None:
+    provider = BudgetBlockedProvider(error_type)
+    writer = InMemorySpeechManifestWriter()
+    command, context = command_context()
+    result = await _handler(
+        tmp_path,
+        reader=FakeSourceReader(source_script()),
+        provider=provider,
+        writer=writer,
+    ).execute(command, context)
+
+    manifest = await writer.read_existing(context=context)
+    assert result.result.outcome is StageOutcome.NEEDS_USER_ACTION
+    assert result.result.error_code == expected_code
+    assert result.result.error_code not in {
+        "speech_generation_invalid",
+        "speech_submission_uncertain",
+    }
+    assert provider.calls == 1
+    assert manifest is not None
+    assert manifest.entries[0].status is SpeechSegmentStatus.FAILED
+    assert manifest.entries[0].error_code == expected_code
 
 
 async def test_natural_durations_are_checkpointed_before_video(tmp_path: Path) -> None:
@@ -320,6 +394,40 @@ async def test_partial_failure_is_checkpointed_and_retry_resumes(
     ).execute(command, context)
     assert result.result.outcome is StageOutcome.SUCCEEDED
     assert retry_provider.calls == 1
+
+
+async def test_five_scene_recovery_reuses_four_stored_assets(tmp_path: Path) -> None:
+    reader = FakeSourceReader(_five_scene_source())
+    writer = InMemorySpeechManifestWriter()
+    command, context = command_context()
+    failing = CountingProvider(fail_on=5)
+
+    first = await _handler(
+        tmp_path,
+        reader=reader,
+        provider=failing,
+        writer=writer,
+    ).execute(command, context)
+    first_manifest = await writer.read_existing(context=context)
+    assert first.result.outcome is StageOutcome.FAILED_PERMANENT
+    assert failing.calls == 5
+    assert first_manifest is not None
+    assert first_manifest.summary.stored == 4
+    assert first_manifest.summary.failed == 1
+
+    recovery_provider = CountingProvider()
+    recovered = await _handler(
+        tmp_path,
+        reader=reader,
+        provider=recovery_provider,
+        writer=writer,
+    ).execute(command, context)
+    recovered_manifest = await writer.read_existing(context=context)
+
+    assert recovered.result.outcome is StageOutcome.SUCCEEDED
+    assert recovery_provider.calls == 1
+    assert recovered_manifest is not None
+    assert recovered_manifest.summary.stored == 5
 
 
 async def test_cancellation_leaves_generating_checkpoint_and_restart_recovers(

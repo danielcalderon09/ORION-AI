@@ -30,6 +30,7 @@ from backend.src.production.speech_generation.configuration import (
 from backend.src.production.speech_generation.duration import simulated_duration_ms
 from backend.src.production.speech_generation.exceptions import (
     SpeechAudioStoreError,
+    SpeechCostLimitExhaustedError,
     SpeechGenerationError,
     SpeechManifestConflictError,
     SpeechManifestError,
@@ -37,6 +38,7 @@ from backend.src.production.speech_generation.exceptions import (
     SpeechProviderResponseError,
     SpeechProviderUncertainError,
     SpeechReplacementLineageError,
+    SpeechRequestLimitExhaustedError,
     SpeechSourceScriptError,
 )
 from backend.src.production.speech_generation.fitting_recovery import (
@@ -358,6 +360,32 @@ class SpeechGenerationHandler:
                     stored_assets[stored.segment_id] = verified.asset
                 except asyncio.CancelledError:
                     raise
+                except SpeechRequestLimitExhaustedError:
+                    await self._checkpoint_failed(
+                        context=context,
+                        manifest=manifest,
+                        entry=generating,
+                        error_code="speech_request_limit_exhausted",
+                    )
+                    return self._failure(
+                        command,
+                        started_at,
+                        StageOutcome.NEEDS_USER_ACTION,
+                        "speech_request_limit_exhausted",
+                    )
+                except SpeechCostLimitExhaustedError:
+                    await self._checkpoint_failed(
+                        context=context,
+                        manifest=manifest,
+                        entry=generating,
+                        error_code="speech_cost_limit_exhausted",
+                    )
+                    return self._failure(
+                        command,
+                        started_at,
+                        StageOutcome.NEEDS_USER_ACTION,
+                        "speech_cost_limit_exhausted",
+                    )
                 except SpeechReplacementLineageError:
                     await self._checkpoint_failed(
                         context=context,
@@ -412,6 +440,8 @@ class SpeechGenerationHandler:
                     in {
                         "narration_fitting_uncertain",
                         "speech_replacement_lineage_blocked",
+                        "speech_request_limit_exhausted",
+                        "speech_cost_limit_exhausted",
                     }
                     else StageOutcome.FAILED_PERMANENT
                 )
@@ -1238,6 +1268,22 @@ class SpeechGenerationHandler:
             verified = await self._store.read(asset=asset)
         except asyncio.CancelledError:
             raise
+        except SpeechRequestLimitExhaustedError:
+            await self._checkpoint_failed(
+                context=context,
+                manifest=manifest,
+                entry=generating,
+                error_code="speech_request_limit_exhausted",
+            )
+            return manifest, None, "speech_request_limit_exhausted"
+        except SpeechCostLimitExhaustedError:
+            await self._checkpoint_failed(
+                context=context,
+                manifest=manifest,
+                entry=generating,
+                error_code="speech_cost_limit_exhausted",
+            )
+            return manifest, None, "speech_cost_limit_exhausted"
         except SpeechReplacementLineageError:
             await self._checkpoint_failed(
                 context=context,

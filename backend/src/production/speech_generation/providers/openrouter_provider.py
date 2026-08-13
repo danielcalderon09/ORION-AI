@@ -28,10 +28,12 @@ from backend.src.production.speech_generation.cost import (
 )
 from backend.src.production.speech_generation.exceptions import (
     SpeechBillableAuthorizationError,
+    SpeechCostLimitExhaustedError,
     SpeechProviderClosedError,
     SpeechProviderResponseError,
     SpeechProviderUncertainError,
     SpeechReplacementLineageError,
+    SpeechRequestLimitExhaustedError,
     SpeechUncertaintyResolutionError,
 )
 from backend.src.production.speech_generation.fingerprinting import (
@@ -64,6 +66,10 @@ from backend.src.production.speech_generation.remote_models import (
     RemoteSpeechTransportDiagnostic,
 )
 from backend.src.production.speech_generation.remote_ports import RemoteSpeechJobStore
+from backend.src.production.speech_generation.retry_budget import (
+    FilesystemSpeechRetryBudgetAuthorizationStore,
+    SpeechRetryBudgetLimits,
+)
 from backend.src.production.speech_generation.unresolved_replacement import (
     SpeechUnresolvedReplacementPermit,
     SpeechUnresolvedReplacementStore,
@@ -98,6 +104,7 @@ class OpenRouterSpeechGenerationProvider:
         allow_billable_requests: bool,
         remote_job_store: RemoteSpeechJobStore,
         unresolved_replacement_store: SpeechUnresolvedReplacementStore | None = None,
+        retry_budget_store: FilesystemSpeechRetryBudgetAuthorizationStore | None = None,
         maximum_requests_per_job: int = 1,
         base_url: str = "https://openrouter.ai/api/v1",
         timeout_seconds: float = 120,
@@ -136,6 +143,7 @@ class OpenRouterSpeechGenerationProvider:
         self._maximum_cost = maximum_authorized_cost_usd
         self._store = remote_job_store
         self._replacement_store = unresolved_replacement_store
+        self._retry_budget_store = retry_budget_store
         self._maximum_requests = maximum_requests_per_job
         self._base_url = str(parsed).rstrip("/")
         self._timeout = httpx.Timeout(timeout_seconds)
@@ -164,8 +172,26 @@ class OpenRouterSpeechGenerationProvider:
             )
         records = await self._store.list_records()
         job_records = tuple(record for record in records if record.job_id == request.job_id)
-        if len(job_records) >= self._maximum_requests:
-            raise SpeechBillableAuthorizationError("speech job request limit was reached")
+        limits = await self._effective_budget(request)
+        if len(job_records) >= limits.maximum_requests_per_job:
+            raise SpeechRequestLimitExhaustedError(
+                "speech job request limit was reached"
+            )
+        accounted_cost = sum(
+            (
+                record.reported_cost.amount
+                if record.reported_cost is not None
+                else record.estimated_cost.estimated_maximum_cost
+            )
+            for record in job_records
+            if record.submission_started_at is not None
+        )
+        if (
+            self._retry_budget_store is not None
+            and accounted_cost + self._estimated_cost
+            > limits.maximum_tts_job_cost_usd
+        ):
+            raise SpeechCostLimitExhaustedError("speech job cost limit was reached")
         plan = await self._submission_plan(request, job_records)
         existing = await self._store.read(
             job_id=request.job_id,
@@ -185,6 +211,7 @@ class OpenRouterSpeechGenerationProvider:
             request,
             remote_attempt_number=plan.remote_attempt_number,
             replacement_permit=plan.replacement_permit,
+            maximum_authorized_cost_usd=limits.maximum_tts_job_cost_usd,
         )
         if plan.replacement_permit is not None:
             if any(
@@ -428,6 +455,23 @@ class OpenRouterSpeechGenerationProvider:
             replacement_permit=permit,
         )
 
+    async def _effective_budget(
+        self,
+        request: SpeechProviderRequest,
+    ) -> SpeechRetryBudgetLimits:
+        if self._retry_budget_store is None:
+            return SpeechRetryBudgetLimits(
+                maximum_requests_per_job=self._maximum_requests,
+                maximum_tts_job_cost_usd=self._maximum_cost,
+            )
+        return await self._retry_budget_store.effective_limits(
+            job_id=request.job_id,
+            target_stage_attempt=request.attempt_number,
+            base_maximum_requests_per_job=self._maximum_requests,
+            base_maximum_tts_job_cost_usd=self._maximum_cost,
+            estimated_cost_per_request_usd=self._estimated_cost,
+        )
+
     async def _post_once(
         self, request: SpeechProviderRequest
     ) -> tuple[bytes, int, str | None, str | None]:
@@ -458,6 +502,7 @@ class OpenRouterSpeechGenerationProvider:
         *,
         remote_attempt_number: int | None = None,
         replacement_permit: SpeechUnresolvedReplacementPermit | None = None,
+        maximum_authorized_cost_usd: Decimal | None = None,
     ) -> RemoteSpeechJobRecord:
         now = self._now()
         snapshot = self._capability_snapshot(request, now)
@@ -538,7 +583,11 @@ class OpenRouterSpeechGenerationProvider:
             estimated_cost=estimate,
             authorization=SpeechCostAuthorization(
                 currency="USD",
-                maximum_authorized_cost=self._maximum_cost,
+                maximum_authorized_cost=(
+                    self._maximum_cost
+                    if maximum_authorized_cost_usd is None
+                    else maximum_authorized_cost_usd
+                ),
                 status=SpeechCostAuthorizationStatus.AUTHORIZED,
                 authorized_at=now,
                 authorization_reference="explicit_local_configuration",

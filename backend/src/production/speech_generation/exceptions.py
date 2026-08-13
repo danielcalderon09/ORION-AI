@@ -114,6 +114,14 @@ class SpeechBillableAuthorizationError(SpeechRemotePreparationError):
     pass
 
 
+class SpeechRequestLimitExhaustedError(SpeechBillableAuthorizationError):
+    """A local durable request ceiling rejected a fresh provider submission."""
+
+
+class SpeechCostLimitExhaustedError(SpeechBillableAuthorizationError):
+    """A local durable cost ceiling rejected a fresh provider submission."""
+
+
 class RemoteSpeechProviderDisabledError(SpeechRemotePreparationError):
     pass
 
