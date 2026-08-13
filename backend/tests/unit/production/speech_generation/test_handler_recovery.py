@@ -8,6 +8,9 @@ from backend.src.production.composition.audio_first_duration_reader import (
     DurableSpeechDurationResolutionReader,
 )
 from backend.src.production.domain.enums import ArtifactType
+from backend.src.production.speech_generation.exceptions import (
+    SpeechReplacementLineageError,
+)
 from backend.src.production.speech_generation.handler import SpeechGenerationHandler
 from backend.src.production.speech_generation.manifest_writer import (
     InMemorySpeechManifestWriter,
@@ -61,6 +64,11 @@ class BlockingProvider(CountingProvider):
         self.started.set()
         await self.release.wait()
         return await SimulatedSpeechGenerationProvider.generate(self, request)
+
+
+class LineageBlockedProvider(SimulatedSpeechGenerationProvider):
+    async def generate(self, request):
+        raise SpeechReplacementLineageError("offline lineage rejection")
 
 
 class MutableClock:
@@ -137,7 +145,27 @@ def _eight_second_source():
     )
     return source.model_copy(
         update={"script": source.script.model_copy(update={"target_duration_seconds": 8.0, "scenes": scenes})}
+        )
+
+
+async def test_local_lineage_rejection_is_not_provider_uncertainty(tmp_path: Path) -> None:
+    configuration = speech_configuration()
+    writer = InMemorySpeechManifestWriter()
+    handler = SpeechGenerationHandler(
+        script_reader=FakeSourceReader(source_script()),
+        provider=LineageBlockedProvider(),
+        audio_store=audio_store(tmp_path, configuration),
+        manifest_writer=writer,
+        configuration=configuration,
+        clock=lambda: NOW,
     )
+    command, context = command_context()
+    result = await handler.execute(command, context)
+    manifest = await writer.read_existing(context=context)
+    assert result.result.error_code == "speech_replacement_lineage_blocked"
+    assert manifest is not None
+    assert manifest.entries[0].status is SpeechSegmentStatus.FAILED
+    assert manifest.entries[0].error_code == "speech_replacement_lineage_blocked"
 
 
 async def test_natural_durations_are_checkpointed_before_video(tmp_path: Path) -> None:

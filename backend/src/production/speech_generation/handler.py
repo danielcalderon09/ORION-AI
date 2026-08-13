@@ -36,6 +36,7 @@ from backend.src.production.speech_generation.exceptions import (
     SpeechProviderError,
     SpeechProviderResponseError,
     SpeechProviderUncertainError,
+    SpeechReplacementLineageError,
     SpeechSourceScriptError,
 )
 from backend.src.production.speech_generation.fitting_recovery import (
@@ -357,6 +358,19 @@ class SpeechGenerationHandler:
                     stored_assets[stored.segment_id] = verified.asset
                 except asyncio.CancelledError:
                     raise
+                except SpeechReplacementLineageError:
+                    await self._checkpoint_failed(
+                        context=context,
+                        manifest=manifest,
+                        entry=generating,
+                        error_code="speech_replacement_lineage_blocked",
+                    )
+                    return self._failure(
+                        command,
+                        started_at,
+                        StageOutcome.NEEDS_USER_ACTION,
+                        "speech_replacement_lineage_blocked",
+                    )
                 except SpeechProviderUncertainError:
                     await self._checkpoint_uncertain(
                         context=context,
@@ -394,7 +408,11 @@ class SpeechGenerationHandler:
             if fitting_error is not None:
                 outcome = (
                     StageOutcome.NEEDS_USER_ACTION
-                    if fitting_error == "narration_fitting_uncertain"
+                    if fitting_error
+                    in {
+                        "narration_fitting_uncertain",
+                        "speech_replacement_lineage_blocked",
+                    }
                     else StageOutcome.FAILED_PERMANENT
                 )
                 return self._failure(command, started_at, outcome, fitting_error)
@@ -1220,6 +1238,14 @@ class SpeechGenerationHandler:
             verified = await self._store.read(asset=asset)
         except asyncio.CancelledError:
             raise
+        except SpeechReplacementLineageError:
+            await self._checkpoint_failed(
+                context=context,
+                manifest=manifest,
+                entry=generating,
+                error_code="speech_replacement_lineage_blocked",
+            )
+            return manifest, None, "speech_replacement_lineage_blocked"
         except SpeechProviderUncertainError:
             await self._checkpoint_uncertain(
                 context=context,
@@ -1522,11 +1548,12 @@ class SpeechGenerationHandler:
         context: StageContext,
         manifest: SpeechGenerationManifest,
         entry: SpeechSegmentManifestEntry,
+        error_code: str = "speech_generation_failed",
     ) -> None:
         failed = entry.model_copy(
             update={
                 "status": SpeechSegmentStatus.FAILED,
-                "error_code": "speech_generation_failed",
+                "error_code": error_code,
                 "generation_started_at": None,
             }
         )

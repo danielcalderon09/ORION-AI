@@ -46,6 +46,10 @@ class SpeechProviderUncertainError(SpeechProviderError):
     """A remote submission may have been transmitted and cannot be retried safely."""
 
 
+class SpeechReplacementLineageError(SpeechProviderError):
+    """A local replacement-lineage precondition rejected a fresh submission."""
+
+
 class SpeechAudioStoreError(SpeechGenerationError):
     pass
 

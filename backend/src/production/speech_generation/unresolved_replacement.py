@@ -331,15 +331,34 @@ class SpeechUnresolvedReplacementStore:
         authorization = SpeechUnresolvedReplacementAuthorization.model_validate(
             _deserialize(self._read(path))
         )
+        if (
+            authorization.job_id != job_id
+            or authorization.target_attempt_number != target_attempt
+            or authorization.source_attempt_number + 1 != target_attempt
+            or authorization.segment_id != segment_id
+        ):
+            raise SpeechUncertaintyResolutionError(
+                "replacement authorization lineage identity drifted"
+            )
         if estimated_cost > authorization.maximum_additional_estimated_cost_usd:
             raise SpeechUncertaintyResolutionError("replacement estimated cost exceeds authorization")
         record, resolution = self._source(
             job_id, authorization.source_attempt_number, segment_id
         )
         if (
-            record.request_fingerprint != authorization.original_request_fingerprint
+            record.job_id != authorization.job_id
+            or record.attempt_number != authorization.source_attempt_number
+            or record.segment_id != authorization.segment_id
+            or record.status is not RemoteSpeechJobStatus.UNCERTAIN
+            or record.request_fingerprint != authorization.original_request_fingerprint
             or hashlib.sha256(serialize_remote_speech_job(record)).hexdigest()
             != authorization.original_uncertain_record_sha256
+            or resolution.job_id != authorization.job_id
+            or resolution.attempt_number != authorization.source_attempt_number
+            or resolution.scene_id != authorization.scene_id
+            or resolution.segment_id != authorization.segment_id
+            or resolution.request_fingerprint
+            != authorization.original_request_fingerprint
             or resolution.fingerprint != authorization.unresolved_resolution_fingerprint
             or resolution.resolution is not SpeechSubmissionResolutionStatus.UNRESOLVED
         ):
@@ -412,7 +431,6 @@ class SpeechUnresolvedReplacementStore:
         return any(
             candidate.attempt_number == authorization.target_attempt_number
             and candidate.segment_id == record.segment_id
-            and candidate.status is RemoteSpeechJobStatus.COMPLETED
             and candidate.metadata.get("replacement_submission_identity")
             == consumption.replacement_submission_identity
             for candidate in job_records

@@ -14,6 +14,7 @@ from backend.src.production.cost_accounting.durable_reader import (
 from backend.src.production.cost_accounting.models import JobCostCategory
 from backend.src.production.speech_generation.exceptions import (
     SpeechProviderUncertainError,
+    SpeechReplacementLineageError,
     SpeechUncertaintyResolutionError,
 )
 from backend.src.production.speech_generation.models import (
@@ -27,7 +28,10 @@ from backend.src.production.speech_generation.providers.openrouter_provider impo
 from backend.src.production.speech_generation.remote_job_store import (
     LocalRemoteSpeechJobStore,
 )
-from backend.src.production.speech_generation.remote_models import RemoteSpeechJobStatus
+from backend.src.production.speech_generation.remote_models import (
+    RemoteSpeechJobRecord,
+    RemoteSpeechJobStatus,
+)
 from backend.src.production.speech_generation.serialization import serialize_speech_manifest
 from backend.src.production.speech_generation.uncertainty_resolution import (
     SpeechSubmissionResolution,
@@ -36,6 +40,7 @@ from backend.src.production.speech_generation.uncertainty_resolution import (
     SpeechUncertaintyResolver,
 )
 from backend.src.production.speech_generation.unresolved_replacement import (
+    SpeechUnresolvedReplacementAuthorization,
     SpeechUnresolvedReplacementPermit,
     SpeechUnresolvedReplacementStore,
 )
@@ -130,7 +135,7 @@ async def _authorization(root: Path, **updates: object):
 async def test_unresolved_without_authorization_stays_blocked(tmp_path: Path) -> None:
     record, _, remote_store = await _unresolved_workspace(tmp_path)
     provider = _provider(tmp_path, remote_store, lambda _: pytest.fail("provider called"))
-    with pytest.raises(SpeechProviderUncertainError):
+    with pytest.raises(SpeechReplacementLineageError):
         await provider.generate(_request(attempt=2))
     assert (await remote_store.list_records()) == (record,)
     await provider.close()
@@ -140,6 +145,19 @@ async def test_unresolved_without_authorization_stays_blocked(tmp_path: Path) ->
 async def test_authorization_requires_duplicate_risk_acknowledgement(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="duplicate-charge risk"):
         await _authorization(tmp_path, acknowledge_duplicate_charge_risk=False)
+
+
+@pytest.mark.asyncio
+async def test_authorization_target_must_be_source_plus_one(tmp_path: Path) -> None:
+    _, _, _, _, authorization = await _authorization(tmp_path)
+    with pytest.raises(ValueError, match="target the next stage attempt"):
+        SpeechUnresolvedReplacementAuthorization.create(
+            **authorization.model_dump(
+                mode="python",
+                exclude={"fingerprint", "target_attempt_number"},
+            ),
+            target_attempt_number=3,
+        )
 
 
 @pytest.mark.asyncio
@@ -301,6 +319,324 @@ async def test_uncertain_replacement_requires_another_authorization(tmp_path: Pa
     await provider.close()
 
 
+@pytest.mark.asyncio
+async def test_chained_unresolved_replacement_uses_immediate_parent_once(
+    tmp_path: Path,
+) -> None:
+    remote_store, replacement_store, first, second = await _two_uncertain_attempts(
+        tmp_path
+    )
+    calls = 0
+
+    def success(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        consumption = (
+            tmp_path
+            / "production"
+            / str(first.job_id)
+            / "generating_narration"
+            / "attempt-3"
+            / "speech-rc"
+            / f"{SEGMENT_ID}.json"
+        )
+        assert consumption.exists(), "authorization must be consumed before POST"
+        return httpx.Response(
+            200,
+            content=b"\x01\x00" * 4_800,
+            headers={"content-type": "application/octet-stream"},
+        )
+
+    provider = _provider(
+        tmp_path,
+        remote_store,
+        success,
+        replacement_store=replacement_store,
+        estimated_cost=Decimal("0.001"),
+        timeout_seconds=180,
+    )
+    await provider.generate(_request(attempt=3))
+    records = await remote_store.list_records()
+    assert calls == 1
+    assert [record.status for record in records] == [
+        RemoteSpeechJobStatus.UNCERTAIN,
+        RemoteSpeechJobStatus.UNCERTAIN,
+        RemoteSpeechJobStatus.COMPLETED,
+    ]
+    assert len({record.request_fingerprint for record in records}) == 3
+    assert records[0] == first
+    assert records[1] == second
+    assert records[2].metadata["replacement_source_attempt"] == 2
+    assert records[2].metadata["replacement_submission_identity"]
+    assert await replacement_store.uncertainty_is_covered(
+        record=first, job_records=records
+    )
+    assert await replacement_store.uncertainty_is_covered(
+        record=second, job_records=records
+    )
+    summary = derive_durable_job_cost_summary(
+        job_id=first.job_id,
+        job_root=tmp_path / "production" / str(first.job_id),
+    ).category(JobCostCategory.SPEECH)
+    assert summary.request_count == 3
+    assert summary.accounted_cost_usd == Decimal("0.003")
+    assert records[0].estimated_cost.estimated_maximum_cost == Decimal("0.001")
+    assert records[1].estimated_cost.estimated_maximum_cost == Decimal("0.001")
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_chained_third_uncertainty_is_accounted_once_and_stops(
+    tmp_path: Path,
+) -> None:
+    remote_store, replacement_store, first, second = await _two_uncertain_attempts(
+        tmp_path
+    )
+    calls = 0
+
+    def timeout(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("offline attempt-3 timeout", request=request)
+
+    provider = _provider(
+        tmp_path,
+        remote_store,
+        timeout,
+        replacement_store=replacement_store,
+        estimated_cost=Decimal("0.001"),
+        timeout_seconds=180,
+    )
+    with pytest.raises(SpeechProviderUncertainError):
+        await provider.generate(_request(attempt=3))
+    records = await remote_store.list_records()
+    assert calls == 1
+    assert len(records) == 3
+    assert records[0] == first
+    assert records[1] == second
+    assert records[2].status is RemoteSpeechJobStatus.UNCERTAIN
+    assert records[2].transport_diagnostic is not None
+    assert records[2].transport_diagnostic.timeout_seconds == Decimal("180")
+    assert len({record.request_fingerprint for record in records}) == 3
+    summary = derive_durable_job_cost_summary(
+        job_id=first.job_id,
+        job_root=tmp_path / "production" / str(first.job_id),
+    ).category(JobCostCategory.SPEECH)
+    assert summary.request_count == 3
+    assert summary.accounted_cost_usd == Decimal("0.003")
+    with pytest.raises(SpeechProviderUncertainError):
+        await provider.generate(_request(attempt=3))
+    assert calls == 1
+    assert not (
+        tmp_path
+        / "production"
+        / str(first.job_id)
+        / "generating_narration"
+        / "attempt-4"
+    ).exists()
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_chain_rejects_non_immediate_parent_authorization(tmp_path: Path) -> None:
+    remote_store, replacement_store, first, second = await _two_uncertain_attempts(
+        tmp_path
+    )
+    authorization = (
+        tmp_path
+        / "production"
+        / str(first.job_id)
+        / "generating_narration"
+        / "attempt-3"
+        / "speech-ra"
+        / f"{SEGMENT_ID}.json"
+    )
+    source_authorization = (
+        tmp_path
+        / "production"
+        / str(first.job_id)
+        / "generating_narration"
+        / "attempt-2"
+        / "speech-ra"
+        / f"{SEGMENT_ID}.json"
+    )
+    authorization.write_bytes(source_authorization.read_bytes())
+    provider = _provider(
+        tmp_path,
+        remote_store,
+        lambda _: pytest.fail("provider called"),
+        replacement_store=replacement_store,
+        estimated_cost=Decimal("0.001"),
+    )
+    with pytest.raises(SpeechReplacementLineageError):
+        await provider.generate(_request(attempt=3))
+    assert await remote_store.list_records() == (first, second)
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_chain_rejects_regression_and_consumed_ancestral_reuse(
+    tmp_path: Path,
+) -> None:
+    remote_store, replacement_store, first, _ = await _two_uncertain_attempts(tmp_path)
+    with pytest.raises(SpeechUncertaintyResolutionError, match="exhausted"):
+        await replacement_store.permit(
+            job_id=first.job_id,
+            target_attempt_number=2,
+            segment_id=SEGMENT_ID,
+            estimated_cost_usd=Decimal("0.001"),
+        )
+    provider = _provider(
+        tmp_path,
+        remote_store,
+        lambda _: pytest.fail("provider called"),
+        replacement_store=replacement_store,
+        estimated_cost=Decimal("0.001"),
+    )
+    with pytest.raises(SpeechProviderUncertainError):
+        await provider.generate(_request(attempt=2))
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_authorization_rejects_conflicting_sibling(tmp_path: Path) -> None:
+    record, resolution, _, store, _ = await _authorization(tmp_path)
+    with pytest.raises(SpeechUncertaintyResolutionError, match="conflicting"):
+        await store.authorize(
+            job_id=record.job_id,
+            source_attempt_number=1,
+            scene_id="scene-001",
+            segment_id=SEGMENT_ID,
+            request_fingerprint=record.request_fingerprint,
+            resolution_fingerprint=resolution.fingerprint,
+            maximum_additional_provider_requests=1,
+            maximum_additional_estimated_cost_usd=Decimal("0.002"),
+            authorized_at=NOW + timedelta(minutes=3),
+            operator_id="operator-2",
+            acknowledge_duplicate_charge_risk=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_authorization_rejects_missing_source_resolution(tmp_path: Path) -> None:
+    record = remote_record_for_status(RemoteSpeechJobStatus.UNCERTAIN)
+    remote_store = LocalRemoteSpeechJobStore(tmp_path)
+    await remote_store.create(record)
+    with pytest.raises(SpeechUncertaintyResolutionError, match="source artifact"):
+        await SpeechUnresolvedReplacementStore(tmp_path).authorize(
+            job_id=record.job_id,
+            source_attempt_number=1,
+            scene_id="scene-001",
+            segment_id=SEGMENT_ID,
+            request_fingerprint=record.request_fingerprint,
+            resolution_fingerprint="f" * 64,
+            maximum_additional_provider_requests=1,
+            maximum_additional_estimated_cost_usd=Decimal("0.001"),
+            authorized_at=NOW + timedelta(minutes=2),
+            operator_id="operator-1",
+            acknowledge_duplicate_charge_risk=True,
+        )
+
+
+async def _two_uncertain_attempts(
+    root: Path,
+) -> tuple[
+    LocalRemoteSpeechJobStore,
+    SpeechUnresolvedReplacementStore,
+    RemoteSpeechJobRecord,
+    RemoteSpeechJobRecord,
+]:
+    remote_store = LocalRemoteSpeechJobStore(root)
+    replacement_store = SpeechUnresolvedReplacementStore(root)
+
+    async def submit_uncertain(attempt: int) -> RemoteSpeechJobRecord:
+        def timeout(request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout(f"offline attempt-{attempt}", request=request)
+
+        provider = _provider(
+            root,
+            remote_store,
+            timeout,
+            replacement_store=replacement_store,
+            estimated_cost=Decimal("0.001"),
+            timeout_seconds=180,
+        )
+        with pytest.raises(SpeechProviderUncertainError):
+            await provider.generate(_request(attempt=attempt))
+        await provider.close()
+        return (await remote_store.list_records())[-1]
+
+    first = await submit_uncertain(1)
+    await _resolve_and_authorize(root, first)
+    second = await submit_uncertain(2)
+    await _resolve_and_authorize(root, second)
+    return remote_store, replacement_store, first, second
+
+
+async def _resolve_and_authorize(root: Path, record: RemoteSpeechJobRecord) -> None:
+    assert record.submission_started_at is not None
+    _write_uncertain_manifest(root, record)
+    resolution = SpeechSubmissionResolution.create(
+        job_id=record.job_id,
+        attempt_number=record.attempt_number,
+        segment_id=record.segment_id,
+        scene_id="scene-001",
+        request_fingerprint=record.request_fingerprint,
+        resolution=SpeechSubmissionResolutionStatus.UNRESOLVED,
+        provenance=SpeechSubmissionResolutionProvenance.OPERATOR_ASSERTED,
+        resolved_at=record.submission_started_at + timedelta(minutes=1),
+        operator_id=f"operator-{record.attempt_number}",
+        evidence_reference=f"offline-audit-{record.attempt_number}",
+    )
+    await SpeechUncertaintyResolver(root).resolve(resolution)
+    await SpeechUnresolvedReplacementStore(root).authorize(
+        job_id=record.job_id,
+        source_attempt_number=record.attempt_number,
+        scene_id="scene-001",
+        segment_id=record.segment_id,
+        request_fingerprint=record.request_fingerprint,
+        resolution_fingerprint=resolution.fingerprint,
+        maximum_additional_provider_requests=1,
+        maximum_additional_estimated_cost_usd=Decimal("0.001"),
+        authorized_at=record.submission_started_at + timedelta(minutes=2),
+        operator_id=f"operator-{record.attempt_number}",
+        acknowledge_duplicate_charge_risk=True,
+    )
+
+
+def _write_uncertain_manifest(root: Path, record: RemoteSpeechJobRecord) -> None:
+    manifest = _initial_manifest().model_copy(
+        update={"attempt_number": record.attempt_number}
+    )
+    entry = manifest.entries[0].model_copy(
+        update={
+            "segment_id": record.segment_id,
+            "source_scene_id": "scene-001",
+            "status": SpeechSegmentStatus.UNCERTAIN,
+            "error_code": "speech_submission_uncertain",
+        }
+    )
+    entries = (entry,)
+    manifest = manifest.model_copy(
+        update={
+            "entries": entries,
+            "summary": summarize_speech_entries(entries),
+            "status": SpeechGenerationManifestStatus.UNCERTAIN,
+        }
+    )
+    attempt = (
+        root
+        / "production"
+        / str(record.job_id)
+        / "generating_narration"
+        / f"attempt-{record.attempt_number}"
+    )
+    attempt.mkdir(parents=True, exist_ok=True)
+    (attempt / "speech-generation-manifest.json").write_bytes(
+        serialize_speech_manifest(manifest)
+    )
+
+
 def _request(*, attempt: int, replacement: bool = True):
     configuration = speech_configuration(
         provider="openrouter",
@@ -328,17 +664,20 @@ def _provider(
     handler,
     *,
     replacement_store: SpeechUnresolvedReplacementStore | None = None,
+    estimated_cost: Decimal = Decimal("0.0001"),
+    timeout_seconds: float = 120,
 ):
     return OpenRouterSpeechGenerationProvider(
         api_key="fake-key-never-real",
         model="hexgrad/kokoro-82m",
         voice="configured-spanish-voice",
-        estimated_cost_usd=Decimal("0.0001"),
-        maximum_authorized_cost_usd=Decimal("0.01"),
+        estimated_cost_usd=estimated_cost,
+        maximum_authorized_cost_usd=max(Decimal("0.01"), estimated_cost * 20),
         allow_billable_requests=True,
         remote_job_store=remote_store,
         unresolved_replacement_store=replacement_store,
         maximum_requests_per_job=20,
+        timeout_seconds=timeout_seconds,
         max_audio_bytes=200_000,
         client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         owns_client=True,

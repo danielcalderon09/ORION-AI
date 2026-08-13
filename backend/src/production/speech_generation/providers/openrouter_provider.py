@@ -30,6 +30,7 @@ from backend.src.production.speech_generation.exceptions import (
     SpeechProviderClosedError,
     SpeechProviderResponseError,
     SpeechProviderUncertainError,
+    SpeechReplacementLineageError,
     SpeechUncertaintyResolutionError,
 )
 from backend.src.production.speech_generation.fingerprinting import (
@@ -159,8 +160,15 @@ class OpenRouterSpeechGenerationProvider:
             raise SpeechBillableAuthorizationError("speech job request limit was reached")
         replacement_permit = await self._replacement_permit(request, job_records)
 
-        prepared = self._prepared_record(request)
+        prepared = self._prepared_record(request, replacement_permit=replacement_permit)
         if replacement_permit is not None:
+            if any(
+                record.request_fingerprint == prepared.request_fingerprint
+                for record in job_records
+            ):
+                raise SpeechReplacementLineageError(
+                    "speech replacement requires a fresh request fingerprint"
+                )
             prepared = prepared.model_copy(
                 update={
                     "metadata": {
@@ -321,7 +329,9 @@ class OpenRouterSpeechGenerationProvider:
         if not uncertain:
             return None
         if self._replacement_store is None:
-            raise SpeechProviderUncertainError("uncertain speech submission requires review")
+            raise SpeechReplacementLineageError(
+                "uncertain speech submission requires replacement authorization"
+            )
         uncovered = []
         for record in uncertain:
             if not await self._replacement_store.uncertainty_is_covered(
@@ -331,14 +341,25 @@ class OpenRouterSpeechGenerationProvider:
                 uncovered.append(record)
         if not uncovered:
             return None
-        matching = tuple(
+        immediate_parent = tuple(
             record
             for record in uncovered
             if record.segment_id == request.segment.segment_id
             and record.attempt_number + 1 == request.attempt_number
         )
-        if len(matching) != 1 or len(uncovered) != 1:
-            raise SpeechProviderUncertainError("uncertain speech submission requires review")
+        if len(immediate_parent) != 1 or len(uncovered) != 1:
+            raise SpeechReplacementLineageError(
+                "speech replacement does not have one uncovered immediate parent"
+            )
+        parent = immediate_parent[0]
+        if any(
+            record.segment_id == request.segment.segment_id
+            and record.attempt_number >= request.attempt_number
+            for record in uncertain
+        ):
+            raise SpeechReplacementLineageError(
+                "speech replacement attempt regresses an existing lineage"
+            )
         try:
             permit = await self._replacement_store.permit(
                 job_id=request.job_id,
@@ -347,11 +368,24 @@ class OpenRouterSpeechGenerationProvider:
                 estimated_cost_usd=self._estimated_cost,
             )
         except SpeechUncertaintyResolutionError as exc:
-            raise SpeechProviderUncertainError(
+            raise SpeechReplacementLineageError(
                 "unresolved speech replacement authorization is invalid"
             ) from exc
         if permit is None:
-            raise SpeechProviderUncertainError("uncertain speech submission requires review")
+            raise SpeechReplacementLineageError(
+                "uncertain speech submission requires replacement authorization"
+            )
+        authorization = permit.authorization
+        if (
+            authorization.source_attempt_number != parent.attempt_number
+            or authorization.target_attempt_number != request.attempt_number
+            or authorization.original_request_fingerprint != parent.request_fingerprint
+            or authorization.job_id != request.job_id
+            or authorization.segment_id != request.segment.segment_id
+        ):
+            raise SpeechReplacementLineageError(
+                "speech replacement authorization does not match its immediate parent"
+            )
         return permit
 
     async def _post_once(
@@ -378,7 +412,12 @@ class OpenRouterSpeechGenerationProvider:
                 response.headers.get("content-type"),
             )
 
-    def _prepared_record(self, request: SpeechProviderRequest) -> RemoteSpeechJobRecord:
+    def _prepared_record(
+        self,
+        request: SpeechProviderRequest,
+        *,
+        replacement_permit: SpeechUnresolvedReplacementPermit | None = None,
+    ) -> RemoteSpeechJobRecord:
         now = self._now()
         snapshot = self._capability_snapshot(request, now)
         pricing = self._pricing_snapshot(now)
@@ -395,6 +434,10 @@ class OpenRouterSpeechGenerationProvider:
             "provider_request_schema_version": "1.0.0",
             "response_format": "pcm",
         }
+        if replacement_permit is not None:
+            options["replacement_submission_identity"] = (
+                replacement_permit.replacement_submission_identity
+            )
         fingerprint = speech_remote_request_fingerprint(
             SpeechRemoteRequestFingerprintInput(
                 source_script_artifact_id=request.segment.source_script_artifact_id,
