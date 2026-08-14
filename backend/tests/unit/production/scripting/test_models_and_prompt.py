@@ -79,21 +79,31 @@ def test_prompt_is_deterministic_strict_and_excludes_internal_metadata(
     builder = ScriptingPromptBuilder(max_plan_bytes=100_000)
     first = builder.build(scripting_request)
     assert first == builder.build(scripting_request)
-    assert first.version == "2.3.0"
+    assert first.version == "2.4.0"
     assert "Every scene must add new information" in first.system
     assert "omit a call to action" in first.system
     assert first.response_schema["additionalProperties"] is False
     user_payload = json.loads(first.user)
     assert "metadata" not in user_payload["source_plan"]
     assert user_payload["narration_word_count_policy"] == {
-        "maximum_total_words": 80,
+        "maximum_total_words": 50,
         "minimum_total_words": 10,
-        "maximum_words_per_scene": [39, 41],
+        "maximum_words_per_scene": [24, 26],
         "scene_word_budgets": [
-            {"maximum_words": 39, "scene_number": 1},
-            {"maximum_words": 41, "scene_number": 2},
+            {"maximum_words": 24, "scene_number": 1},
+            {"maximum_words": 26, "scene_number": 2},
         ],
         "scope": "all_scenes_combined",
+    }
+    assert user_payload["narration_duration_policy"] == {
+        "configured_reading_speed_words_per_minute": 150,
+        "maximum_estimated_duration_ms": 20_000,
+        "post_synthesis_tolerance_is_writing_budget": False,
+        "scope": "all_scenes_combined",
+        "semantic_requirement": (
+            "The deterministic estimated speaking duration of all narration must not exceed "
+            "the requested duration."
+        ),
     }
     with pytest.raises(ValueError, match="prompt limit"):
         ScriptingPromptBuilder(max_plan_bytes=10).build(scripting_request)
@@ -118,10 +128,10 @@ def test_four_second_prompt_exposes_the_exact_short_narration_bound(
     prompt = ScriptingPromptBuilder(max_plan_bytes=100_000).build(short_request)
 
     assert json.loads(prompt.user)["narration_word_count_policy"] == {
-        "maximum_total_words": 16,
+        "maximum_total_words": 10,
         "minimum_total_words": 2,
-        "maximum_words_per_scene": [16],
-        "scene_word_budgets": [{"maximum_words": 16, "scene_number": 1}],
+        "maximum_words_per_scene": [10],
+        "scene_word_budgets": [{"maximum_words": 10, "scene_number": 1}],
         "scope": "all_scenes_combined",
     }
 
@@ -137,10 +147,10 @@ def test_story_aware_word_budgets_scale_and_remain_within_global_limit() -> None
         scene_count=5,
         reading_speed_words_per_minute=150,
     )
-    assert short == (16, 16)
-    assert long_form == (32, 37, 40, 38, 33)
-    assert sum(short) == 32
-    assert sum(long_form) == 180
+    assert short == (10, 10)
+    assert long_form == (19, 23, 25, 24, 21)
+    assert sum(short) == 20
+    assert sum(long_form) == 112
     assert narration_scene_word_budgets(
         target_duration_seconds=45,
         scene_count=5,

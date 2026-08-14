@@ -592,32 +592,25 @@ class SpeechGenerationHandler:
             )
             if not overrun_candidates:
                 return manifest, stored_assets, "narration_fitting_exhausted"
-            candidates = overrun_candidates
-            local_round_exists = any(
-                record.attempt_number == attempt
-                and record.strategy is NarrationFittingStrategy.DETERMINISTIC_LOCAL
-                for record in manifest.fitting_records
+            assert manifest.duration_resolution is not None
+            excess = (
+                manifest.duration_resolution.resolved_duration_ms
+                - manifest.duration_resolution.maximum_allowed_duration_ms
             )
-            if attempt > 1 or local_round_exists:
-                assert manifest.duration_resolution is not None
-                excess = (
-                    manifest.duration_resolution.resolved_duration_ms
-                    - manifest.duration_resolution.maximum_allowed_duration_ms
-                )
-                selected: list[SpeechSegmentManifestEntry] = []
-                recoverable = 0
-                for item in sorted(
-                    overrun_candidates,
-                    key=lambda value: (
-                        -((value.duration_ms or 0) - (value.target_duration_ms or 0)),
-                        value.sequence_index,
-                    ),
-                ):
-                    selected.append(item)
-                    recoverable += (item.duration_ms or 0) - (item.target_duration_ms or 0)
-                    if recoverable >= excess:
-                        break
-                candidates = tuple(sorted(selected, key=lambda value: value.sequence_index))
+            selected: list[SpeechSegmentManifestEntry] = []
+            recoverable = 0
+            for item in sorted(
+                overrun_candidates,
+                key=lambda value: (
+                    -((value.duration_ms or 0) - (value.target_duration_ms or 0)),
+                    value.sequence_index,
+                ),
+            ):
+                selected.append(item)
+                recoverable += (item.duration_ms or 0) - (item.target_duration_ms or 0)
+                if recoverable >= excess:
+                    break
+            candidates = tuple(sorted(selected, key=lambda value: value.sequence_index))
             locally_revised: set[str] = set()
             for candidate in candidates:
                 manifest, record = await self._completed_local_fitting_record(

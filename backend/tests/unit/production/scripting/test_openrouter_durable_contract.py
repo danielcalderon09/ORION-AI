@@ -11,6 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from backend.src.production.scripting.duration_policy import (
+    assess_narration_duration,
     validate_openrouter_duration_policy,
 )
 from backend.src.production.scripting.models import ProductionScript, ProductionScriptScene
@@ -107,7 +108,7 @@ def test_request_fingerprint_has_no_attempt_time_key_or_machine_path() -> None:
 
 @pytest.mark.parametrize("duration", [15, 30, 60])
 def test_duration_policy_accepts_15_30_60_seconds(duration: int) -> None:
-    words = " ".join("palabra" for _ in range(round(duration * 2.5)))
+    words = " ".join("palabra" for _ in range(int(duration * 2.5)))
     script = ProductionScript(
         source_plan_schema_version="1.0.0",
         title="Marte",
@@ -132,7 +133,9 @@ def test_duration_policy_accepts_15_30_60_seconds(duration: int) -> None:
         reading_speed_words_per_minute=150,
     )
     assert assessment.target_duration_seconds == duration
-    assert assessment.narration_word_count == round(duration * 2.5)
+    assert assessment.narration_word_count == int(duration * 2.5)
+    assert assessment.accepted
+    assert assessment.estimated_duration_ms <= duration * 1_000
 
 
 def test_duration_policy_rejects_insufficient_and_excessive_narration() -> None:
@@ -161,6 +164,47 @@ def test_duration_policy_rejects_insufficient_and_excessive_narration() -> None:
         validate_openrouter_duration_policy(script(2), reading_speed_words_per_minute=150)
     with pytest.raises(ValueError, match="exceeds"):
         validate_openrouter_duration_policy(script(200), reading_speed_words_per_minute=150)
+
+
+def test_reference_narration_is_rejected_before_tts() -> None:
+    narrations = (
+        "¡Hola! ¿Sabías que un video corto puede ser tu mejor aliado? Hoy te mostraremos "
+        "cómo crear un short educativo impactante.",
+        "Para una empresa de desarrollo de software, la claridad es clave. Enfócate en un "
+        "mensaje principal y sé conciso.",
+        "Utiliza un lenguaje claro, ejemplos prácticos y un estilo visual atractivo que "
+        "refleje la innovación de tu empresa.",
+        "Considera la duración ideal, unos 25 segundos, y asegúrate de que el audio sea "
+        "nítido y la edición dinámica.",
+        "Con estos pasos, tendrás un video corto que educa, informa y conecta con tu "
+        "audiencia. ¡Manos a la obra!",
+    )
+    assessment = assess_narration_duration(
+        narrations=narrations,
+        target_duration_seconds=25,
+        reading_speed_words_per_minute=150,
+    )
+
+    assert assessment.narration_word_count == 95
+    assert assessment.punctuation_count == 15
+    assert assessment.estimated_duration_ms == 39_800
+    assert assessment.estimated_duration_ms > 28_000
+    assert assessment.target_duration_ms == 25_000
+    assert not assessment.accepted
+
+
+def test_global_duration_is_authoritative_not_equal_scene_allocation() -> None:
+    assessment = assess_narration_duration(
+        narrations=(
+            "uno dos tres cuatro cinco seis siete ocho nueve diez once doce",
+            "uno dos tres",
+        ),
+        target_duration_seconds=8,
+        reading_speed_words_per_minute=150,
+    )
+
+    assert assessment.estimated_duration_ms == 6_000
+    assert assessment.accepted
 
 
 @pytest.mark.asyncio

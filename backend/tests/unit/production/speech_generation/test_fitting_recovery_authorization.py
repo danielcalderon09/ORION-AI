@@ -80,7 +80,9 @@ async def _failed_reference_equivalent(tmp_path: Path):
     command, context = command_context()
     output = await _handler(
         tmp_path,
-        speech=SequencedSpeechProvider((6_225, 5_100)),
+        # Both overruns are required to recover the global excess; the second
+        # fitting request therefore remains the durable failure boundary.
+        speech=SequencedSpeechProvider((6_225, 5_700)),
         fitter=fitter,
         writer=writer,
         fitting_configuration=configuration,
@@ -119,7 +121,7 @@ async def _build_failed_attempt_2(tmp_path: Path):
         tmp_path
     )
     store, authorization = await _authorize(tmp_path, "0.004")
-    fitter = FakeNarrationFitter({("scene-001", 2): REVISION_TWO_SHORT})
+    fitter = FakeNarrationFitter({("scene-002", 2): REVISION_TWO_SHORT})
     second_writer = LocalSpeechManifestWriter(tmp_path, max_manifest_bytes=2_000_000)
     command, context = command_context(attempt=2)
     output = await _handler(
@@ -338,7 +340,7 @@ async def test_chained_authorization_targets_attempt_3_and_recovers_selectively(
     attempt_1_bytes = attempt_1_path.read_bytes()
     attempt_2_bytes = attempt_2_path.read_bytes()
 
-    third_fitter = FakeNarrationFitter({("scene-002", 3): REVISION_TWO_SHORT})
+    third_fitter = FakeNarrationFitter({("scene-001", 3): REVISION_TWO_SHORT})
     third_writer = LocalSpeechManifestWriter(tmp_path, max_manifest_bytes=2_000_000)
     command, context = command_context(attempt=3)
     third_speech = SequencedSpeechProvider((4_400,))
@@ -358,8 +360,8 @@ async def test_chained_authorization_targets_attempt_3_and_recovers_selectively(
     attempt_3 = await third_writer.read_existing(context=context)
 
     assert output.result.outcome is StageOutcome.SUCCEEDED
-    assert third_fitter.calls == [("scene-002", 3)]
-    assert third_fitter.calls.count(("scene-001", 3)) == 0
+    assert third_fitter.calls == [("scene-001", 3)]
+    assert third_fitter.calls.count(("scene-002", 3)) == 0
     assert third_speech.calls == 1
     assert attempt_3 is not None
     assert attempt_3.duration_resolution is not None
@@ -370,15 +372,15 @@ async def test_chained_authorization_targets_attempt_3_and_recovers_selectively(
     ) == (
         ("scene-001", 1),
         ("scene-002", 1),
-        ("scene-001", 2),
-        ("scene-002", 3),
+        ("scene-002", 2),
+        ("scene-001", 3),
     )
     assert attempt_1.fitting_records[1].status.value == "failed"
-    assert attempt_2.fitting_records[-1].scene_id == "scene-001"
+    assert attempt_2.fitting_records[-1].scene_id == "scene-002"
     assert attempt_1_path.read_bytes() == attempt_1_bytes
     assert attempt_2_path.read_bytes() == attempt_2_bytes
     assert first_fitter.calls == [("scene-001", 1), ("scene-002", 1)]
-    assert second_fitter.calls == [("scene-001", 2)]
+    assert second_fitter.calls == [("scene-002", 2)]
 
 
 async def test_attempt_3_authorization_requires_settings_max_attempts_3(

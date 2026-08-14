@@ -28,6 +28,7 @@ from backend.src.production.infrastructure.openai_compatible import (
     load_strict_json_object,
 )
 from backend.src.production.scripting.duration_policy import (
+    assess_narration_duration,
     narration_scene_word_budgets,
     narration_word_count_bounds,
     validate_openrouter_duration_policy,
@@ -241,6 +242,14 @@ class OpenRouterScriptingProvider:
         )
         retry_context = None
         if duration_retry_number > 0:
+            assert previous_script is not None
+            assessment = assess_narration_duration(
+                narrations=tuple(scene.narration for scene in previous_script.scenes),
+                target_duration_seconds=request.target_duration_seconds,
+                reading_speed_words_per_minute=(
+                    request.configuration.reading_speed_words_per_minute
+                ),
+            )
             _, maximum_words = narration_word_count_bounds(
                 target_duration_seconds=request.target_duration_seconds,
                 scene_count=len(request.plan.scenes),
@@ -258,6 +267,23 @@ class OpenRouterScriptingProvider:
                         request.configuration.reading_speed_words_per_minute
                     ),
                 ),
+                estimated_duration_ms=assessment.estimated_duration_ms,
+                target_duration_ms=assessment.target_duration_ms,
+                excess_duration_ms=max(
+                    0,
+                    assessment.estimated_duration_ms - assessment.target_duration_ms,
+                ),
+                required_reduction_ratio=str(
+                    Decimal(
+                        max(
+                            0,
+                            assessment.estimated_duration_ms
+                            - assessment.target_duration_ms,
+                        )
+                    )
+                    / Decimal(assessment.estimated_duration_ms)
+                ),
+                current_word_count=assessment.narration_word_count,
                 narrative_context=_narrative_retry_context(previous_script),
             )
         try:
@@ -537,8 +563,11 @@ class OpenRouterScriptingProvider:
                 "script_sha256": hashlib.sha256(serialize_production_script(script)).hexdigest(),
                 "script": script,
                 "metadata": {
-                    "duration_policy": "bounded_words_v1",
+                    "duration_policy": "estimated_speech_duration_v2",
                     "narration_word_count": assessment.narration_word_count,
+                    "narration_punctuation_count": assessment.punctuation_count,
+                    "estimated_narration_duration_ms": assessment.estimated_duration_ms,
+                    "target_narration_duration_ms": assessment.target_duration_ms,
                 },
             }
         )

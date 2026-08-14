@@ -113,6 +113,18 @@ async def test_duration_policy_retry_accepts_second_output_and_preserves_arc(
     assert "previous_output_exceeded_budget" in retry_prompt
     assert "narrative_context" in retry_prompt
     assert "story_beats" in retry_prompt
+    assert "estimated_duration_ms" in retry_prompt
+    assert "target_duration_ms" in retry_prompt
+    assert "excess_duration_ms" in retry_prompt
+    assert "required_proportional_reduction" in retry_prompt
+    retry_request = json.loads(retry_prompt)
+    retry_user_payload = json.loads(retry_request["messages"][1]["content"])
+    retry_policy = retry_user_payload["duration_policy_retry"]
+    assert retry_policy["estimated_duration_ms"] == 40_000
+    assert retry_policy["target_duration_ms"] == 20_000
+    assert retry_policy["excess_duration_ms"] == 20_000
+    assert Decimal(retry_policy["required_proportional_reduction"]) == Decimal("0.5")
+    assert retry_policy["current_word_count"] == 100
     assert len(store.records) == 2
     assert store.records[(scripting_request.job_id, 1)].status.value == "failed"
     assert store.records[(scripting_request.job_id, 2)].status.value == "completed"

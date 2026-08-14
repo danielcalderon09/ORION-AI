@@ -430,6 +430,28 @@ async def test_five_scene_recovery_reuses_four_stored_assets(tmp_path: Path) -> 
     assert recovered_manifest.summary.stored == 5
 
 
+async def test_normal_five_scene_short_uses_at_most_five_tts_requests(
+    tmp_path: Path,
+) -> None:
+    provider = CountingProvider()
+    writer = InMemorySpeechManifestWriter()
+    command, context = command_context()
+
+    result = await _handler(
+        tmp_path,
+        reader=FakeSourceReader(_five_scene_source()),
+        provider=provider,
+        writer=writer,
+    ).execute(command, context)
+
+    manifest = await writer.read_existing(context=context)
+    assert result.result.outcome is StageOutcome.SUCCEEDED
+    assert provider.calls == 5
+    assert manifest is not None
+    assert manifest.summary.stored == 5
+    assert manifest.fitting_records == ()
+
+
 async def test_cancellation_leaves_generating_checkpoint_and_restart_recovers(
     tmp_path: Path,
 ) -> None:

@@ -40,11 +40,16 @@ class DurationPolicyRetryContext:
     retry_number: int
     maximum_total_words: int
     scene_word_budgets: tuple[int, ...]
+    estimated_duration_ms: int
+    target_duration_ms: int
+    excess_duration_ms: int
+    required_reduction_ratio: str
+    current_word_count: int
     narrative_context: NarrativeRetryContext
 
 
 class ScriptingPromptBuilder:
-    scripting_prompt_version = "2.3.0"
+    scripting_prompt_version = "2.4.0"
     structured_output_mode = "json_schema"
     system_instruction = (
         "Create a production-ready voice-over script from the supplied durable production "
@@ -53,7 +58,9 @@ class ScriptingPromptBuilder:
         "script scene per source scene, including source_scene_number and exact planned "
         "durations. Narration must be clear, non-empty, subtitle-compatible, naturally paced, "
         "and suitable for voice-over. Keep the combined narration across all scenes within the "
-        "exact narration_word_count_policy supplied by the user payload. Every scene must add "
+        "requested deterministic narration_duration_policy; the post-synthesis tolerance is "
+        "reserved for voice variation and is not a writing budget. Treat per-scene word budgets "
+        "as guidance, not mandatory fill targets. Every scene must add "
         "new information while maintaining thematic continuity; do not repeat the introduction. "
         "Populate narrative_arc with the premise, opening hook, central question, progression, "
         "intended payoff, and ending state. Populate each scene story_beat with its adaptive "
@@ -112,6 +119,20 @@ class ScriptingPromptBuilder:
                 ],
                 "scope": "all_scenes_combined",
             },
+            "narration_duration_policy": {
+                "configured_reading_speed_words_per_minute": (
+                    request.configuration.reading_speed_words_per_minute
+                ),
+                "maximum_estimated_duration_ms": round(
+                    request.target_duration_seconds * 1_000
+                ),
+                "post_synthesis_tolerance_is_writing_budget": False,
+                "scope": "all_scenes_combined",
+                "semantic_requirement": (
+                    "The deterministic estimated speaking duration of all narration must not "
+                    "exceed the requested duration."
+                ),
+            },
             "target_duration_seconds": request.target_duration_seconds,
         }
         if retry_context is not None:
@@ -120,6 +141,13 @@ class ScriptingPromptBuilder:
                 "previous_output_exceeded_budget": True,
                 "maximum_total_words": retry_context.maximum_total_words,
                 "maximum_words_per_scene": retry_context.scene_word_budgets,
+                "estimated_duration_ms": retry_context.estimated_duration_ms,
+                "target_duration_ms": retry_context.target_duration_ms,
+                "excess_duration_ms": retry_context.excess_duration_ms,
+                "required_proportional_reduction": (
+                    retry_context.required_reduction_ratio
+                ),
+                "current_word_count": retry_context.current_word_count,
                 "preserve_premise_arc_beats_and_key_facts": True,
                 "shorten_narration_without_repeating_or_changing_language": True,
                 "narrative_context": {
