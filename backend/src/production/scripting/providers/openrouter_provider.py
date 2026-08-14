@@ -28,9 +28,11 @@ from backend.src.production.infrastructure.openai_compatible import (
     load_strict_json_object,
 )
 from backend.src.production.scripting.duration_policy import (
+    ScriptingDurationAssessment,
+    allocate_narration_scene_word_budgets,
     assess_narration_duration,
-    narration_scene_word_budgets,
-    narration_word_count_bounds,
+    narration_prompt_word_count_bounds,
+    narration_retry_word_budget,
     validate_openrouter_duration_policy,
 )
 from backend.src.production.scripting.exceptions import (
@@ -241,6 +243,13 @@ class OpenRouterScriptingProvider:
             update={"attempt_number": request.attempt_number + duration_retry_number}
         )
         retry_context = None
+        _, effective_word_budget = narration_prompt_word_count_bounds(
+            target_duration_seconds=request.target_duration_seconds,
+            scene_count=len(request.plan.scenes),
+            reading_speed_words_per_minute=(
+                request.configuration.reading_speed_words_per_minute
+            ),
+        )
         if duration_retry_number > 0:
             assert previous_script is not None
             assessment = assess_narration_duration(
@@ -250,22 +259,23 @@ class OpenRouterScriptingProvider:
                     request.configuration.reading_speed_words_per_minute
                 ),
             )
-            _, maximum_words = narration_word_count_bounds(
+            _, original_maximum_words = narration_prompt_word_count_bounds(
                 target_duration_seconds=request.target_duration_seconds,
                 scene_count=len(request.plan.scenes),
                 reading_speed_words_per_minute=(
                     request.configuration.reading_speed_words_per_minute
                 ),
             )
+            effective_word_budget = narration_retry_word_budget(
+                assessment,
+                original_maximum_words=original_maximum_words,
+            )
             retry_context = DurationPolicyRetryContext(
                 retry_number=duration_retry_number,
-                maximum_total_words=maximum_words,
-                scene_word_budgets=narration_scene_word_budgets(
-                    target_duration_seconds=request.target_duration_seconds,
+                maximum_total_words=effective_word_budget,
+                scene_word_budgets=allocate_narration_scene_word_budgets(
                     scene_count=len(request.plan.scenes),
-                    reading_speed_words_per_minute=(
-                        request.configuration.reading_speed_words_per_minute
-                    ),
+                    maximum_total_words=effective_word_budget,
                 ),
                 estimated_duration_ms=assessment.estimated_duration_ms,
                 target_duration_ms=assessment.target_duration_ms,
@@ -514,6 +524,13 @@ class OpenRouterScriptingProvider:
                 failure=_plan_contract_failure(exc),
                 cause=exc,
             )
+        rejection_assessment = assess_narration_duration(
+            narrations=tuple(scene.narration for scene in script.scenes),
+            target_duration_seconds=script.target_duration_seconds,
+            reading_speed_words_per_minute=(
+                request.configuration.reading_speed_words_per_minute
+            ),
+        )
         try:
             assessment = validate_openrouter_duration_policy(
                 script,
@@ -532,6 +549,11 @@ class OpenRouterScriptingProvider:
                 "invalid_structured_output",
                 response_metadata=response_metadata,
                 validation_failure=failure,
+                metadata_update=_duration_rejection_metadata(
+                    rejection_assessment,
+                    duration_retry_number=duration_retry_number,
+                    effective_word_budget=effective_word_budget,
+                ),
             )
             raise _DurationPolicyRejectedError(failure.message, script=script) from exc
         try:
@@ -737,6 +759,7 @@ class OpenRouterScriptingProvider:
         *,
         response_metadata: _SafeResponseMetadata | None = None,
         validation_failure: _ValidationFailure | None = None,
+        metadata_update: dict[str, bool | int | str] | None = None,
     ) -> None:
         update: dict[str, object] = {
             "status": OpenRouterScriptingRequestStatus.FAILED,
@@ -764,6 +787,8 @@ class OpenRouterScriptingProvider:
                     "validation_error_message": validation_failure.message,
                 }
             )
+        if metadata_update is not None:
+            update["metadata"] = {**record.metadata, **metadata_update}
         await self._checkpoint(
             record,
             record.model_copy(update=update),
@@ -1042,6 +1067,26 @@ def _duration_policy_message(error: ValueError) -> str:
         "script narration exceeds the requested duration policy",
     }
     return message if message in allowed else "script violates the duration policy"
+
+
+def _duration_rejection_metadata(
+    assessment: ScriptingDurationAssessment,
+    *,
+    duration_retry_number: int,
+    effective_word_budget: int,
+) -> dict[str, bool | int | str]:
+    return {
+        "word_count": assessment.narration_word_count,
+        "punctuation_count": assessment.punctuation_count,
+        "estimated_duration_ms": assessment.estimated_duration_ms,
+        "requested_duration_ms": assessment.target_duration_ms,
+        "excess_duration_ms": max(
+            0,
+            assessment.estimated_duration_ms - assessment.target_duration_ms,
+        ),
+        "duration_policy_retry_number": duration_retry_number,
+        "effective_word_budget": effective_word_budget,
+    }
 
 
 def _safe_decimal(value: object) -> Decimal | None:

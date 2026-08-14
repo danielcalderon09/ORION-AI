@@ -375,6 +375,17 @@ async def test_duration_policy_error_is_classified(scripting_request) -> None:
     assert record.validation_error_message == (
         "script narration exceeds the requested duration policy"
     )
+    assert record.metadata == {
+        "raw_response_persisted": False,
+        "word_count": 200,
+        "punctuation_count": 0,
+        "estimated_duration_ms": 80_000,
+        "requested_duration_ms": 20_000,
+        "excess_duration_ms": 60_000,
+        "duration_policy_retry_number": 0,
+        "effective_word_budget": 47,
+    }
+    assert record.script is None
     await provider.close()
 
 

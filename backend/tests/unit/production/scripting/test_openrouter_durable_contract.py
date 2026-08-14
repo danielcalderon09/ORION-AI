@@ -207,6 +207,25 @@ def test_global_duration_is_authoritative_not_equal_scene_allocation() -> None:
     assert assessment.accepted
 
 
+def test_duration_assessment_accepts_exact_target_and_rejects_one_more_pause() -> None:
+    words = " ".join("palabra" for _ in range(61))
+    exact = assess_narration_duration(
+        narrations=(f"{words},;:.!",),
+        target_duration_seconds=25,
+        reading_speed_words_per_minute=150,
+    )
+    over = assess_narration_duration(
+        narrations=(f"{words},;:.!?",),
+        target_duration_seconds=25,
+        reading_speed_words_per_minute=150,
+    )
+
+    assert exact.estimated_duration_ms == 25_000
+    assert exact.accepted
+    assert over.estimated_duration_ms == 25_120
+    assert not over.accepted
+
+
 @pytest.mark.asyncio
 async def test_local_request_store_is_atomic_canonical_and_conflict_safe(tmp_path) -> None:
     store = LocalOpenRouterScriptingRequestStore(tmp_path, max_bytes=100_000)

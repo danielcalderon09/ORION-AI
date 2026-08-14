@@ -120,13 +120,30 @@ async def test_duration_policy_retry_accepts_second_output_and_preserves_arc(
     retry_request = json.loads(retry_prompt)
     retry_user_payload = json.loads(retry_request["messages"][1]["content"])
     retry_policy = retry_user_payload["duration_policy_retry"]
+    retry_word_policy = retry_user_payload["narration_word_count_policy"]
     assert retry_policy["estimated_duration_ms"] == 40_000
     assert retry_policy["target_duration_ms"] == 20_000
     assert retry_policy["excess_duration_ms"] == 20_000
     assert Decimal(retry_policy["required_proportional_reduction"]) == Decimal("0.5")
     assert retry_policy["current_word_count"] == 100
+    assert retry_policy["maximum_total_words"] == 46
+    assert retry_policy["maximum_words_per_scene"] == [22, 24]
+    assert retry_word_policy["maximum_total_words"] == 46
+    assert retry_word_policy["maximum_words_per_scene"] == [22, 24]
+    assert retry_policy["maximum_total_words"] < 47
     assert len(store.records) == 2
-    assert store.records[(scripting_request.job_id, 1)].status.value == "failed"
+    rejected = store.records[(scripting_request.job_id, 1)]
+    assert rejected.status.value == "failed"
+    assert rejected.metadata == {
+        "raw_response_persisted": False,
+        "word_count": 100,
+        "punctuation_count": 0,
+        "estimated_duration_ms": 40_000,
+        "requested_duration_ms": 20_000,
+        "excess_duration_ms": 20_000,
+        "duration_policy_retry_number": 0,
+        "effective_word_budget": 47,
+    }
     assert store.records[(scripting_request.job_id, 2)].status.value == "completed"
 
 
@@ -153,6 +170,18 @@ async def test_second_duration_policy_failure_is_exhausted_without_third_request
     assert calls == 2
     assert len(store.records) == 2
     assert all(record.status.value == "failed" for record in store.records.values())
+    assert store.records[(scripting_request.job_id, 1)].metadata["effective_word_budget"] == 47
+    assert store.records[(scripting_request.job_id, 2)].metadata == {
+        "raw_response_persisted": False,
+        "duration_policy_retry": True,
+        "duration_policy_retry_number": 1,
+        "word_count": 100,
+        "punctuation_count": 0,
+        "estimated_duration_ms": 40_000,
+        "requested_duration_ms": 20_000,
+        "excess_duration_ms": 20_000,
+        "effective_word_budget": 46,
+    }
 
 
 @pytest.mark.asyncio

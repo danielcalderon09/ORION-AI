@@ -35,6 +35,7 @@ _WORDS = re.compile(r"\b[\wÀ-ÿ]+\b", re.UNICODE)
 _PUNCTUATION = re.compile(r"[,;:.!?]")
 _WHITESPACE = re.compile(r"\s+")
 PUNCTUATION_ALLOWANCE_MS = 120
+PROMPT_WORDS_PER_PUNCTUATION = 5
 
 
 _ROLE_WORD_WEIGHTS: dict[NarrativeRole, float] = {
@@ -74,16 +75,33 @@ def narration_scene_word_budgets(
     scene_count: int,
     reading_speed_words_per_minute: int,
 ) -> tuple[int, ...]:
-    """Allocate the global maximum deterministically across narrative roles."""
+    """Allocate the conservative prompt maximum across narrative roles."""
 
-    _, maximum = narration_word_count_bounds(
+    _, maximum = narration_prompt_word_count_bounds(
         target_duration_seconds=target_duration_seconds,
         scene_count=scene_count,
         reading_speed_words_per_minute=reading_speed_words_per_minute,
     )
+    return allocate_narration_scene_word_budgets(
+        scene_count=scene_count,
+        maximum_total_words=maximum,
+    )
+
+
+def allocate_narration_scene_word_budgets(
+    *,
+    scene_count: int,
+    maximum_total_words: int,
+) -> tuple[int, ...]:
+    """Allocate an explicit global word budget deterministically across roles."""
+
+    if scene_count < 1:
+        raise ValueError("scripting requires at least one scene")
     roles = adaptive_narrative_roles(scene_count)
     minimum_per_scene = 2
-    remaining = maximum - (minimum_per_scene * scene_count)
+    if maximum_total_words < minimum_per_scene * scene_count:
+        raise ValueError("narration word budget cannot represent every scene")
+    remaining = maximum_total_words - (minimum_per_scene * scene_count)
     weights = tuple(_ROLE_WORD_WEIGHTS[role] for role in roles)
     total_weight = sum(weights)
     raw_extras = tuple(remaining * weight / total_weight for weight in weights)
@@ -96,6 +114,58 @@ def narration_scene_word_budgets(
     for index in order[:remainder]:
         extras[index] += 1
     return tuple(minimum_per_scene + extra for extra in extras)
+
+
+def narration_prompt_word_count_bounds(
+    *,
+    target_duration_seconds: float,
+    scene_count: int,
+    reading_speed_words_per_minute: int,
+) -> tuple[int, int]:
+    """Return prompt guidance with deterministic punctuation headroom."""
+
+    minimum, maximum = narration_word_count_bounds(
+        target_duration_seconds=target_duration_seconds,
+        scene_count=scene_count,
+        reading_speed_words_per_minute=reading_speed_words_per_minute,
+    )
+    target_duration_ms = round(target_duration_seconds * 1_000)
+    for candidate in range(maximum, minimum - 1, -1):
+        reserved_punctuation = max(
+            scene_count,
+            math.ceil(candidate / PROMPT_WORDS_PER_PUNCTUATION),
+        )
+        estimated_duration_ms = int(
+            (Decimal(candidate * 60_000) / Decimal(reading_speed_words_per_minute))
+            .to_integral_value(rounding=ROUND_FLOOR)
+        ) + reserved_punctuation * PUNCTUATION_ALLOWANCE_MS
+        if estimated_duration_ms <= target_duration_ms:
+            return minimum, candidate
+    return minimum, minimum
+
+
+def narration_retry_word_budget(
+    assessment: ScriptingDurationAssessment,
+    *,
+    original_maximum_words: int,
+) -> int:
+    """Derive stricter retry guidance from the rejected duration assessment."""
+
+    if assessment.accepted:
+        return original_maximum_words
+    proportional_maximum = math.floor(
+        assessment.narration_word_count
+        * assessment.target_duration_ms
+        / assessment.estimated_duration_ms
+    )
+    stricter_maximum = max(
+        assessment.minimum_word_count,
+        original_maximum_words - 1,
+    )
+    return max(
+        assessment.minimum_word_count,
+        min(stricter_maximum, proportional_maximum),
+    )
 
 
 def validate_openrouter_duration_policy(
@@ -179,7 +249,10 @@ def assess_narration_duration(
 
 __all__ = [
     "ScriptingDurationAssessment",
+    "allocate_narration_scene_word_budgets",
     "assess_narration_duration",
+    "narration_prompt_word_count_bounds",
+    "narration_retry_word_budget",
     "narration_scene_word_budgets",
     "narration_word_count_bounds",
     "validate_openrouter_duration_policy",

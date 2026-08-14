@@ -10,8 +10,10 @@ from pydantic import Field
 from backend.src.production.domain.base import ContractModel
 from backend.src.production.planning.prompt_builder import PlanningPromptBuilder
 from backend.src.production.scripting.duration_policy import (
+    PROMPT_WORDS_PER_PUNCTUATION,
+    PUNCTUATION_ALLOWANCE_MS,
+    narration_prompt_word_count_bounds,
     narration_scene_word_budgets,
-    narration_word_count_bounds,
 )
 from backend.src.production.scripting.models import ProductionScript
 from backend.src.production.scripting.ports import ScriptingProviderRequest
@@ -49,7 +51,7 @@ class DurationPolicyRetryContext:
 
 
 class ScriptingPromptBuilder:
-    scripting_prompt_version = "2.4.0"
+    scripting_prompt_version = "2.5.0"
     structured_output_mode = "json_schema"
     system_instruction = (
         "Create a production-ready voice-over script from the supplied durable production "
@@ -87,7 +89,7 @@ class ScriptingPromptBuilder:
         retry_context: DurationPolicyRetryContext | None = None,
     ) -> ScriptingPrompt:
         plan_payload = request.plan.model_dump(mode="json", exclude={"metadata"})
-        minimum_words, maximum_words = narration_word_count_bounds(
+        minimum_words, maximum_words = narration_prompt_word_count_bounds(
             target_duration_seconds=request.target_duration_seconds,
             scene_count=len(request.plan.scenes),
             reading_speed_words_per_minute=(
@@ -101,6 +103,9 @@ class ScriptingPromptBuilder:
                 request.configuration.reading_speed_words_per_minute
             ),
         )
+        if retry_context is not None:
+            maximum_words = retry_context.maximum_total_words
+            scene_word_budgets = retry_context.scene_word_budgets
         user_payload = {
             "schema_version": "1.0.0",
             "source_plan": plan_payload,
@@ -127,6 +132,12 @@ class ScriptingPromptBuilder:
                     request.target_duration_seconds * 1_000
                 ),
                 "post_synthesis_tolerance_is_writing_budget": False,
+                "punctuation_adds_estimated_duration": True,
+                "punctuation_allowance_ms_per_mark": PUNCTUATION_ALLOWANCE_MS,
+                "prompt_headroom_reserves_one_punctuation_per_words": (
+                    PROMPT_WORDS_PER_PUNCTUATION
+                ),
+                "prefer_concise_sentences": True,
                 "scope": "all_scenes_combined",
                 "semantic_requirement": (
                     "The deterministic estimated speaking duration of all narration must not "
