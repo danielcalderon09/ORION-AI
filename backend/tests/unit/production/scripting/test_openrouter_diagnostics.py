@@ -178,7 +178,10 @@ async def test_provider_body_error_retains_safe_metadata_but_not_raw_body_or_key
     assert "RAW_PROVIDER_SENTINEL" not in serialized
     assert "Bearer secret" not in serialized
     assert FAKE_API_KEY not in serialized
-    assert record.metadata == {"raw_response_persisted": False}
+    assert record.metadata == {
+        "raw_response_persisted": False,
+        "request_purpose": "production_script",
+    }
     assert record.script is None
     assert record.fresh_submission_permitted is False
     with pytest.raises(ScriptingProviderContractError, match="cannot be retried"):
@@ -377,6 +380,7 @@ async def test_duration_policy_error_is_classified(scripting_request) -> None:
     )
     assert record.metadata == {
         "raw_response_persisted": False,
+        "request_purpose": "production_script",
         "word_count": 200,
         "punctuation_count": 0,
         "estimated_duration_ms": 80_000,

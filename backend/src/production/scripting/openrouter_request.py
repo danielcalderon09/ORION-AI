@@ -39,6 +39,7 @@ class OpenRouterScriptingValidationErrorCode(StrEnum):
     PLAN_CONTRACT = "plan_contract"
     SCENE_COUNT_POLICY = "scene_count_policy"
     DURATION_POLICY = "duration_policy"
+    NARRATION_COMPRESSION_CONTRACT = "narration_compression_contract"
     UNSUPPORTED_FIELD = "unsupported_field"
     UNKNOWN_STRUCTURED_OUTPUT_ERROR = "unknown_structured_output_error"
 
@@ -61,6 +62,8 @@ class OpenRouterScriptingFingerprintInput(ContractModel):
     structured_output_mode: Literal["json_schema"] = "json_schema"
     temperature: Decimal = Field(ge=0, le=2, max_digits=4, decimal_places=3)
     max_output_tokens: int = Field(ge=1, le=100_000)
+    request_purpose: Literal["production_script", "narration_compression"] | None = None
+    source_script_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
     @field_validator("temperature", mode="before")
     @classmethod
@@ -69,11 +72,20 @@ class OpenRouterScriptingFingerprintInput(ContractModel):
             return Decimal(str(value))
         return value
 
+    @model_validator(mode="after")
+    def validate_request_purpose(self) -> OpenRouterScriptingFingerprintInput:
+        if self.request_purpose == "narration_compression":
+            if self.source_script_sha256 is None:
+                raise ValueError("narration compression requires a source script fingerprint")
+        elif self.source_script_sha256 is not None:
+            raise ValueError("production scripting cannot pin a source script fingerprint")
+        return self
+
 
 def openrouter_scripting_request_fingerprint(
     value: OpenRouterScriptingFingerprintInput,
 ) -> str:
-    payload = value.model_dump(mode="json")
+    payload = value.model_dump(mode="json", exclude_none=True)
     encoded = json.dumps(
         payload,
         allow_nan=False,

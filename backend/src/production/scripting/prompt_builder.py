@@ -2,8 +2,7 @@
 
 import hashlib
 import json
-from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import Field
 
@@ -16,6 +15,10 @@ from backend.src.production.scripting.duration_policy import (
     narration_scene_word_budgets,
 )
 from backend.src.production.scripting.models import ProductionScript
+from backend.src.production.scripting.narration_compression import (
+    NarrationCompressionRequest,
+    NarrationCompressionResponse,
+)
 from backend.src.production.scripting.ports import ScriptingProviderRequest
 
 
@@ -26,32 +29,8 @@ class ScriptingPrompt(ContractModel):
     response_schema: dict[str, object]
 
 
-@dataclass(frozen=True, slots=True)
-class NarrativeRetryContext:
-    premise: str
-    opening_hook: str
-    central_question: str
-    progression: tuple[str, ...]
-    intended_payoff: str
-    ending_state: str
-    story_beats: tuple[dict[str, object], ...]
-
-
-@dataclass(frozen=True, slots=True)
-class DurationPolicyRetryContext:
-    retry_number: int
-    maximum_total_words: int
-    scene_word_budgets: tuple[int, ...]
-    estimated_duration_ms: int
-    target_duration_ms: int
-    excess_duration_ms: int
-    required_reduction_ratio: str
-    current_word_count: int
-    narrative_context: NarrativeRetryContext
-
-
 class ScriptingPromptBuilder:
-    scripting_prompt_version = "2.5.0"
+    scripting_prompt_version = "2.6.0"
     structured_output_mode = "json_schema"
     system_instruction = (
         "Create a production-ready voice-over script from the supplied durable production "
@@ -60,7 +39,8 @@ class ScriptingPromptBuilder:
         "script scene per source scene, including source_scene_number and exact planned "
         "durations. Narration must be clear, non-empty, subtitle-compatible, naturally paced, "
         "and suitable for voice-over. Keep the combined narration across all scenes within the "
-        "requested deterministic narration_duration_policy; the post-synthesis tolerance is "
+        "supplied maximum_total_words hard limit and the requested deterministic "
+        "narration_duration_policy; the post-synthesis tolerance is "
         "reserved for voice variation and is not a writing budget. Treat per-scene word budgets "
         "as guidance, not mandatory fill targets. Every scene must add "
         "new information while maintaining thematic continuity; do not repeat the introduction. "
@@ -76,6 +56,14 @@ class ScriptingPromptBuilder:
         "credentials, system details, executable content, shell commands, filesystem paths, "
         "HTML, or fields outside the schema."
     )
+    compression_system_instruction = (
+        "Compress only the supplied scene narrations. Return one JSON object matching "
+        "narration_compression; do not return a ProductionScript, Markdown, explanations, or "
+        "fields outside the schema. Preserve every source_scene_number exactly once and keep "
+        "the original meaning, facts, language, and order. Remove unnecessary wording without "
+        "introducing new facts. The combined narration MUST NOT exceed maximum_total_words; "
+        "this is a hard limit. Each scene narration MUST NOT exceed its maximum_words limit."
+    )
 
     def __init__(self, *, max_plan_bytes: int) -> None:
         if max_plan_bytes < 1:
@@ -85,8 +73,6 @@ class ScriptingPromptBuilder:
     def build(
         self,
         request: ScriptingProviderRequest,
-        *,
-        retry_context: DurationPolicyRetryContext | None = None,
     ) -> ScriptingPrompt:
         plan_payload = request.plan.model_dump(mode="json", exclude={"metadata"})
         minimum_words, maximum_words = narration_prompt_word_count_bounds(
@@ -103,15 +89,16 @@ class ScriptingPromptBuilder:
                 request.configuration.reading_speed_words_per_minute
             ),
         )
-        if retry_context is not None:
-            maximum_words = retry_context.maximum_total_words
-            scene_word_budgets = retry_context.scene_word_budgets
         user_payload = {
             "schema_version": "1.0.0",
             "source_plan": plan_payload,
             "configuration": request.configuration.model_dump(mode="json"),
             "language": request.language,
             "narration_word_count_policy": {
+                "hard_limit_instruction": (
+                    f"The combined narration MUST NOT exceed {maximum_words} total words. "
+                    "The total word count is a hard limit."
+                ),
                 "maximum_total_words": maximum_words,
                 "minimum_total_words": minimum_words,
                 "maximum_words_per_scene": scene_word_budgets,
@@ -146,31 +133,6 @@ class ScriptingPromptBuilder:
             },
             "target_duration_seconds": request.target_duration_seconds,
         }
-        if retry_context is not None:
-            user_payload["duration_policy_retry"] = {
-                "attempt": retry_context.retry_number,
-                "previous_output_exceeded_budget": True,
-                "maximum_total_words": retry_context.maximum_total_words,
-                "maximum_words_per_scene": retry_context.scene_word_budgets,
-                "estimated_duration_ms": retry_context.estimated_duration_ms,
-                "target_duration_ms": retry_context.target_duration_ms,
-                "excess_duration_ms": retry_context.excess_duration_ms,
-                "required_proportional_reduction": (
-                    retry_context.required_reduction_ratio
-                ),
-                "current_word_count": retry_context.current_word_count,
-                "preserve_premise_arc_beats_and_key_facts": True,
-                "shorten_narration_without_repeating_or_changing_language": True,
-                "narrative_context": {
-                    "premise": retry_context.narrative_context.premise,
-                    "opening_hook": retry_context.narrative_context.opening_hook,
-                    "central_question": retry_context.narrative_context.central_question,
-                    "progression": retry_context.narrative_context.progression,
-                    "intended_payoff": retry_context.narrative_context.intended_payoff,
-                    "ending_state": retry_context.narrative_context.ending_state,
-                    "story_beats": retry_context.narrative_context.story_beats,
-                },
-            }
         user = json.dumps(
             user_payload,
             allow_nan=False,
@@ -190,13 +152,53 @@ class ScriptingPromptBuilder:
             response_schema=schema,
         )
 
+    def build_compression(self, request: NarrationCompressionRequest) -> ScriptingPrompt:
+        """Build the narrow, hard-capped narration-only compression prompt."""
+
+        payload = request.model_dump(mode="json", exclude={"job_id"})
+        payload["hard_limit_instruction"] = (
+            f"Your output narration MUST NOT exceed {request.maximum_total_words} total words. "
+            "The total word count is a hard limit."
+        )
+        payload["output_constraints"] = (
+            "Do not add explanations.",
+            "Do not introduce new facts.",
+            "Preserve meaning and order while removing unnecessary wording.",
+        )
+        user = json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        if len(user.encode("utf-8")) > self._max_plan_bytes:
+            raise ValueError("narration compression input exceeds prompt limit")
+        return ScriptingPrompt(
+            version=self.scripting_prompt_version,
+            system=self.compression_system_instruction,
+            user=user,
+            response_schema=self._compression_response_schema(),
+        )
+
     @classmethod
-    def template_fingerprint(cls) -> str:
+    def template_fingerprint(
+        cls,
+        request_purpose: Literal["production_script", "narration_compression"] = (
+            "production_script"
+        ),
+    ) -> str:
+        compression = request_purpose == "narration_compression"
         payload = {
             "version": cls.scripting_prompt_version,
             "structured_output_mode": cls.structured_output_mode,
-            "system_instruction": cls.system_instruction,
-            "response_schema": cls._response_schema(),
+            "request_purpose": request_purpose,
+            "system_instruction": (
+                cls.compression_system_instruction if compression else cls.system_instruction
+            ),
+            "response_schema": (
+                cls._compression_response_schema() if compression else cls._response_schema()
+            ),
         }
         encoded = json.dumps(
             payload,
@@ -212,4 +214,13 @@ class ScriptingPromptBuilder:
         schema = PlanningPromptBuilder._strict_schema(ProductionScript.model_json_schema())
         if not isinstance(schema, dict):
             raise TypeError("production script schema must be an object")
+        return cast(dict[str, object], schema)
+
+    @staticmethod
+    def _compression_response_schema() -> dict[str, object]:
+        schema = PlanningPromptBuilder._strict_schema(
+            NarrationCompressionResponse.model_json_schema()
+        )
+        if not isinstance(schema, dict):
+            raise TypeError("narration compression schema must be an object")
         return cast(dict[str, object], schema)

@@ -144,28 +144,41 @@ def narration_prompt_word_count_bounds(
     return minimum, minimum
 
 
-def narration_retry_word_budget(
+def narration_compression_word_budget(
     assessment: ScriptingDurationAssessment,
     *,
-    original_maximum_words: int,
+    scene_count: int,
 ) -> int:
-    """Derive stricter retry guidance from the rejected duration assessment."""
+    """Scale actual narration to target while retaining prompt punctuation headroom."""
 
-    if assessment.accepted:
-        return original_maximum_words
+    minimum, theoretical_maximum = narration_word_count_bounds(
+        target_duration_seconds=assessment.target_duration_seconds,
+        scene_count=scene_count,
+        reading_speed_words_per_minute=assessment.reading_speed_words_per_minute,
+    )
+    _, conservative_maximum = narration_prompt_word_count_bounds(
+        target_duration_seconds=assessment.target_duration_seconds,
+        scene_count=scene_count,
+        reading_speed_words_per_minute=assessment.reading_speed_words_per_minute,
+    )
     proportional_maximum = math.floor(
         assessment.narration_word_count
         * assessment.target_duration_ms
         / assessment.estimated_duration_ms
     )
-    stricter_maximum = max(
-        assessment.minimum_word_count,
-        original_maximum_words - 1,
+    headroom_adjusted = math.floor(
+        proportional_maximum * conservative_maximum / theoretical_maximum
     )
-    return max(
-        assessment.minimum_word_count,
-        min(stricter_maximum, proportional_maximum),
+    strict_maximum = (
+        conservative_maximum - 1 if not assessment.accepted else conservative_maximum
     )
+    return max(minimum, min(strict_maximum, headroom_adjusted))
+
+
+def narration_word_count(value: str) -> int:
+    """Count narration words with the authoritative tokenizer."""
+
+    return len(_WORDS.findall(value))
 
 
 def validate_openrouter_duration_policy(
@@ -220,7 +233,7 @@ def assess_narration_duration(
     ).strip()
     if not normalized:
         raise ValueError("script narration is empty")
-    word_count = len(_WORDS.findall(normalized))
+    word_count = narration_word_count(normalized)
     punctuation_count = len(_PUNCTUATION.findall(normalized))
     target_duration_ms = round(target_duration_seconds * 1_000)
     estimated_duration_ms = int(
@@ -251,9 +264,10 @@ __all__ = [
     "ScriptingDurationAssessment",
     "allocate_narration_scene_word_budgets",
     "assess_narration_duration",
+    "narration_compression_word_budget",
     "narration_prompt_word_count_bounds",
-    "narration_retry_word_budget",
     "narration_scene_word_budgets",
+    "narration_word_count",
     "narration_word_count_bounds",
     "validate_openrouter_duration_policy",
 ]

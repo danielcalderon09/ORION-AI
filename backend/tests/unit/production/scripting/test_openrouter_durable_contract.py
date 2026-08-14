@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -104,6 +105,30 @@ def test_request_fingerprint_has_no_attempt_time_key_or_machine_path() -> None:
     )
     for forbidden in ("attempt", "timestamp", "api_key", "Authorization", "C:\\Users"):
         assert forbidden not in serialized
+
+
+def test_historical_fingerprint_omits_new_compression_identity_fields() -> None:
+    identity = fingerprint_input()
+    historical_payload = identity.model_dump(
+        mode="json",
+        exclude={"request_purpose", "source_script_sha256"},
+    )
+    expected = hashlib.sha256(
+        json.dumps(
+            historical_payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    compression = fingerprint_input(
+        request_purpose="narration_compression",
+        source_script_sha256="5" * 64,
+    )
+
+    assert openrouter_scripting_request_fingerprint(identity) == expected
+    assert openrouter_scripting_request_fingerprint(compression) != expected
 
 
 @pytest.mark.parametrize("duration", [15, 30, 60])

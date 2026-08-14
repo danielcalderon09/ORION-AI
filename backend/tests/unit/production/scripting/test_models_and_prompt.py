@@ -83,13 +83,17 @@ def test_prompt_is_deterministic_strict_and_excludes_internal_metadata(
     builder = ScriptingPromptBuilder(max_plan_bytes=100_000)
     first = builder.build(scripting_request)
     assert first == builder.build(scripting_request)
-    assert first.version == "2.5.0"
+    assert first.version == "2.6.0"
     assert "Every scene must add new information" in first.system
     assert "omit a call to action" in first.system
     assert first.response_schema["additionalProperties"] is False
     user_payload = json.loads(first.user)
     assert "metadata" not in user_payload["source_plan"]
     assert user_payload["narration_word_count_policy"] == {
+        "hard_limit_instruction": (
+            "The combined narration MUST NOT exceed 47 total words. "
+            "The total word count is a hard limit."
+        ),
         "maximum_total_words": 47,
         "minimum_total_words": 10,
         "maximum_words_per_scene": [23, 24],
@@ -136,6 +140,10 @@ def test_four_second_prompt_exposes_conservative_short_narration_bound(
     prompt = ScriptingPromptBuilder(max_plan_bytes=100_000).build(short_request)
 
     assert json.loads(prompt.user)["narration_word_count_policy"] == {
+        "hard_limit_instruction": (
+            "The combined narration MUST NOT exceed 9 total words. "
+            "The total word count is a hard limit."
+        ),
         "maximum_total_words": 9,
         "minimum_total_words": 2,
         "maximum_words_per_scene": [9],

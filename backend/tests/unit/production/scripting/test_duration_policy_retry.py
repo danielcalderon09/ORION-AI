@@ -59,6 +59,31 @@ def _overlong_script(script: dict[str, object]) -> dict[str, object]:
     return result
 
 
+def _compression(script: dict[str, object], narrations: tuple[str, ...]) -> dict[str, object]:
+    scenes = script["scenes"]
+    assert isinstance(scenes, list)
+    return {
+        "schema_version": "1.0.0",
+        "scenes": [
+            {
+                "source_scene_number": scene["source_scene_number"],
+                "narration": narration,
+            }
+            for scene, narration in zip(scenes, narrations, strict=True)
+        ],
+    }
+
+
+def _without_narration(script: dict[str, object]) -> dict[str, object]:
+    result = copy.deepcopy(script)
+    scenes = result["scenes"]
+    assert isinstance(scenes, list)
+    for scene in scenes:
+        assert isinstance(scene, dict)
+        scene.pop("narration")
+    return result
+
+
 def _provider(handler, *, max_requests_per_job: int = 2):
     store = InMemoryOpenRouterScriptingRequestStore()
     client = httpx.AsyncClient(
@@ -90,7 +115,15 @@ async def test_duration_policy_retry_accepts_second_output_and_preserves_arc(
     scripting_request,
 ) -> None:
     valid = await _valid_script(scripting_request)
-    responses = [_overlong_script(valid), valid]
+    overlong = _overlong_script(valid)
+    compressed = _compression(
+        valid,
+        (
+            "Clear facts remain in scene one.",
+            "The final scene resolves them clearly.",
+        ),
+    )
+    responses = [overlong, compressed]
     calls = 0
     retry_prompt = ""
 
@@ -110,32 +143,29 @@ async def test_duration_policy_retry_accepts_second_output_and_preserves_arc(
     assert calls == 2
     assert result.script.narrative_arc is not None
     assert all(scene.story_beat is not None for scene in result.script.scenes)
-    assert "previous_output_exceeded_budget" in retry_prompt
-    assert "narrative_context" in retry_prompt
-    assert "story_beats" in retry_prompt
-    assert "estimated_duration_ms" in retry_prompt
+    assert "MUST NOT exceed 46 total words" in retry_prompt
+    assert '"name":"narration_compression"' in retry_prompt
+    assert "original_narration" in retry_prompt
+    assert "visual_intent" not in retry_prompt
+    assert "narrative_arc" not in retry_prompt
+    assert "source_estimated_duration_ms" in retry_prompt
     assert "target_duration_ms" in retry_prompt
-    assert "excess_duration_ms" in retry_prompt
-    assert "required_proportional_reduction" in retry_prompt
     retry_request = json.loads(retry_prompt)
     retry_user_payload = json.loads(retry_request["messages"][1]["content"])
-    retry_policy = retry_user_payload["duration_policy_retry"]
-    retry_word_policy = retry_user_payload["narration_word_count_policy"]
-    assert retry_policy["estimated_duration_ms"] == 40_000
-    assert retry_policy["target_duration_ms"] == 20_000
-    assert retry_policy["excess_duration_ms"] == 20_000
-    assert Decimal(retry_policy["required_proportional_reduction"]) == Decimal("0.5")
-    assert retry_policy["current_word_count"] == 100
-    assert retry_policy["maximum_total_words"] == 46
-    assert retry_policy["maximum_words_per_scene"] == [22, 24]
-    assert retry_word_policy["maximum_total_words"] == 46
-    assert retry_word_policy["maximum_words_per_scene"] == [22, 24]
-    assert retry_policy["maximum_total_words"] < 47
+    assert retry_user_payload["source_estimated_duration_ms"] == 40_000
+    assert retry_user_payload["target_duration_ms"] == 20_000
+    assert retry_user_payload["source_word_count"] == 100
+    assert retry_user_payload["maximum_total_words"] == 46
+    assert [scene["maximum_words"] for scene in retry_user_payload["scenes"]] == [22, 24]
+    assert _without_narration(result.script.model_dump(mode="json")) == _without_narration(
+        overlong
+    )
     assert len(store.records) == 2
     rejected = store.records[(scripting_request.job_id, 1)]
     assert rejected.status.value == "failed"
     assert rejected.metadata == {
         "raw_response_persisted": False,
+        "request_purpose": "production_script",
         "word_count": 100,
         "punctuation_count": 0,
         "estimated_duration_ms": 40_000,
@@ -144,7 +174,12 @@ async def test_duration_policy_retry_accepts_second_output_and_preserves_arc(
         "duration_policy_retry_number": 0,
         "effective_word_budget": 47,
     }
-    assert store.records[(scripting_request.job_id, 2)].status.value == "completed"
+    completed = store.records[(scripting_request.job_id, 2)]
+    assert completed.status.value == "completed"
+    assert completed.metadata["request_purpose"] == "narration_compression"
+    assert completed.metadata["source_word_count"] == 100
+    assert completed.metadata["compression_word_budget"] == 46
+    assert completed.metadata["compressed_word_count"] == 12
 
 
 @pytest.mark.asyncio
@@ -153,12 +188,20 @@ async def test_second_duration_policy_failure_is_exhausted_without_third_request
 ) -> None:
     valid = await _valid_script(scripting_request)
     overlong = _overlong_script(valid)
+    oversized_compression = _compression(
+        valid,
+        (
+            " ".join("word" for _ in range(22)) + ("!" * 20),
+            " ".join("word" for _ in range(24)) + ("!" * 30),
+        ),
+    )
     calls = 0
 
     async def handler(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        return httpx.Response(200, json=_envelope(overlong), request=request)
+        payload = overlong if calls == 1 else oversized_compression
+        return httpx.Response(200, json=_envelope(payload), request=request)
 
     provider, store = _provider(handler)
     try:
@@ -173,14 +216,23 @@ async def test_second_duration_policy_failure_is_exhausted_without_third_request
     assert store.records[(scripting_request.job_id, 1)].metadata["effective_word_budget"] == 47
     assert store.records[(scripting_request.job_id, 2)].metadata == {
         "raw_response_persisted": False,
+        "request_purpose": "narration_compression",
         "duration_policy_retry": True,
         "duration_policy_retry_number": 1,
-        "word_count": 100,
-        "punctuation_count": 0,
-        "estimated_duration_ms": 40_000,
+        "word_count": 46,
+        "punctuation_count": 50,
+        "estimated_duration_ms": 24_400,
         "requested_duration_ms": 20_000,
-        "excess_duration_ms": 20_000,
+        "excess_duration_ms": 4_400,
         "effective_word_budget": 46,
+        "source_word_count": 100,
+        "source_punctuation_count": 0,
+        "source_estimated_duration_ms": 40_000,
+        "compression_word_budget": 46,
+        "compressed_word_count": 46,
+        "compressed_punctuation_count": 50,
+        "compressed_estimated_duration_ms": 24_400,
+        "target_duration_ms": 20_000,
     }
 
 
