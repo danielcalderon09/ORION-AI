@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
@@ -587,6 +588,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         clock=clock,
         uuid_factory=uuid4,
     )
+    visual_strategy = VisualStrategyName(settings.ORION_VISUAL_STRATEGY)
     visual_asset_planning_handler: StageHandler = VisualAssetPlanningHandler(
         scene_plan_reader=DurableProductionScenePlanReader(
             workspace_root=settings.PROJECTS_DIR,
@@ -605,14 +607,13 @@ def build_production_container(settings: Settings) -> ProductionContainer:
         ),
         clock=clock,
         uuid_factory=uuid4,
+        visual_strategy_name=visual_strategy,
     )
-    visual_strategy = VisualStrategyName(settings.ORION_VISUAL_STRATEGY)
     if visual_strategy is not VisualStrategyName.FULL_VIDEO:
         image_cost = settings.ORION_HYBRID_IMAGE_ESTIMATED_COST_USD
-        image_job_cost = (
-            settings.ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD
-            if settings.ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD is not None
-            else image_cost * settings.ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB
+        image_request_limit, image_job_cost = _effective_image_budget_limits(
+            settings,
+            visual_strategy=visual_strategy,
         )
         visual_asset_planning_handler = HybridVisualPlanningHandler(
             delegate=visual_asset_planning_handler,
@@ -622,9 +623,7 @@ def build_production_container(settings: Settings) -> ProductionContainer:
                 video_price_per_second=(
                     settings.ORION_HYBRID_VIDEO_PRICE_PER_SECOND_USD
                 ),
-                maximum_image_requests=(
-                    settings.ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB
-                ),
+                maximum_image_requests=image_request_limit,
                 maximum_video_requests=(
                     settings.ORION_VIDEO_CLIP_GENERATION_MAX_REQUESTS_PER_JOB
                 ),
@@ -1627,15 +1626,27 @@ def _resolve_image_acquisition_provider_factory(
         )
     estimate = settings.ORION_IMAGE_ACQUISITION_ESTIMATED_COST_USD
     maximum = settings.ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD
+    visual_strategy = VisualStrategyName(settings.ORION_VISUAL_STRATEGY)
     if not settings.ORION_IMAGE_ACQUISITION_ALLOW_BILLABLE_REQUESTS:
         raise ImageAcquisitionProviderConfigurationException(
             "OpenRouter image requires explicit billable authorization"
         )
-    if estimate is None or maximum is None:
+    if estimate is None or (
+        visual_strategy is not VisualStrategyName.IMAGE_ONLY and maximum is None
+    ):
         raise ImageAcquisitionProviderConfigurationException(
             "OpenRouter image cost authorization is missing"
         )
-    if estimate * settings.ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB > maximum:
+    effective_requests, effective_maximum = _effective_image_budget_limits(
+        settings,
+        visual_strategy=visual_strategy,
+    )
+    effective_estimate = (
+        settings.ORION_HYBRID_IMAGE_ESTIMATED_COST_USD
+        if visual_strategy is not VisualStrategyName.FULL_VIDEO
+        else estimate
+    )
+    if effective_estimate * effective_requests > effective_maximum:
         raise ImageAcquisitionProviderConfigurationException(
             "image job estimate exceeds authorized cost"
         )
@@ -1647,6 +1658,28 @@ def _resolve_image_acquisition_provider_factory(
         message="image acquisition base URL is invalid",
     )
     return load_openrouter_image_acquisition_provider()
+
+
+def _effective_image_budget_limits(
+    settings: Settings,
+    *,
+    visual_strategy: VisualStrategyName,
+) -> tuple[int, Decimal]:
+    """Select an explicit bounded image budget without widening other strategies."""
+
+    if visual_strategy is VisualStrategyName.IMAGE_ONLY:
+        return (
+            settings.ORION_IMAGE_ONLY_MAX_REQUESTS_PER_JOB,
+            settings.ORION_IMAGE_ONLY_MAX_ESTIMATED_COST_USD,
+        )
+    maximum = settings.ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD
+    requests = settings.ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB
+    return (
+        requests,
+        maximum
+        if maximum is not None
+        else settings.ORION_HYBRID_IMAGE_ESTIMATED_COST_USD * requests,
+    )
 
 
 def _build_image_acquisition_provider(

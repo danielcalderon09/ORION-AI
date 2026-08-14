@@ -92,6 +92,8 @@ class Settings(BaseSettings):
     ORION_HYBRID_IMAGE_ESTIMATED_COST_USD: Decimal = Decimal("0.04")
     ORION_HYBRID_VIDEO_PRICE_PER_SECOND_USD: Decimal = Decimal("0.03")
     ORION_MAX_TOTAL_VISUAL_COST_USD: Decimal = Decimal("2.50")
+    ORION_IMAGE_ONLY_MAX_REQUESTS_PER_JOB: int = 16
+    ORION_IMAGE_ONLY_MAX_ESTIMATED_COST_USD: Decimal = Decimal("0.64")
     ORION_BINARY_ASSET_MAX_SIZE_BYTES: int = 25_000_000
     ORION_BINARY_ASSET_ALLOWED_MIME_TYPES: tuple[str, ...] = (
         "image/png",
@@ -360,6 +362,16 @@ class Settings(BaseSettings):
         return value
 
     @field_validator(
+        "ORION_IMAGE_ONLY_MAX_ESTIMATED_COST_USD",
+        mode="before",
+    )
+    @classmethod
+    def reject_float_image_only_cost(cls, value: Any) -> Any:
+        if isinstance(value, float):
+            raise ValueError("image-only cost must not use float")
+        return value
+
+    @field_validator(
         "ORION_IMAGE_ACQUISITION_ESTIMATED_COST_USD",
         "ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD",
         mode="before",
@@ -480,9 +492,26 @@ class Settings(BaseSettings):
                 self.ORION_HYBRID_VIDEO_PRICE_PER_SECOND_USD
             ),
             "ORION_MAX_TOTAL_VISUAL_COST_USD": self.ORION_MAX_TOTAL_VISUAL_COST_USD,
+            "ORION_IMAGE_ONLY_MAX_ESTIMATED_COST_USD": (
+                self.ORION_IMAGE_ONLY_MAX_ESTIMATED_COST_USD
+            ),
         }.items():
             if hybrid_value <= 0:
                 raise ValueError(f"{hybrid_name} must be positive")
+        if not 1 <= self.ORION_IMAGE_ONLY_MAX_REQUESTS_PER_JOB <= 16:
+            raise ValueError("image-only request limit must be between one and sixteen")
+        if self.ORION_VISUAL_STRATEGY == "image_only":
+            if (
+                self.ORION_HYBRID_IMAGE_ESTIMATED_COST_USD
+                * self.ORION_IMAGE_ONLY_MAX_REQUESTS_PER_JOB
+                > self.ORION_IMAGE_ONLY_MAX_ESTIMATED_COST_USD
+            ):
+                raise ValueError("image-only request capacity exceeds authorized cost")
+            if (
+                self.ORION_IMAGE_ONLY_MAX_ESTIMATED_COST_USD
+                > self.ORION_MAX_TOTAL_VISUAL_COST_USD
+            ):
+                raise ValueError("image-only cost exceeds total visual authorization")
         for name, value in {
             "ORION_SCRIPTING_MAX_PLAN_BYTES": self.ORION_SCRIPTING_MAX_PLAN_BYTES,
             "ORION_SCRIPTING_MAX_SCRIPT_BYTES": self.ORION_SCRIPTING_MAX_SCRIPT_BYTES,

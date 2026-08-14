@@ -14,6 +14,7 @@ from backend.src.production.domain.enums import (
     ArtifactType,
     ProductionStage,
 )
+from backend.src.production.planning.visual_strategy import VisualStrategyName
 from backend.src.production.runtime.context import StageContext
 from backend.src.production.runtime.runtime_models import StageExecutionOutput
 from backend.src.production.visual_asset_planning.artifact_writer import (
@@ -70,6 +71,7 @@ class VisualAssetPlanningHandler:
         uuid_factory: Callable[[], UUID],
         duration_resolution_reader: ShotExpansionDurationReader | None = None,
         supported_provider_durations_seconds: tuple[int, ...] = (4, 6, 8),
+        visual_strategy_name: VisualStrategyName = VisualStrategyName.FULL_VIDEO,
         prompt_version: str = (
             VisualAssetPlanningPromptBuilder.visual_asset_planning_prompt_version
         ),
@@ -83,6 +85,7 @@ class VisualAssetPlanningHandler:
         self._supported_durations = tuple(
             sorted(set(supported_provider_durations_seconds))
         )
+        self._visual_strategy_name = visual_strategy_name
         if not self._supported_durations or any(
             value <= 0 for value in self._supported_durations
         ):
@@ -392,6 +395,7 @@ class VisualAssetPlanningHandler:
             scene_plan=source.scene_plan,
             duration_resolution=duration_source.resolution,
             supported_provider_durations_seconds=self._supported_durations,
+            visual_strategy_name=self._visual_strategy_name,
         )
         existing = await self._writer.read_existing_shot_expansion(context=context)
         if existing is not None:

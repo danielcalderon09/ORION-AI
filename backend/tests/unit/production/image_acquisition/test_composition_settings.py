@@ -2,13 +2,17 @@
 
 import os
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
 
 from backend.src.infrastructure.config.settings import Settings
 from backend.src.production.api.schemas import CreateProductionJobRequest
-from backend.src.production.composition.container import build_production_container
+from backend.src.production.composition.container import (
+    _effective_image_budget_limits,
+    build_production_container,
+)
 from backend.src.production.image_acquisition.exceptions import (
     ImageAcquisitionProviderConfigurationException,
 )
@@ -18,6 +22,7 @@ from backend.src.production.infrastructure.persistence.session import (
 from backend.src.production.infrastructure.planning_artifact_reconciler import (
     LocalProductionArtifactReconciler,
 )
+from backend.src.production.planning.visual_strategy import VisualStrategyName
 from backend.tests.unit.production.image_acquisition.conftest import JOB_ID
 
 
@@ -53,6 +58,29 @@ def test_default_provider_is_simulated_and_first_to_close(tmp_path) -> None:
     )
     assert container.async_resources[1] is container.image_acquisition_provider
     container.shutdown()
+
+
+def test_image_only_uses_separate_bounded_budget_without_widening_hybrid(
+    tmp_path,
+) -> None:
+    configured = settings(
+        tmp_path,
+        ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB=5,
+        ORION_IMAGE_ACQUISITION_MAX_ESTIMATED_COST_USD="0.20",
+    )
+
+    assert _effective_image_budget_limits(
+        configured,
+        visual_strategy=VisualStrategyName.IMAGE_ONLY,
+    ) == (16, Decimal("0.64"))
+    assert _effective_image_budget_limits(
+        configured,
+        visual_strategy=VisualStrategyName.HYBRID_BALANCED,
+    ) == (5, Decimal("0.20"))
+    assert _effective_image_budget_limits(
+        configured,
+        visual_strategy=VisualStrategyName.FULL_VIDEO,
+    ) == (5, Decimal("0.20"))
 
 
 @pytest.mark.parametrize("provider", ["unknown", "openai", "openrouter"])

@@ -124,6 +124,37 @@ def test_visual_strategy_accepts_image_only_without_changing_default(tmp_path) -
         ORION_VIDEO_CLIP_GENERATION_ALLOW_BILLABLE_REQUESTS=False,
     )
     assert image_only.ORION_VIDEO_CLIP_GENERATION_PROVIDER == "openrouter"
+    assert image_only.ORION_IMAGE_ONLY_MAX_REQUESTS_PER_JOB == 16
+    assert str(image_only.ORION_IMAGE_ONLY_MAX_ESTIMATED_COST_USD) == "0.64"
+
+
+def test_image_only_budget_settings_are_bounded_and_strategy_specific(tmp_path) -> None:
+    from pydantic import ValidationError
+
+    from backend.src.infrastructure.config.settings import Settings
+
+    values = {
+        "_env_file": None,
+        "ORION_HOME": tmp_path / "home",
+        "MODELS_DIR": tmp_path / "models",
+        "PROJECTS_DIR": tmp_path / "projects",
+        "TEMP_DIR": tmp_path / "temp",
+        "ORION_VISUAL_STRATEGY": "image_only",
+    }
+    with pytest.raises(ValidationError, match="between one and sixteen"):
+        Settings(**values, ORION_IMAGE_ONLY_MAX_REQUESTS_PER_JOB=17)
+    with pytest.raises(ValidationError, match="capacity exceeds authorized cost"):
+        Settings(
+            **values,
+            ORION_IMAGE_ONLY_MAX_REQUESTS_PER_JOB=8,
+            ORION_IMAGE_ONLY_MAX_ESTIMATED_COST_USD="0.31",
+        )
+
+    hybrid = Settings(
+        **{**values, "ORION_VISUAL_STRATEGY": "hybrid_balanced"},
+        ORION_MAX_TOTAL_VISUAL_COST_USD="0.01",
+    )
+    assert hybrid.ORION_IMAGE_ACQUISITION_MAX_REQUESTS_PER_JOB == 1
 
 
 @pytest.mark.parametrize(
