@@ -179,6 +179,52 @@ async def test_case_a_no_fitting_needed(tmp_path: Path) -> None:
     assert speech.calls == 2
 
 
+async def test_real_tts_underflow_fails_without_post_tts_billable_loop(
+    tmp_path: Path,
+) -> None:
+    speech = SequencedSpeechProvider((2_800, 2_800))
+    fitter = FakeNarrationFitter({})
+    writer = InMemorySpeechManifestWriter()
+    command, context = command_context()
+
+    output = await _handler(
+        tmp_path,
+        speech=speech,
+        fitter=fitter,
+        writer=writer,
+    ).execute(command, context)
+    manifest = await writer.read_existing(context=context)
+
+    assert output.result.outcome is StageOutcome.FAILED_PERMANENT
+    assert output.result.error_code == "narration_duration_underflow"
+    assert speech.calls == 2
+    assert fitter.calls == []
+    assert manifest is not None
+    assert manifest.duration_occupancy is not None
+    assert manifest.duration_occupancy.status.value == "too_short"
+
+
+async def test_real_tts_inside_occupancy_window_skips_fitting(tmp_path: Path) -> None:
+    speech = SequencedSpeechProvider((3_700, 3_800))
+    fitter = FakeNarrationFitter({})
+    writer = InMemorySpeechManifestWriter()
+    command, context = command_context()
+
+    output = await _handler(
+        tmp_path,
+        speech=speech,
+        fitter=fitter,
+        writer=writer,
+    ).execute(command, context)
+    manifest = await writer.read_existing(context=context)
+
+    assert output.result.outcome is StageOutcome.SUCCEEDED
+    assert fitter.calls == []
+    assert manifest is not None
+    assert manifest.duration_occupancy is not None
+    assert manifest.duration_occupancy.status.value == "acceptable"
+
+
 async def test_case_b_fitting_succeeds_on_first_attempt(tmp_path: Path) -> None:
     speech = SequencedSpeechProvider((5_325, 5_975, 4_200))
     fitter = FakeNarrationFitter({("scene-001", 1): REVISION_ONE, ("scene-002", 1): REVISION_TWO})
@@ -256,7 +302,7 @@ async def test_case_d_exhaustion_blocks_video_handoff(tmp_path: Path) -> None:
     ).execute(command, context)
 
     assert output.result.outcome is StageOutcome.FAILED_PERMANENT
-    assert output.result.error_code == "narration_fitting_exhausted"
+    assert output.result.error_code == "narration_duration_overflow"
     assert video_posts == 0
 
 
@@ -310,6 +356,7 @@ async def test_historical_manifest_without_fitting_fields_remains_readable(
     assert manifest is not None
     payload = manifest.model_dump(mode="json")
     payload.pop("fitting_records")
+    payload.pop("duration_occupancy")
     for entry in payload["entries"]:
         entry.pop("source_segment_id")
         entry.pop("fitting_revision")
@@ -318,6 +365,7 @@ async def test_historical_manifest_without_fitting_fields_remains_readable(
 
     loaded = SpeechGenerationManifest.model_validate(json.loads(json.dumps(payload)))
     assert loaded.fitting_records == ()
+    assert loaded.duration_occupancy is None
     assert all(entry.fitting_revision == 0 for entry in loaded.entries)
 
 

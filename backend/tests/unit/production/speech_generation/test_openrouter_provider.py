@@ -262,7 +262,7 @@ async def test_real_adapter_output_satisfies_existing_speech_artifact_contract(t
         httpx.MockTransport(
             lambda _: httpx.Response(
                 200,
-                content=b"\x01\x00" * 4_800,
+                content=b"\x01\x00" * 15_000,
                 headers={"content-type": "application/octet-stream"},
             )
         ),

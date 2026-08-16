@@ -7,6 +7,7 @@ from typing import Literal, cast
 from pydantic import Field
 
 from backend.src.production.domain.base import ContractModel
+from backend.src.production.domain.duration_resolution import NarrationOccupancyPolicy
 from backend.src.production.planning.prompt_builder import PlanningPromptBuilder
 from backend.src.production.scripting.duration_policy import (
     PROMPT_WORDS_PER_PUNCTUATION,
@@ -19,6 +20,10 @@ from backend.src.production.scripting.narration_compression import (
     NarrationCompressionRequest,
     NarrationCompressionResponse,
 )
+from backend.src.production.scripting.narration_expansion import (
+    NarrationExpansionRequest,
+    NarrationExpansionResponse,
+)
 from backend.src.production.scripting.ports import ScriptingProviderRequest
 
 
@@ -30,7 +35,7 @@ class ScriptingPrompt(ContractModel):
 
 
 class ScriptingPromptBuilder:
-    scripting_prompt_version = "2.6.0"
+    scripting_prompt_version = "2.7.0"
     structured_output_mode = "json_schema"
     system_instruction = (
         "Create a production-ready voice-over script from the supplied durable production "
@@ -42,7 +47,8 @@ class ScriptingPromptBuilder:
         "supplied maximum_total_words hard limit and the requested deterministic "
         "narration_duration_policy; the post-synthesis tolerance is "
         "reserved for voice variation and is not a writing budget. Treat per-scene word budgets "
-        "as guidance, not mandatory fill targets. Every scene must add "
+        "as guidance, not mandatory fill targets. Aim for the supplied ideal estimated duration "
+        "and do not fall below its minimum occupancy. Every scene must add "
         "new information while maintaining thematic continuity; do not repeat the introduction. "
         "Populate narrative_arc with the premise, opening hook, central question, progression, "
         "intended payoff, and ending state. Populate each scene story_beat with its adaptive "
@@ -63,6 +69,16 @@ class ScriptingPromptBuilder:
         "the original meaning, facts, language, and order. Remove unnecessary wording without "
         "introducing new facts. The combined narration MUST NOT exceed maximum_total_words; "
         "this is a hard limit. Each scene narration MUST NOT exceed its maximum_words limit."
+    )
+    expansion_system_instruction = (
+        "Expand only the supplied scene narrations. Return one JSON object matching "
+        "narration_expansion; do not return a ProductionScript, Markdown, explanations, or "
+        "fields outside the schema. Preserve every source_scene_number exactly once and keep "
+        "the original facts, language, meaning, style, intent, and order. Add only useful "
+        "explanatory detail supported by the supplied semantic constraints. Do not repeat "
+        "phrases, invent facts, or add empty filler. Each scene narration MUST NOT exceed its "
+        "maximum_words limit, and the combined narration MUST approach ideal_duration_ms "
+        "without exceeding maximum_total_words."
     )
 
     def __init__(self, *, max_plan_bytes: int) -> None:
@@ -89,6 +105,8 @@ class ScriptingPromptBuilder:
                 request.configuration.reading_speed_words_per_minute
             ),
         )
+        occupancy_policy = NarrationOccupancyPolicy()
+        target_duration_ms = round(request.target_duration_seconds * 1_000)
         user_payload = {
             "schema_version": "1.0.0",
             "source_plan": plan_payload,
@@ -117,6 +135,20 @@ class ScriptingPromptBuilder:
                 ),
                 "maximum_estimated_duration_ms": round(
                     request.target_duration_seconds * 1_000
+                ),
+                "minimum_target_occupancy_ratio": str(
+                    occupancy_policy.minimum_occupancy_ratio
+                ),
+                "ideal_target_occupancy_ratio": str(
+                    occupancy_policy.ideal_occupancy_ratio
+                ),
+                "minimum_estimated_duration_ms": occupancy_policy.duration_for_ratio(
+                    target_duration_ms,
+                    occupancy_policy.minimum_occupancy_ratio,
+                ),
+                "ideal_estimated_duration_ms": occupancy_policy.duration_for_ratio(
+                    target_duration_ms,
+                    occupancy_policy.ideal_occupancy_ratio,
                 ),
                 "post_synthesis_tolerance_is_writing_budget": False,
                 "punctuation_adds_estimated_duration": True,
@@ -181,23 +213,64 @@ class ScriptingPromptBuilder:
             response_schema=self._compression_response_schema(),
         )
 
+    def build_expansion(self, request: NarrationExpansionRequest) -> ScriptingPrompt:
+        """Build the narrow, bounded narration-only expansion prompt."""
+
+        payload = request.model_dump(mode="json", exclude={"job_id"})
+        payload["hard_limit_instruction"] = (
+            f"Your output narration MUST NOT exceed {request.maximum_total_words} total words. "
+            f"Aim for approximately {request.ideal_duration_ms} ms and never fall below "
+            f"{request.minimum_duration_ms} ms under the supplied speaking-rate model."
+        )
+        payload["output_constraints"] = (
+            "Do not add explanations outside scene narration.",
+            "Do not introduce facts absent from the semantic constraints.",
+            "Do not repeat phrases or use empty filler.",
+        )
+        user = json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        if len(user.encode("utf-8")) > self._max_plan_bytes:
+            raise ValueError("narration expansion input exceeds prompt limit")
+        return ScriptingPrompt(
+            version=self.scripting_prompt_version,
+            system=self.expansion_system_instruction,
+            user=user,
+            response_schema=self._expansion_response_schema(),
+        )
+
     @classmethod
     def template_fingerprint(
         cls,
-        request_purpose: Literal["production_script", "narration_compression"] = (
+        request_purpose: Literal[
+            "production_script", "narration_compression", "narration_expansion"
+        ] = (
             "production_script"
         ),
     ) -> str:
         compression = request_purpose == "narration_compression"
+        expansion = request_purpose == "narration_expansion"
         payload = {
             "version": cls.scripting_prompt_version,
             "structured_output_mode": cls.structured_output_mode,
             "request_purpose": request_purpose,
             "system_instruction": (
-                cls.compression_system_instruction if compression else cls.system_instruction
+                cls.compression_system_instruction
+                if compression
+                else cls.expansion_system_instruction
+                if expansion
+                else cls.system_instruction
             ),
             "response_schema": (
-                cls._compression_response_schema() if compression else cls._response_schema()
+                cls._compression_response_schema()
+                if compression
+                else cls._expansion_response_schema()
+                if expansion
+                else cls._response_schema()
             ),
         }
         encoded = json.dumps(
@@ -223,4 +296,13 @@ class ScriptingPromptBuilder:
         )
         if not isinstance(schema, dict):
             raise TypeError("narration compression schema must be an object")
+        return cast(dict[str, object], schema)
+
+    @staticmethod
+    def _expansion_response_schema() -> dict[str, object]:
+        schema = PlanningPromptBuilder._strict_schema(
+            NarrationExpansionResponse.model_json_schema()
+        )
+        if not isinstance(schema, dict):
+            raise TypeError("narration expansion schema must be an object")
         return cast(dict[str, object], schema)

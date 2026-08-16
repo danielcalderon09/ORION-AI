@@ -11,7 +11,11 @@ from pydantic import Field, field_validator, model_validator
 
 from backend.src.production.application.sanitization import validate_safe_json
 from backend.src.production.domain.base import ContractModel
-from backend.src.production.domain.duration_resolution import DurableDurationResolution
+from backend.src.production.domain.duration_resolution import (
+    DurableDurationResolution,
+    NarrationDurationAssessment,
+    NarrationDurationStatus,
+)
 from backend.src.production.domain.path_rules import validate_relative_path
 from backend.src.production.scripting.models import NarrativeArc, StoryBeat
 from backend.src.production.speech_generation.narration_fitting import (
@@ -305,6 +309,7 @@ class SpeechGenerationManifest(ContractModel):
     summary: SpeechGenerationSummary
     status: SpeechGenerationManifestStatus
     duration_resolution: DurableDurationResolution | None = None
+    duration_occupancy: NarrationDurationAssessment | None = None
     fitting_records: tuple[NarrationFittingRecord, ...] = Field(
         default=(),
         max_length=250,
@@ -365,9 +370,13 @@ class SpeechGenerationManifest(ContractModel):
             has_rejected_duration = (
                 self.duration_resolution is not None and not self.duration_resolution.accepted
             )
-            if not has_failed_entry and not has_rejected_duration:
+            has_rejected_occupancy = (
+                self.duration_occupancy is not None
+                and self.duration_occupancy.status is not NarrationDurationStatus.ACCEPTABLE
+            )
+            if not has_failed_entry and not has_rejected_duration and not has_rejected_occupancy:
                 raise ValueError(
-                    "failed speech manifest requires a failed entry or duration resolution"
+                    "failed speech manifest requires a failed entry or duration assessment"
                 )
         if (
             self.status is SpeechGenerationManifestStatus.COMPLETED
@@ -375,6 +384,12 @@ class SpeechGenerationManifest(ContractModel):
             and not self.duration_resolution.accepted
         ):
             raise ValueError("completed speech manifest cannot reject duration resolution")
+        if (
+            self.status is SpeechGenerationManifestStatus.COMPLETED
+            and self.duration_occupancy is not None
+            and self.duration_occupancy.status is not NarrationDurationStatus.ACCEPTABLE
+        ):
+            raise ValueError("completed speech manifest cannot reject narration occupancy")
         if self.status is SpeechGenerationManifestStatus.PARTIAL and not (
             self.summary.stored and self.summary.stored < self.summary.total
         ):
@@ -509,6 +524,12 @@ def validate_speech_manifest_transition(
         and current.duration_resolution != previous.duration_resolution
     ):
         raise ValueError("accepted durable duration resolution changed")
+    if (
+        previous.duration_occupancy is not None
+        and previous.duration_occupancy.status is NarrationDurationStatus.ACCEPTABLE
+        and current.duration_occupancy != previous.duration_occupancy
+    ):
+        raise ValueError("accepted durable narration occupancy changed")
     if current.updated_at < previous.updated_at:
         raise ValueError("speech manifest update time moved backward")
     allowed_manifest = {

@@ -134,7 +134,7 @@ async def _build_failed_attempt_2(tmp_path: Path):
         ),
         fitting_recovery_store=store,
     ).execute(command, context)
-    assert output.result.error_code == "narration_fitting_exhausted"
+    assert output.result.error_code == "narration_duration_overflow"
     manifest = await second_writer.read_existing(context=context)
     assert manifest is not None
     return configuration, first_fitter, fitter, source, manifest

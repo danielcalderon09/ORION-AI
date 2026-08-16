@@ -326,8 +326,8 @@ async def test_excessive_narration_fails_durably_and_retry_reuses_audio(
     second = await handler.execute(command, context)
     manifest = await writer.read_existing(context=context)
 
-    assert first.result.error_code == "duration_resolution_invalid"
-    assert second.result.error_code == "duration_resolution_invalid"
+    assert first.result.error_code == "narration_duration_overflow"
+    assert second.result.error_code == "narration_duration_overflow"
     assert provider.calls == 2
     assert manifest is not None and manifest.duration_resolution is not None
     assert manifest.duration_resolution.resolved_duration_ms == 12_000

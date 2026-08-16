@@ -119,8 +119,8 @@ async def test_duration_policy_retry_accepts_second_output_and_preserves_arc(
     compressed = _compression(
         valid,
         (
-            "Clear facts remain in scene one.",
-            "The final scene resolves them clearly.",
+            " ".join("clear" for _ in range(22)) + ".",
+            " ".join("resolved" for _ in range(22)) + ".",
         ),
     )
     responses = [overlong, compressed]
@@ -179,7 +179,7 @@ async def test_duration_policy_retry_accepts_second_output_and_preserves_arc(
     assert completed.metadata["request_purpose"] == "narration_compression"
     assert completed.metadata["source_word_count"] == 100
     assert completed.metadata["compression_word_budget"] == 46
-    assert completed.metadata["compressed_word_count"] == 12
+    assert completed.metadata["compressed_word_count"] == 44
 
 
 @pytest.mark.asyncio

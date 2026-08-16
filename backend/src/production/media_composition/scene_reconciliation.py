@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from backend.src.production.domain.duration_resolution import (
     DurationResolutionError,
     DurationResolutionPolicy,
+    NarrationDurationStatus,
+    NarrationOccupancyPolicy,
     resolve_audio_first_durations,
 )
 from backend.src.production.media_composition.exceptions import MediaCompositionPlanError
@@ -72,11 +74,25 @@ def reconcile_scene_durations(
     except DurationResolutionError as exc:
         raise MediaCompositionPlanError(str(exc)) from exc
 
+    occupancy = NarrationOccupancyPolicy().assess(
+        narration_duration_ms=sum(narration_durations),
+        target_duration_ms=sum(planned_durations),
+        maximum_allowed_duration_ms=resolution.maximum_allowed_duration_ms,
+    )
+    if occupancy.status is not NarrationDurationStatus.ACCEPTABLE:
+        raise MediaCompositionPlanError(
+            "measured narration duration is outside the accepted occupancy window"
+        )
+    resolved_scene_durations = _balanced_scene_durations(
+        narration_durations=tuple(narration_durations),
+        target_duration_ms=sum(planned_durations),
+    )
+
     timings: list[ReconciledSceneTiming] = []
     actual_start = 0
     for (scene_id, planned_start, planned_end), resolved_duration in zip(
         planned_ranges,
-        resolution.resolved_scene_durations_ms,
+        resolved_scene_durations,
         strict=True,
     ):
         timings.append(
@@ -100,10 +116,7 @@ def reconcile_scene_durations(
         )
         for item in source.narration
     )
-    sound_effects = tuple(
-        _shift_sound_effect(item, by_scene[item.scene_id].shift_ms)
-        for item in source.sound_effects
-    )
+    sound_effects = tuple(_reconcile_sound_effect(item, by_scene[item.scene_id]) for item in source.sound_effects)
     subtitles = _reconciled_subtitles(source.subtitles, timings, narration_by_scene)
     return (
         source.model_copy(
@@ -130,14 +143,29 @@ def _reconciled_shots(
     results = []
     for shot in source:
         timing = timings[shot.scene_id]
-        end = shot.shot_end_ms + timing.shift_ms
-        if shot.shot_id == last_shot_ids[shot.scene_id]:
-            end = timing.actual_end_ms
+        planned_duration = timing.planned_end_ms - timing.planned_start_ms
+        actual_duration = timing.actual_end_ms - timing.actual_start_ms
+        if actual_duration >= planned_duration:
+            start = shot.shot_start_ms + timing.shift_ms
+            end = shot.shot_end_ms + timing.shift_ms
+            if shot.shot_id == last_shot_ids[shot.scene_id]:
+                end = timing.actual_end_ms
+        else:
+            start = timing.actual_start_ms + (
+                (shot.shot_start_ms - timing.planned_start_ms) * actual_duration
+                // planned_duration
+            )
+            end = timing.actual_start_ms + (
+                (shot.shot_end_ms - timing.planned_start_ms) * actual_duration
+                // planned_duration
+            )
+            if shot.shot_end_ms == timing.planned_end_ms:
+                end = timing.actual_end_ms
         results.append(
             shot.model_copy(
                 update={
                     "scene_start_ms": timing.actual_start_ms,
-                    "shot_start_ms": shot.shot_start_ms + timing.shift_ms,
+                    "shot_start_ms": start,
                     "shot_end_ms": end,
                 }
             )
@@ -145,11 +173,38 @@ def _reconciled_shots(
     return tuple(results)
 
 
-def _shift_sound_effect(
+def _reconcile_sound_effect(
     item: CompositionSoundEffectSource,
-    shift_ms: int,
+    timing: ReconciledSceneTiming,
 ) -> CompositionSoundEffectSource:
-    return item.model_copy(update={"target_offset_ms": item.target_offset_ms + shift_ms})
+    planned_duration = timing.planned_end_ms - timing.planned_start_ms
+    actual_duration = timing.actual_end_ms - timing.actual_start_ms
+    if actual_duration >= planned_duration:
+        return item.model_copy(
+            update={"target_offset_ms": item.target_offset_ms + timing.shift_ms}
+        )
+    relative_offset = max(0, item.target_offset_ms - timing.planned_start_ms)
+    target_offset_ms = timing.actual_start_ms + (
+        relative_offset * actual_duration // planned_duration
+    )
+    return item.model_copy(update={"target_offset_ms": target_offset_ms})
+
+
+def _balanced_scene_durations(
+    *,
+    narration_durations: tuple[int, ...],
+    target_duration_ms: int,
+) -> tuple[int, ...]:
+    """Spread bounded non-speech time evenly instead of retaining nominal gaps."""
+
+    remaining = target_duration_ms - sum(narration_durations)
+    if remaining < 0:
+        return narration_durations
+    base, remainder = divmod(remaining, len(narration_durations))
+    return tuple(
+        duration + base + (1 if index < remainder else 0)
+        for index, duration in enumerate(narration_durations)
+    )
 
 
 def _reconciled_subtitles(

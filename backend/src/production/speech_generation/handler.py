@@ -14,6 +14,8 @@ from backend.src.production.domain.artifact import Artifact
 from backend.src.production.domain.duration_resolution import (
     DurationResolutionError,
     DurationResolutionPolicy,
+    NarrationDurationStatus,
+    NarrationOccupancyPolicy,
     durable_duration_resolution,
     resolve_audio_first_durations,
 )
@@ -113,6 +115,7 @@ class SpeechGenerationHandler:
         configuration: SpeechGenerationConfiguration,
         clock: Callable[[], datetime],
         duration_resolution_policy: DurationResolutionPolicy | None = None,
+        narration_occupancy_policy: NarrationOccupancyPolicy | None = None,
         narration_fitter: NarrationFittingProvider | None = None,
         local_narration_fitter: LocalNarrationFitter | None = None,
         narration_fitting_configuration: NarrationFittingConfiguration | None = None,
@@ -127,6 +130,9 @@ class SpeechGenerationHandler:
         self._configuration = configuration
         self._clock = clock
         self._duration_resolution_policy = duration_resolution_policy or DurationResolutionPolicy()
+        self._narration_occupancy_policy = (
+            narration_occupancy_policy or NarrationOccupancyPolicy()
+        )
         self._narration_fitter = narration_fitter or DisabledNarrationFittingProvider()
         self._local_narration_fitter = (
             local_narration_fitter or DeterministicSpanishNarrationFitter()
@@ -517,6 +523,11 @@ class SpeechGenerationHandler:
             manifest.status is SpeechGenerationManifestStatus.COMPLETED
             and manifest.duration_resolution is not None
             and manifest.duration_resolution.accepted
+            and (
+                manifest.duration_occupancy is None
+                or manifest.duration_occupancy.status
+                is NarrationDurationStatus.ACCEPTABLE
+            )
         ):
             return manifest, stored_assets, None
         while True:
@@ -541,6 +552,13 @@ class SpeechGenerationHandler:
                     update={
                         "status": SpeechGenerationManifestStatus.FAILED,
                         "duration_resolution": durable,
+                        "duration_occupancy": self._narration_occupancy_policy.assess(
+                            narration_duration_ms=sum(narration),
+                            target_duration_ms=sum(planned),
+                            maximum_allowed_duration_ms=(
+                                exc.resolution.maximum_allowed_duration_ms
+                            ),
+                        ),
                         "updated_at": self._aware_now(),
                     }
                 )
@@ -558,20 +576,59 @@ class SpeechGenerationHandler:
                     narration_scene_durations_ms=narration,
                     resolution=resolution,
                 )
-                accepted = manifest.model_copy(
-                    update={
-                        "status": SpeechGenerationManifestStatus.IN_PROGRESS,
-                        "duration_resolution": durable,
-                        "updated_at": self._aware_now(),
-                    }
+                occupancy = self._narration_occupancy_policy.assess(
+                    narration_duration_ms=sum(narration),
+                    target_duration_ms=sum(planned),
+                    maximum_allowed_duration_ms=resolution.maximum_allowed_duration_ms,
                 )
-                if accepted != manifest:
-                    await self._writer.checkpoint(
-                        context=context,
-                        previous=manifest,
-                        current=accepted,
+                if occupancy.status is NarrationDurationStatus.TOO_SHORT:
+                    rejected = manifest.model_copy(
+                        update={
+                            "status": SpeechGenerationManifestStatus.FAILED,
+                            "duration_resolution": durable,
+                            "duration_occupancy": occupancy,
+                            "updated_at": self._aware_now(),
+                        }
                     )
-                return accepted, stored_assets, None
+                    if rejected != manifest:
+                        await self._writer.checkpoint(
+                            context=context,
+                            previous=manifest,
+                            current=rejected,
+                        )
+                    return rejected, stored_assets, "narration_duration_underflow"
+                if occupancy.status is NarrationDurationStatus.TOO_LONG:
+                    rejected = manifest.model_copy(
+                        update={
+                            "status": SpeechGenerationManifestStatus.FAILED,
+                            "duration_resolution": durable,
+                            "duration_occupancy": occupancy,
+                            "updated_at": self._aware_now(),
+                        }
+                    )
+                    if rejected != manifest:
+                        await self._writer.checkpoint(
+                            context=context,
+                            previous=manifest,
+                            current=rejected,
+                        )
+                    manifest = rejected
+                else:
+                    accepted = manifest.model_copy(
+                        update={
+                            "status": SpeechGenerationManifestStatus.IN_PROGRESS,
+                            "duration_resolution": durable,
+                            "duration_occupancy": occupancy,
+                            "updated_at": self._aware_now(),
+                        }
+                    )
+                    if accepted != manifest:
+                        await self._writer.checkpoint(
+                            context=context,
+                            previous=manifest,
+                            current=accepted,
+                        )
+                    return accepted, stored_assets, None
 
             attempt = 1 + max(
                 (
@@ -582,7 +639,7 @@ class SpeechGenerationHandler:
                 default=0,
             )
             if attempt > self._fitting_configuration.maximum_attempts:
-                return manifest, stored_assets, "narration_fitting_exhausted"
+                return manifest, stored_assets, "narration_duration_overflow"
             overrun_candidates = tuple(
                 entry
                 for entry in manifest.entries
@@ -591,8 +648,9 @@ class SpeechGenerationHandler:
                 and entry.duration_ms > entry.target_duration_ms
             )
             if not overrun_candidates:
-                return manifest, stored_assets, "narration_fitting_exhausted"
+                return manifest, stored_assets, "narration_duration_overflow"
             assert manifest.duration_resolution is not None
+            assert manifest.duration_occupancy is not None
             excess = (
                 manifest.duration_resolution.resolved_duration_ms
                 - manifest.duration_resolution.maximum_allowed_duration_ms
@@ -660,7 +718,7 @@ class SpeechGenerationHandler:
                 continue
 
             if self._fitting_configuration.provider == "disabled":
-                return manifest, stored_assets, "duration_resolution_invalid"
+                return manifest, stored_assets, "narration_duration_overflow"
             remotely_revised: set[str] = set()
             for candidate in candidates:
                 manifest, record, error = await self._completed_fitting_record(

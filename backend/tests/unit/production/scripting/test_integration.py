@@ -64,6 +64,15 @@ def fake_script_from_request(request):
     external = json.loads(request.content)
     prompt = json.loads(external["messages"][1]["content"])
     plan = prompt["source_plan"]
+    scene_budgets = prompt["narration_word_count_policy"]["maximum_words_per_scene"]
+
+    def narration_for(scene, budget):
+        words = scene["narration"].split()
+        filler = ["with", "concrete", "context", "and", "useful", "detail", "for", "a", "clear", "educational", "explanation"]
+        while len(words) < budget:
+            words.extend(filler[: budget - len(words)])
+        return " ".join(words[:budget])
+
     return {
         "schema_version": "1.0.0",
         "source_plan_schema_version": plan["schema_version"],
@@ -78,7 +87,7 @@ def fake_script_from_request(request):
                 "scene_number": index,
                 "source_scene_number": scene["scene_number"],
                 "heading": scene["title"],
-                "narration": scene["narration"],
+                "narration": narration_for(scene, scene_budgets[index - 1]),
                 "estimated_duration_seconds": scene["estimated_duration_seconds"],
                 "delivery_style": "calm",
                 "pronunciation_notes": [],

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import ROUND_FLOOR, Decimal
+from enum import StrEnum
 
 from pydantic import Field, model_validator
 
@@ -16,6 +17,120 @@ class DurationResolutionError(ValueError):
     def __init__(self, message: str, *, resolution: AudioFirstDurationResolution) -> None:
         self.resolution = resolution
         super().__init__(message)
+
+
+class NarrationDurationStatus(StrEnum):
+    TOO_SHORT = "too_short"
+    ACCEPTABLE = "acceptable"
+    TOO_LONG = "too_long"
+
+
+class NarrationDurationAssessment(ContractModel):
+    target_duration_ms: int = Field(gt=0, le=3_600_000)
+    narration_duration_ms: int = Field(gt=0, le=3_600_000)
+    minimum_duration_ms: int = Field(gt=0, le=3_600_000)
+    ideal_duration_ms: int = Field(gt=0, le=3_600_000)
+    soft_maximum_duration_ms: int = Field(gt=0, le=3_600_000)
+    maximum_allowed_duration_ms: int = Field(gt=0, le=3_600_000)
+    occupancy_ratio: Decimal = Field(gt=0, le=100)
+    calibration_ratio: Decimal = Field(gt=0, le=4)
+    status: NarrationDurationStatus
+
+
+class NarrationDurationCalibration(ContractModel):
+    """Serializable, provider/model/language-scoped estimator calibration evidence."""
+
+    schema_version: str = "1.0.0"
+    provider: str = Field(min_length=1, max_length=100)
+    model: str = Field(min_length=1, max_length=200)
+    language: str = Field(min_length=2, max_length=16)
+    duration_ratio: Decimal = Field(gt=0, le=4)
+    measurement_count: int = Field(ge=1, le=1_000_000)
+
+
+@dataclass(frozen=True, slots=True)
+class NarrationOccupancyPolicy:
+    minimum_occupancy_ratio: Decimal = Decimal("0.88")
+    ideal_occupancy_ratio: Decimal = Decimal("0.94")
+    soft_maximum_occupancy_ratio: Decimal = Decimal("0.98")
+    classification_tolerance_ms: int = 120
+
+    def __post_init__(self) -> None:
+        if not (
+            Decimal("0")
+            < self.minimum_occupancy_ratio
+            <= self.ideal_occupancy_ratio
+            <= self.soft_maximum_occupancy_ratio
+            <= Decimal("1")
+        ):
+            raise ValueError("narration occupancy ratios are invalid")
+        if not 0 <= self.classification_tolerance_ms <= 1_000:
+            raise ValueError("narration occupancy tolerance is invalid")
+
+    def duration_for_ratio(self, target_duration_ms: int, ratio: Decimal) -> int:
+        if target_duration_ms <= 0:
+            raise ValueError("narration target duration must be positive")
+        return int(
+            (Decimal(target_duration_ms) * ratio).to_integral_value(
+                rounding=ROUND_FLOOR
+            )
+        )
+
+    def assess(
+        self,
+        *,
+        narration_duration_ms: int,
+        target_duration_ms: int,
+        maximum_allowed_duration_ms: int | None = None,
+        calibration_ratio: Decimal = Decimal("1"),
+        calibration: NarrationDurationCalibration | None = None,
+    ) -> NarrationDurationAssessment:
+        """Classify calibrated estimated or measured narration deterministically."""
+
+        if narration_duration_ms <= 0 or target_duration_ms <= 0:
+            raise ValueError("narration and target durations must be positive")
+        effective_calibration_ratio = (
+            calibration.duration_ratio if calibration is not None else calibration_ratio
+        )
+        if not Decimal("0") < effective_calibration_ratio <= Decimal("4"):
+            raise ValueError("narration duration calibration ratio is invalid")
+        calibrated_duration_ms = int(
+            (
+                Decimal(narration_duration_ms) * effective_calibration_ratio
+            ).to_integral_value(rounding=ROUND_FLOOR)
+        )
+        maximum = (
+            target_duration_ms
+            if maximum_allowed_duration_ms is None
+            else maximum_allowed_duration_ms
+        )
+        if maximum < target_duration_ms:
+            raise ValueError("maximum narration duration cannot precede target")
+        minimum = self.duration_for_ratio(
+            target_duration_ms, self.minimum_occupancy_ratio
+        )
+        ideal = self.duration_for_ratio(target_duration_ms, self.ideal_occupancy_ratio)
+        soft_maximum = self.duration_for_ratio(
+            target_duration_ms, self.soft_maximum_occupancy_ratio
+        )
+        if calibrated_duration_ms + self.classification_tolerance_ms < minimum:
+            status = NarrationDurationStatus.TOO_SHORT
+        elif calibrated_duration_ms > maximum:
+            status = NarrationDurationStatus.TOO_LONG
+        else:
+            status = NarrationDurationStatus.ACCEPTABLE
+        return NarrationDurationAssessment(
+            target_duration_ms=target_duration_ms,
+            narration_duration_ms=calibrated_duration_ms,
+            minimum_duration_ms=minimum,
+            ideal_duration_ms=ideal,
+            soft_maximum_duration_ms=soft_maximum,
+            maximum_allowed_duration_ms=maximum,
+            occupancy_ratio=Decimal(calibrated_duration_ms)
+            / Decimal(target_duration_ms),
+            calibration_ratio=effective_calibration_ratio,
+            status=status,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +296,10 @@ __all__ = [
     "DurableDurationResolution",
     "DurationResolutionError",
     "DurationResolutionPolicy",
+    "NarrationDurationAssessment",
+    "NarrationDurationCalibration",
+    "NarrationDurationStatus",
+    "NarrationOccupancyPolicy",
     "ResolvedSceneDuration",
     "durable_duration_resolution",
     "resolve_audio_first_durations",

@@ -83,7 +83,7 @@ def test_prompt_is_deterministic_strict_and_excludes_internal_metadata(
     builder = ScriptingPromptBuilder(max_plan_bytes=100_000)
     first = builder.build(scripting_request)
     assert first == builder.build(scripting_request)
-    assert first.version == "2.6.0"
+    assert first.version == "2.7.0"
     assert "Every scene must add new information" in first.system
     assert "omit a call to action" in first.system
     assert first.response_schema["additionalProperties"] is False
@@ -105,6 +105,10 @@ def test_prompt_is_deterministic_strict_and_excludes_internal_metadata(
     }
     assert user_payload["narration_duration_policy"] == {
         "configured_reading_speed_words_per_minute": 150,
+        "minimum_target_occupancy_ratio": "0.88",
+        "ideal_target_occupancy_ratio": "0.94",
+        "minimum_estimated_duration_ms": 17_600,
+        "ideal_estimated_duration_ms": 18_800,
         "maximum_estimated_duration_ms": 20_000,
         "post_synthesis_tolerance_is_writing_budget": False,
         "prefer_concise_sentences": True,
