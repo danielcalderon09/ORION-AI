@@ -83,7 +83,7 @@ def test_prompt_is_deterministic_strict_and_excludes_internal_metadata(
     builder = ScriptingPromptBuilder(max_plan_bytes=100_000)
     first = builder.build(scripting_request)
     assert first == builder.build(scripting_request)
-    assert first.version == "2.7.0"
+    assert first.version == "2.8.0"
     assert "Every scene must add new information" in first.system
     assert "omit a call to action" in first.system
     assert first.response_schema["additionalProperties"] is False

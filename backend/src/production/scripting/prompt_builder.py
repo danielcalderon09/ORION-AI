@@ -35,7 +35,7 @@ class ScriptingPrompt(ContractModel):
 
 
 class ScriptingPromptBuilder:
-    scripting_prompt_version = "2.7.0"
+    scripting_prompt_version = "2.8.0"
     structured_output_mode = "json_schema"
     system_instruction = (
         "Create a production-ready voice-over script from the supplied durable production "
@@ -73,12 +73,15 @@ class ScriptingPromptBuilder:
     expansion_system_instruction = (
         "Expand only the supplied scene narrations. Return one JSON object matching "
         "narration_expansion; do not return a ProductionScript, Markdown, explanations, or "
-        "fields outside the schema. Preserve every source_scene_number exactly once and keep "
-        "the original facts, language, meaning, style, intent, and order. Add only useful "
+        "fields outside the schema. Return exactly the requested scenes: do not add scenes, "
+        "remove scenes, change scene numbers, or change the requested language. Preserve every "
+        "source_scene_number exactly once and keep the original facts, language, meaning, style, "
+        "intent, and order. Add only useful "
         "explanatory detail supported by the supplied semantic constraints. Do not repeat "
         "phrases, invent facts, or add empty filler. Each scene narration MUST NOT exceed its "
-        "maximum_words limit, and the combined narration MUST approach ideal_duration_ms "
-        "without exceeding maximum_total_words."
+        "specified maximum_words hard limit. The combined narration MUST NOT exceed the "
+        "maximum_total_words hard limit and should approach ideal_duration_ms. Return only "
+        "expanded narration for the requested scenes."
     )
 
     def __init__(self, *, max_plan_bytes: int) -> None:
@@ -240,7 +243,7 @@ class ScriptingPromptBuilder:
             version=self.scripting_prompt_version,
             system=self.expansion_system_instruction,
             user=user,
-            response_schema=self._expansion_response_schema(),
+            response_schema=self._expansion_response_schema(request),
         )
 
     @classmethod
@@ -299,10 +302,42 @@ class ScriptingPromptBuilder:
         return cast(dict[str, object], schema)
 
     @staticmethod
-    def _expansion_response_schema() -> dict[str, object]:
+    def _expansion_response_schema(
+        request: NarrationExpansionRequest | None = None,
+    ) -> dict[str, object]:
         schema = PlanningPromptBuilder._strict_schema(
             NarrationExpansionResponse.model_json_schema()
         )
         if not isinstance(schema, dict):
             raise TypeError("narration expansion schema must be an object")
+        if request is not None:
+            properties = schema.get("properties")
+            definitions = schema.get("$defs")
+            if not isinstance(properties, dict) or not isinstance(definitions, dict):
+                raise TypeError("narration expansion schema structure is invalid")
+            language = properties.get("language")
+            scenes = properties.get("scenes")
+            schema_version = properties.get("schema_version")
+            scene_definition = definitions.get("NarrationExpansionScene")
+            if (
+                not isinstance(language, dict)
+                or not isinstance(scenes, dict)
+                or not isinstance(schema_version, dict)
+                or not isinstance(scene_definition, dict)
+            ):
+                raise TypeError("narration expansion schema properties are invalid")
+            scene_properties = scene_definition.get("properties")
+            if not isinstance(scene_properties, dict):
+                raise TypeError("narration expansion scene schema is invalid")
+            source_scene_number = scene_properties.get("source_scene_number")
+            if not isinstance(source_scene_number, dict):
+                raise TypeError("narration expansion scene identity schema is invalid")
+            expected_scene_numbers = [
+                scene.source_scene_number for scene in request.scenes
+            ]
+            schema_version["enum"] = ["1.0.0"]
+            language["enum"] = [request.language]
+            source_scene_number["enum"] = expected_scene_numbers
+            scenes["minItems"] = len(expected_scene_numbers)
+            scenes["maxItems"] = len(expected_scene_numbers)
         return cast(dict[str, object], schema)

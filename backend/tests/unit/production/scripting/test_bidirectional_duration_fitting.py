@@ -21,9 +21,12 @@ from backend.src.production.scripting.duration_policy import (
     narration_expansion_word_budget,
 )
 from backend.src.production.scripting.exceptions import (
+    ScriptingProviderContractError,
     ScriptingProviderDurationPolicyExhaustedError,
 )
 from backend.src.production.scripting.narration_expansion import (
+    NarrationExpansionContractError,
+    NarrationExpansionFailureCode,
     NarrationExpansionResponse,
     merge_narration_expansion,
     narration_expansion_request,
@@ -136,6 +139,36 @@ def _without_narration(payload: dict[str, object]) -> dict[str, object]:
         assert isinstance(scene, dict)
         scene.pop("narration")
     return result
+
+
+def _twenty_five_second_request(scripting_request):
+    scenes = tuple(
+        scene.model_copy(update={"estimated_duration_seconds": 12.5})
+        for scene in scripting_request.plan.scenes
+    )
+    return scripting_request.model_copy(
+        update={
+            "plan": scripting_request.plan.model_copy(
+                update={"target_duration_seconds": 25, "scenes": scenes}
+            ),
+            "target_duration_seconds": 25,
+        }
+    )
+
+
+def _word_narration(prefix: str, count: int, *, punctuation: str = ".!") -> str:
+    return " ".join(f"{prefix}{index}" for index in range(count)) + punctuation
+
+
+async def _real_shaped_initial(scripting_request) -> dict[str, object]:
+    payload = (
+        await SimulatedScriptingProvider().generate_script(scripting_request)
+    ).script.model_dump(mode="json")
+    scenes = payload["scenes"]
+    assert isinstance(scenes, list)
+    scenes[0]["narration"] = _word_narration("sourceone", 22)
+    scenes[1]["narration"] = _word_narration("sourcetwo", 23)
+    return payload
 
 
 @pytest.mark.asyncio
@@ -273,12 +306,284 @@ async def test_expansion_source_hash_and_language_are_pinned(scripting_request) 
             response=wrong_language,
         )
     changed = source.model_copy(update={"title": "Changed source"})
-    with pytest.raises(ValueError, match="hash"):
+    with pytest.raises(ValueError, match="source binding"):
         merge_narration_expansion(
             source_script=changed,
             request=request,
             response=wrong_language.model_copy(update={"language": "en"}),
         )
+
+
+@pytest.mark.asyncio
+async def test_real_shaped_45_word_expansion_succeeds_with_two_requests(
+    scripting_request,
+) -> None:
+    request = _twenty_five_second_request(scripting_request)
+    initial = await _real_shaped_initial(request)
+    expanded = {
+        "schema_version": "1.0.0",
+        "language": "en",
+        "scenes": [
+            {
+                "source_scene_number": 1,
+                "narration": _word_narration("expandedone", 27),
+            },
+            {
+                "source_scene_number": 2,
+                "narration": _word_narration("expandedtwo", 28),
+            },
+        ],
+    }
+    responses = [initial, expanded]
+    calls = 0
+    second_payload: dict[str, object] = {}
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        nonlocal calls, second_payload
+        calls += 1
+        if calls == 2:
+            second_payload = json.loads(http_request.content)
+        return httpx.Response(
+            200,
+            json=_envelope(responses[calls - 1]),
+            request=http_request,
+        )
+
+    provider, store = _provider(handler)
+    try:
+        result = await provider.generate_script(request)
+    finally:
+        await provider.close()
+
+    assert calls == 2
+    assert len(store.records) == 2
+    assert store.records[(request.job_id, 1)].metadata["estimated_duration_ms"] == 18_480
+    completed = store.records[(request.job_id, 2)]
+    assert completed.script is not None
+    assert completed.metadata["expanded_word_count"] == 55
+    assert completed.metadata["expanded_estimated_duration_ms"] == 22_480
+    assert _without_narration(result.script.model_dump(mode="json")) == _without_narration(
+        initial
+    )
+    expansion_prompt = json.loads(second_payload["messages"][1]["content"])
+    assert expansion_prompt["maximum_total_words"] == 55
+    assert [scene["maximum_words"] for scene in expansion_prompt["scenes"]] == [27, 28]
+    response_schema = second_payload["response_format"]["json_schema"]["schema"]
+    assert response_schema["properties"]["language"]["enum"] == ["en"]
+    assert response_schema["properties"]["scenes"]["minItems"] == 2
+    assert response_schema["properties"]["scenes"]["maxItems"] == 2
+    assert response_schema["$defs"]["NarrationExpansionScene"]["properties"][
+        "source_scene_number"
+    ]["enum"] == [1, 2]
+    assert "sourceone" not in completed.model_dump_json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "expected_code"),
+    (
+        ("wrong_language", NarrationExpansionFailureCode.LANGUAGE_MISMATCH),
+        ("missing_scene", NarrationExpansionFailureCode.SCENE_MISSING),
+        ("duplicate_scene", NarrationExpansionFailureCode.SCENE_DUPLICATE),
+        ("unknown_scene", NarrationExpansionFailureCode.SCENE_UNKNOWN),
+        ("empty_narration", NarrationExpansionFailureCode.EMPTY_NARRATION),
+        ("unsafe_narration", NarrationExpansionFailureCode.UNSAFE_NARRATION),
+        ("scene_one_budget", NarrationExpansionFailureCode.SCENE_BUDGET_EXCEEDED),
+        ("scene_two_budget", NarrationExpansionFailureCode.SCENE_BUDGET_EXCEEDED),
+        ("invalid_schema", NarrationExpansionFailureCode.SCHEMA_INVALID),
+    ),
+)
+async def test_expansion_failures_persist_safe_leaf_diagnostics_without_third_request(
+    scripting_request,
+    kind: str,
+    expected_code: NarrationExpansionFailureCode,
+) -> None:
+    request = _twenty_five_second_request(scripting_request)
+    initial = await _real_shaped_initial(request)
+    expanded: dict[str, object] = {
+        "schema_version": "1.0.0",
+        "language": "en",
+        "scenes": [
+            {"source_scene_number": 1, "narration": _word_narration("safeone", 27)},
+            {"source_scene_number": 2, "narration": _word_narration("safetwo", 28)},
+        ],
+    }
+    scenes = expanded["scenes"]
+    assert isinstance(scenes, list)
+    if kind == "wrong_language":
+        expanded["language"] = "es"
+    elif kind == "missing_scene":
+        expanded["scenes"] = scenes[:1]
+    elif kind == "duplicate_scene":
+        scenes[1]["source_scene_number"] = 1
+    elif kind == "unknown_scene":
+        scenes[1]["source_scene_number"] = 3
+    elif kind == "empty_narration":
+        scenes[0]["narration"] = " "
+    elif kind == "unsafe_narration":
+        scenes[0]["narration"] = "<script>RAW_NARRATION_SENTINEL</script>"
+    elif kind == "scene_one_budget":
+        scenes[0]["narration"] = _word_narration("RAW_NARRATION_SENTINEL", 28)
+    elif kind == "scene_two_budget":
+        scenes[1]["narration"] = _word_narration("RAW_NARRATION_SENTINEL", 29)
+    elif kind == "invalid_schema":
+        expanded["unexpected"] = "RAW_PROVIDER_SENTINEL"
+    calls = 0
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            json=_envelope(initial if calls == 1 else expanded),
+            request=http_request,
+        )
+
+    provider, store = _provider(handler)
+    try:
+        with pytest.raises(ScriptingProviderContractError):
+            await provider.generate_script(request)
+    finally:
+        await provider.close()
+
+    assert calls == 2
+    failed = store.records[(request.job_id, 2)]
+    assert failed.validation_error_code is not None
+    assert failed.validation_error_code.value == expected_code.value
+    assert failed.metadata["expected_language"] == "en"
+    assert failed.metadata["expected_scene_numbers"] == "1,2"
+    assert failed.metadata["expected_scene_count"] == 2
+    assert failed.metadata["scene_word_budgets"] == "1:27,2:28"
+    assert failed.metadata["global_word_budget"] == 55
+    serialized = failed.model_dump_json()
+    assert "RAW_NARRATION_SENTINEL" not in serialized
+    assert "RAW_PROVIDER_SENTINEL" not in serialized
+
+
+def test_global_expansion_budget_is_implied_by_hard_scene_budgets() -> None:
+    budgets = allocate_narration_scene_word_budgets(
+        scene_count=2,
+        maximum_total_words=55,
+    )
+
+    assert budgets == (27, 28)
+    assert sum(budgets) == 55
+
+
+def test_dynamic_expansion_schema_is_deterministic(scripting_request) -> None:
+    source = asyncio.run(SimulatedScriptingProvider().generate_script(scripting_request)).script
+    assessment = assess_narration_duration(
+        narrations=tuple(scene.narration for scene in source.scenes),
+        target_duration_seconds=source.target_duration_seconds,
+        reading_speed_words_per_minute=150,
+    )
+    budget = narration_expansion_word_budget(assessment, scene_count=2)
+    request = narration_expansion_request(
+        job_id=scripting_request.job_id,
+        source_script=source,
+        assessment=assessment,
+        minimum_duration_ms=17_600,
+        ideal_duration_ms=18_800,
+        maximum_total_words=budget,
+        scene_word_budgets=allocate_narration_scene_word_budgets(
+            scene_count=2,
+            maximum_total_words=budget,
+        ),
+    )
+    builder = ScriptingPromptBuilder(max_plan_bytes=100_000)
+
+    first = builder.build_expansion(request)
+    second = builder.build_expansion(request)
+
+    assert first == second
+    assert first.response_schema["additionalProperties"] is False
+    scene_definition = first.response_schema["$defs"]["NarrationExpansionScene"]
+    assert scene_definition["additionalProperties"] is False
+    assert set(first.response_schema["required"]) == {"schema_version", "language", "scenes"}
+
+
+def test_source_mismatch_has_stable_safe_leaf_code(scripting_request) -> None:
+    source = asyncio.run(SimulatedScriptingProvider().generate_script(scripting_request)).script
+    assessment = assess_narration_duration(
+        narrations=tuple(scene.narration for scene in source.scenes),
+        target_duration_seconds=source.target_duration_seconds,
+        reading_speed_words_per_minute=150,
+    )
+    budget = narration_expansion_word_budget(assessment, scene_count=2)
+    request = narration_expansion_request(
+        job_id=scripting_request.job_id,
+        source_script=source,
+        assessment=assessment,
+        minimum_duration_ms=17_600,
+        ideal_duration_ms=18_800,
+        maximum_total_words=budget,
+        scene_word_budgets=allocate_narration_scene_word_budgets(
+            scene_count=2,
+            maximum_total_words=budget,
+        ),
+    )
+    response = NarrationExpansionResponse(
+        language="en",
+        scenes=tuple(
+            {
+                "source_scene_number": scene.source_scene_number,
+                "narration": scene.original_narration,
+            }
+            for scene in request.scenes
+        ),
+    )
+
+    with pytest.raises(NarrationExpansionContractError) as captured:
+        merge_narration_expansion(
+            source_script=source.model_copy(update={"title": "changed"}),
+            request=request,
+            response=response,
+        )
+
+    assert captured.value.code is NarrationExpansionFailureCode.SOURCE_MISMATCH
+    assert captured.value.safe_metadata["source_script_sha256"] == request.source_script_sha256
+
+
+def test_invalid_merged_script_has_stable_safe_leaf_code(scripting_request) -> None:
+    source = asyncio.run(SimulatedScriptingProvider().generate_script(scripting_request)).script
+    invalid_source = source.model_copy(update={"title": ""})
+    assessment = assess_narration_duration(
+        narrations=tuple(scene.narration for scene in invalid_source.scenes),
+        target_duration_seconds=invalid_source.target_duration_seconds,
+        reading_speed_words_per_minute=150,
+    )
+    budget = narration_expansion_word_budget(assessment, scene_count=2)
+    request = narration_expansion_request(
+        job_id=scripting_request.job_id,
+        source_script=invalid_source,
+        assessment=assessment,
+        minimum_duration_ms=17_600,
+        ideal_duration_ms=18_800,
+        maximum_total_words=budget,
+        scene_word_budgets=allocate_narration_scene_word_budgets(
+            scene_count=2,
+            maximum_total_words=budget,
+        ),
+    )
+    response = NarrationExpansionResponse(
+        language="en",
+        scenes=tuple(
+            {
+                "source_scene_number": scene.source_scene_number,
+                "narration": scene.original_narration,
+            }
+            for scene in request.scenes
+        ),
+    )
+
+    with pytest.raises(NarrationExpansionContractError) as captured:
+        merge_narration_expansion(
+            source_script=invalid_source,
+            request=request,
+            response=response,
+        )
+
+    assert captured.value.code is NarrationExpansionFailureCode.MERGE_INVALID
 
 
 @pytest.mark.asyncio

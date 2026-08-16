@@ -41,6 +41,21 @@ class OpenRouterScriptingValidationErrorCode(StrEnum):
     DURATION_POLICY = "duration_policy"
     NARRATION_COMPRESSION_CONTRACT = "narration_compression_contract"
     NARRATION_EXPANSION_CONTRACT = "narration_expansion_contract"
+    NARRATION_EXPANSION_SCHEMA_INVALID = "narration_expansion_schema_invalid"
+    NARRATION_EXPANSION_LANGUAGE_MISMATCH = "narration_expansion_language_mismatch"
+    NARRATION_EXPANSION_SCENE_MISSING = "narration_expansion_scene_missing"
+    NARRATION_EXPANSION_SCENE_DUPLICATE = "narration_expansion_scene_duplicate"
+    NARRATION_EXPANSION_SCENE_UNKNOWN = "narration_expansion_scene_unknown"
+    NARRATION_EXPANSION_EMPTY_NARRATION = "narration_expansion_empty_narration"
+    NARRATION_EXPANSION_UNSAFE_NARRATION = "narration_expansion_unsafe_narration"
+    NARRATION_EXPANSION_SCENE_BUDGET_EXCEEDED = (
+        "narration_expansion_scene_budget_exceeded"
+    )
+    NARRATION_EXPANSION_GLOBAL_BUDGET_EXCEEDED = (
+        "narration_expansion_global_budget_exceeded"
+    )
+    NARRATION_EXPANSION_SOURCE_MISMATCH = "narration_expansion_source_mismatch"
+    NARRATION_EXPANSION_MERGE_INVALID = "narration_expansion_merge_invalid"
     UNSUPPORTED_FIELD = "unsupported_field"
     UNKNOWN_STRUCTURED_OUTPUT_ERROR = "unknown_structured_output_error"
 

@@ -63,10 +63,12 @@ from backend.src.production.scripting.narration_compression import (
     narration_compression_request,
 )
 from backend.src.production.scripting.narration_expansion import (
+    NarrationExpansionContractError,
+    NarrationExpansionFailureCode,
     NarrationExpansionRequest,
-    NarrationExpansionResponse,
     merge_narration_expansion,
     narration_expansion_request,
+    parse_narration_expansion_response,
 )
 from backend.src.production.scripting.openrouter_billable_gate import (
     OpenRouterScriptingBillableGate,
@@ -565,24 +567,26 @@ class OpenRouterScriptingProvider:
             assert previous_script is not None
             assert expansion_request is not None
             try:
-                expansion = NarrationExpansionResponse.model_validate(script_payload)
+                expansion = parse_narration_expansion_response(
+                    script_payload,
+                    request=expansion_request,
+                )
                 script = merge_narration_expansion(
                     source_script=previous_script,
                     request=expansion_request,
                     response=expansion,
                 )
-            except (ValidationError, ValueError) as exc:
+            except NarrationExpansionContractError as exc:
                 await self._raise_structured_output_failure(
                     submitting,
                     response_metadata=response_metadata,
                     failure=_ValidationFailure(
-                        code=(
-                            OpenRouterScriptingValidationErrorCode.NARRATION_EXPANSION_CONTRACT
-                        ),
-                        path="scenes",
-                        message="narration expansion does not match the source script",
+                        code=OpenRouterScriptingValidationErrorCode(exc.code.value),
+                        path=_expansion_failure_path(exc),
+                        message=exc.safe_message,
                     ),
                     cause=exc,
+                    metadata_update=exc.safe_metadata,
                 )
         if script.schema_version != "1.0.0":
             await self._raise_structured_output_failure(
@@ -919,12 +923,14 @@ class OpenRouterScriptingProvider:
         response_metadata: _SafeResponseMetadata,
         failure: _ValidationFailure,
         cause: Exception,
+        metadata_update: dict[str, bool | int | str] | None = None,
     ) -> NoReturn:
         await self._mark_failed(
             record,
             "invalid_structured_output",
             response_metadata=response_metadata,
             validation_failure=failure,
+            metadata_update=metadata_update,
         )
         raise ScriptingProviderContractError(
             "scripting provider output failed contract validation"
@@ -1258,6 +1264,14 @@ def _expansion_result_metadata(
         "expanded_estimated_duration_ms": expanded_assessment.estimated_duration_ms,
         "target_duration_ms": expanded_assessment.target_duration_ms,
     }
+
+
+def _expansion_failure_path(error: NarrationExpansionContractError) -> str:
+    if error.code is NarrationExpansionFailureCode.LANGUAGE_MISMATCH:
+        return "language"
+    if error.code is NarrationExpansionFailureCode.SOURCE_MISMATCH:
+        return "source_script_sha256"
+    return "scenes"
 
 
 def _safe_decimal(value: object) -> Decimal | None:
