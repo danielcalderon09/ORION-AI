@@ -113,7 +113,11 @@ async def test_provider_http_failure_preserves_safe_leaf_diagnostic(tmp_path) ->
         diagnostic_metadata={
             "provider_http_status": 400,
             "provider_operation": "submit",
-            "provider_error_code": "reference_image_unreachable",
+            "provider_error_code": "400",
+            "openrouter_error_code": "400",
+            "openrouter_error_type": "image_not_found",
+            "openrouter_provider_code": "invalid_image_reference",
+            "provider_error_reason": "reference_asset_unreachable",
             "provider_error_body_bytes": 123,
             "provider_error_body_sha256": "a" * 64,
         },
@@ -139,7 +143,11 @@ async def test_provider_http_failure_preserves_safe_leaf_diagnostic(tmp_path) ->
     assert manifest is not None
     entry = manifest.entries[0]
     assert entry.error_code == "video_reference_asset_invalid"
-    assert entry.metadata["provider_error_code"] == "reference_image_unreachable"
+    assert entry.metadata["provider_error_code"] == "400"
+    assert entry.metadata["openrouter_error_code"] == "400"
+    assert entry.metadata["openrouter_error_type"] == "image_not_found"
+    assert entry.metadata["openrouter_provider_code"] == "invalid_image_reference"
+    assert entry.metadata["provider_error_reason"] == "reference_asset_unreachable"
     assert "OpenRouter video submit failed" not in repr(entry.metadata)
 
 
