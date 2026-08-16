@@ -198,10 +198,8 @@ class AudioFirstNarrativePlan(ContractModel):
             raise ValueError("audio-first editorial targets differ from request")
         if sum(scene.resolved_duration_ms for scene in self.scenes) != self.resolved_duration_ms:
             raise ValueError("audio-first scene durations differ from total")
-        if self.accepted != (
-            self.resolved_duration_ms <= self.maximum_allowed_duration_ms
-        ):
-            raise ValueError("audio-first acceptance is inconsistent")
+        if not self.accepted:
+            raise ValueError("measured narration duration is always accepted")
         return self
 
 
@@ -408,7 +406,7 @@ def resolve_editorial_audio_first(
         requested_duration_ms=resolution.requested_target_duration_ms,
         resolved_duration_ms=resolution.resolved_duration_ms,
         maximum_allowed_duration_ms=resolution.maximum_allowed_duration_ms,
-        accepted=resolution.resolved_duration_ms <= resolution.maximum_allowed_duration_ms,
+        accepted=True,
         scenes=tuple(
             ResolvedNarrativeScene(
                 scene_id=scene.scene_id,

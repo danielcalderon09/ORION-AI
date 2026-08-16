@@ -12,9 +12,7 @@ from backend.src.production.application.commands import StageCommand
 from backend.src.production.application.results import StageOutcome, StageResult
 from backend.src.production.domain.artifact import Artifact
 from backend.src.production.domain.duration_resolution import (
-    DurationResolutionError,
     DurationResolutionPolicy,
-    NarrationDurationStatus,
     NarrationOccupancyPolicy,
     durable_duration_resolution,
     resolve_audio_first_durations,
@@ -523,251 +521,45 @@ class SpeechGenerationHandler:
             manifest.status is SpeechGenerationManifestStatus.COMPLETED
             and manifest.duration_resolution is not None
             and manifest.duration_resolution.accepted
-            and (
-                manifest.duration_occupancy is None
-                or manifest.duration_occupancy.status
-                is NarrationDurationStatus.ACCEPTABLE
-            )
         ):
             return manifest, stored_assets, None
         while True:
             scene_ids = tuple(entry.source_scene_id for entry in manifest.entries)
             planned = tuple(entry.target_duration_ms or 0 for entry in manifest.entries)
             narration = tuple(entry.duration_ms or 0 for entry in manifest.entries)
-            try:
-                resolution = resolve_audio_first_durations(
-                    requested_target_duration_ms=sum(planned),
-                    planned_scene_durations_ms=planned,
-                    narration_scene_durations_ms=narration,
-                    policy=self._duration_resolution_policy,
-                )
-            except DurationResolutionError as exc:
-                durable = durable_duration_resolution(
-                    scene_ids=scene_ids,
-                    planned_scene_durations_ms=planned,
-                    narration_scene_durations_ms=narration,
-                    resolution=exc.resolution,
-                )
-                rejected = manifest.model_copy(
-                    update={
-                        "status": SpeechGenerationManifestStatus.FAILED,
-                        "duration_resolution": durable,
-                        "duration_occupancy": self._narration_occupancy_policy.assess(
-                            narration_duration_ms=sum(narration),
-                            target_duration_ms=sum(planned),
-                            maximum_allowed_duration_ms=(
-                                exc.resolution.maximum_allowed_duration_ms
-                            ),
-                        ),
-                        "updated_at": self._aware_now(),
-                    }
-                )
-                if rejected != manifest:
-                    await self._writer.checkpoint(
-                        context=context,
-                        previous=manifest,
-                        current=rejected,
-                    )
-                manifest = rejected
-            else:
-                durable = durable_duration_resolution(
-                    scene_ids=scene_ids,
-                    planned_scene_durations_ms=planned,
-                    narration_scene_durations_ms=narration,
-                    resolution=resolution,
-                )
-                occupancy = self._narration_occupancy_policy.assess(
-                    narration_duration_ms=sum(narration),
-                    target_duration_ms=sum(planned),
-                    maximum_allowed_duration_ms=resolution.maximum_allowed_duration_ms,
-                )
-                if occupancy.status is NarrationDurationStatus.TOO_SHORT:
-                    rejected = manifest.model_copy(
-                        update={
-                            "status": SpeechGenerationManifestStatus.FAILED,
-                            "duration_resolution": durable,
-                            "duration_occupancy": occupancy,
-                            "updated_at": self._aware_now(),
-                        }
-                    )
-                    if rejected != manifest:
-                        await self._writer.checkpoint(
-                            context=context,
-                            previous=manifest,
-                            current=rejected,
-                        )
-                    return rejected, stored_assets, "narration_duration_underflow"
-                if occupancy.status is NarrationDurationStatus.TOO_LONG:
-                    rejected = manifest.model_copy(
-                        update={
-                            "status": SpeechGenerationManifestStatus.FAILED,
-                            "duration_resolution": durable,
-                            "duration_occupancy": occupancy,
-                            "updated_at": self._aware_now(),
-                        }
-                    )
-                    if rejected != manifest:
-                        await self._writer.checkpoint(
-                            context=context,
-                            previous=manifest,
-                            current=rejected,
-                        )
-                    manifest = rejected
-                else:
-                    accepted = manifest.model_copy(
-                        update={
-                            "status": SpeechGenerationManifestStatus.IN_PROGRESS,
-                            "duration_resolution": durable,
-                            "duration_occupancy": occupancy,
-                            "updated_at": self._aware_now(),
-                        }
-                    )
-                    if accepted != manifest:
-                        await self._writer.checkpoint(
-                            context=context,
-                            previous=manifest,
-                            current=accepted,
-                        )
-                    return accepted, stored_assets, None
-
-            attempt = 1 + max(
-                (
-                    record.attempt_number
-                    for record in manifest.fitting_records
-                    if record.strategy is NarrationFittingStrategy.REMOTE_PROVIDER
-                ),
-                default=0,
+            resolution = resolve_audio_first_durations(
+                requested_target_duration_ms=sum(planned),
+                planned_scene_durations_ms=planned,
+                narration_scene_durations_ms=narration,
+                policy=self._duration_resolution_policy,
             )
-            if attempt > self._fitting_configuration.maximum_attempts:
-                return manifest, stored_assets, "narration_duration_overflow"
-            overrun_candidates = tuple(
-                entry
-                for entry in manifest.entries
-                if entry.duration_ms is not None
-                and entry.target_duration_ms is not None
-                and entry.duration_ms > entry.target_duration_ms
+            durable = durable_duration_resolution(
+                scene_ids=scene_ids,
+                planned_scene_durations_ms=planned,
+                narration_scene_durations_ms=narration,
+                resolution=resolution,
             )
-            if not overrun_candidates:
-                return manifest, stored_assets, "narration_duration_overflow"
-            assert manifest.duration_resolution is not None
-            assert manifest.duration_occupancy is not None
-            excess = (
-                manifest.duration_resolution.resolved_duration_ms
-                - manifest.duration_resolution.maximum_allowed_duration_ms
+            occupancy = self._narration_occupancy_policy.assess(
+                narration_duration_ms=sum(narration),
+                target_duration_ms=sum(planned),
+                maximum_allowed_duration_ms=resolution.maximum_allowed_duration_ms,
             )
-            selected: list[SpeechSegmentManifestEntry] = []
-            recoverable = 0
-            for item in sorted(
-                overrun_candidates,
-                key=lambda value: (
-                    -((value.duration_ms or 0) - (value.target_duration_ms or 0)),
-                    value.sequence_index,
-                ),
-            ):
-                selected.append(item)
-                recoverable += (item.duration_ms or 0) - (item.target_duration_ms or 0)
-                if recoverable >= excess:
-                    break
-            candidates = tuple(sorted(selected, key=lambda value: value.sequence_index))
-            locally_revised: set[str] = set()
-            for candidate in candidates:
-                manifest, record = await self._completed_local_fitting_record(
-                    command=command,
+            accepted = manifest.model_copy(
+                update={
+                    "status": SpeechGenerationManifestStatus.IN_PROGRESS,
+                    "duration_resolution": durable,
+                    "duration_occupancy": occupancy,
+                    "updated_at": self._aware_now(),
+                }
+            )
+            if accepted != manifest:
+                await self._writer.checkpoint(
                     context=context,
-                    source=source,
-                    manifest=manifest,
-                    entry=candidate,
-                    attempt=attempt,
+                    previous=manifest,
+                    current=accepted,
                 )
-                if record is None:
-                    continue
-                current_entry = next(
-                    item
-                    for item in manifest.entries
-                    if item.source_scene_id == candidate.source_scene_id
-                )
-                if current_entry.normalized_text_hash == record.previous_text_hash:
-                    old_segment_id = current_entry.segment_id
-                    manifest = await self._apply_fitting_record(
-                        context=context,
-                        manifest=manifest,
-                        entry=current_entry,
-                        record=record,
-                    )
-                    stored_assets.pop(old_segment_id, None)
-                    locally_revised.add(candidate.source_scene_id)
-            if locally_revised:
-                for scene_id in sorted(locally_revised):
-                    current_entry = next(
-                        item for item in manifest.entries if item.source_scene_id == scene_id
-                    )
-                    source_segment = next(
-                        item for item in source_segments if item.scene_id == scene_id
-                    )
-                    active_segment = _active_segment(source_segment, current_entry)
-                    manifest, asset, error = await self._generate_fitted_audio(
-                        command=command,
-                        context=context,
-                        manifest=manifest,
-                        segment=active_segment,
-                    )
-                    if error is not None:
-                        return manifest, stored_assets, error
-                    assert asset is not None
-                    stored_assets[active_segment.segment_id] = asset
-                continue
+            return accepted, stored_assets, None
 
-            if self._fitting_configuration.provider == "disabled":
-                return manifest, stored_assets, "narration_duration_overflow"
-            remotely_revised: set[str] = set()
-            for candidate in candidates:
-                manifest, record, error = await self._completed_fitting_record(
-                    command=command,
-                    context=context,
-                    source=source,
-                    manifest=manifest,
-                    entry=candidate,
-                    attempt=attempt,
-                    recovery_authorization=recovery_authorization,
-                )
-                if error is not None:
-                    return manifest, stored_assets, error
-                assert record.revised_narration is not None
-                assert record.revised_text_hash is not None
-                current_entry = next(
-                    item
-                    for item in manifest.entries
-                    if item.source_scene_id == candidate.source_scene_id
-                )
-                if current_entry.normalized_text_hash == record.previous_text_hash:
-                    old_segment_id = current_entry.segment_id
-                    manifest = await self._apply_fitting_record(
-                        context=context,
-                        manifest=manifest,
-                        entry=current_entry,
-                        record=record,
-                    )
-                    stored_assets.pop(old_segment_id, None)
-                    remotely_revised.add(candidate.source_scene_id)
-            for scene_id in sorted(remotely_revised):
-                current_entry = next(
-                    item for item in manifest.entries if item.source_scene_id == scene_id
-                )
-                source_segment = next(
-                    item for item in source_segments if item.scene_id == scene_id
-                )
-                active_segment = _active_segment(source_segment, current_entry)
-                if current_entry.status is not SpeechSegmentStatus.STORED:
-                    manifest, asset, error = await self._generate_fitted_audio(
-                        command=command,
-                        context=context,
-                        manifest=manifest,
-                        segment=active_segment,
-                    )
-                    if error is not None:
-                        return manifest, stored_assets, error
-                    assert asset is not None
-                    stored_assets[active_segment.segment_id] = asset
 
     async def _completed_local_fitting_record(
         self,

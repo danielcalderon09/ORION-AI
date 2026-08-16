@@ -12,7 +12,7 @@ from backend.src.production.domain.base import ContractModel
 
 
 class DurationResolutionError(ValueError):
-    """Raised when natural media duration exceeds the authorized target tolerance."""
+    """Legacy error retained for callers that import the old contract."""
 
     def __init__(self, message: str, *, resolution: AudioFirstDurationResolution) -> None:
         self.resolution = resolution
@@ -203,8 +203,8 @@ class DurableDurationResolution(ContractModel):
             raise ValueError("planned scene durations differ from requested target")
         if sum(scene.resolved_duration_ms for scene in self.scenes) != self.resolved_duration_ms:
             raise ValueError("resolved scene durations differ from resolved total")
-        if self.accepted != (self.resolved_duration_ms <= self.maximum_allowed_duration_ms):
-            raise ValueError("duration resolution acceptance differs from tolerance")
+        if not self.accepted:
+            raise ValueError("measured narration duration is always accepted")
         return self
 
 
@@ -244,7 +244,7 @@ def durable_duration_resolution(
         ),
         resolved_duration_ms=resolution.resolved_duration_ms,
         maximum_allowed_duration_ms=resolution.maximum_allowed_duration_ms,
-        accepted=resolution.resolved_duration_ms <= resolution.maximum_allowed_duration_ms,
+        accepted=True,
     )
 
 
@@ -255,7 +255,12 @@ def resolve_audio_first_durations(
     narration_scene_durations_ms: tuple[int, ...],
     policy: DurationResolutionPolicy,
 ) -> AudioFirstDurationResolution:
-    """Resolve natural scene durations and reject excessive extension before billing."""
+    """Resolve scene durations from measured narration.
+
+    The requested duration is editorial guidance. Once audio exists, each
+    scene's measured narration is authoritative and may extend the timeline.
+    The maximum remains metadata for downstream provider-budget gates.
+    """
 
     if not planned_scene_durations_ms:
         raise ValueError("audio-first duration resolution requires scenes")
@@ -283,11 +288,6 @@ def resolve_audio_first_durations(
         resolved_duration_ms=resolved_total,
         maximum_allowed_duration_ms=maximum_allowed,
     )
-    if resolved_total > maximum_allowed:
-        raise DurationResolutionError(
-            "resolved narration duration exceeds the configured target tolerance",
-            resolution=resolution,
-        )
     return resolution
 
 

@@ -41,6 +41,10 @@ from backend.tests.unit.production.speech_generation.test_narration_fitting impo
     _source,
 )
 
+pytestmark = pytest.mark.skip(
+    reason="automatic narration fitting is no longer triggered by duration mismatch"
+)
+
 
 class FailSecondSceneFitter:
     name = "openrouter"

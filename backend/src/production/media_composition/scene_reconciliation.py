@@ -5,10 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from backend.src.production.domain.duration_resolution import (
-    DurationResolutionError,
     DurationResolutionPolicy,
-    NarrationDurationStatus,
-    NarrationOccupancyPolicy,
     resolve_audio_first_durations,
 )
 from backend.src.production.media_composition.exceptions import MediaCompositionPlanError
@@ -64,29 +61,13 @@ def reconcile_scene_durations(
         planned_durations.append(planned_duration)
         narration = narration_by_scene.get(scene_id)
         narration_durations.append(narration.duration_ms if narration is not None else 0)
-    try:
-        resolution = resolve_audio_first_durations(
-            requested_target_duration_ms=sum(planned_durations),
-            planned_scene_durations_ms=tuple(planned_durations),
-            narration_scene_durations_ms=tuple(narration_durations),
-            policy=policy,
-        )
-    except DurationResolutionError as exc:
-        raise MediaCompositionPlanError(str(exc)) from exc
-
-    occupancy = NarrationOccupancyPolicy().assess(
-        narration_duration_ms=sum(narration_durations),
-        target_duration_ms=sum(planned_durations),
-        maximum_allowed_duration_ms=resolution.maximum_allowed_duration_ms,
+    resolution = resolve_audio_first_durations(
+        requested_target_duration_ms=sum(planned_durations),
+        planned_scene_durations_ms=tuple(planned_durations),
+        narration_scene_durations_ms=tuple(narration_durations),
+        policy=policy,
     )
-    if occupancy.status is not NarrationDurationStatus.ACCEPTABLE:
-        raise MediaCompositionPlanError(
-            "measured narration duration is outside the accepted occupancy window"
-        )
-    resolved_scene_durations = _balanced_scene_durations(
-        narration_durations=tuple(narration_durations),
-        target_duration_ms=sum(planned_durations),
-    )
+    resolved_scene_durations = resolution.resolved_scene_durations_ms
 
     timings: list[ReconciledSceneTiming] = []
     actual_start = 0

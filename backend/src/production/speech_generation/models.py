@@ -384,12 +384,6 @@ class SpeechGenerationManifest(ContractModel):
             and not self.duration_resolution.accepted
         ):
             raise ValueError("completed speech manifest cannot reject duration resolution")
-        if (
-            self.status is SpeechGenerationManifestStatus.COMPLETED
-            and self.duration_occupancy is not None
-            and self.duration_occupancy.status is not NarrationDurationStatus.ACCEPTABLE
-        ):
-            raise ValueError("completed speech manifest cannot reject narration occupancy")
         if self.status is SpeechGenerationManifestStatus.PARTIAL and not (
             self.summary.stored and self.summary.stored < self.summary.total
         ):

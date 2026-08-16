@@ -295,16 +295,16 @@ def test_narration_within_planned_scenes_keeps_requested_target(
 
     assert plan.output.expected_duration_ms == 8_000
     assert [(item.timeline_start_ms, item.timeline_end_ms) for item in plan.tracks[0].clips] == [
-        (0, 3_833),
-        (3_833, 8_000),
+        (0, 4_000),
+        (4_000, 8_000),
     ]
     assert [(item.timeline_start_ms, item.timeline_end_ms) for item in plan.tracks[1].clips] == [
         (0, 3_500),
-        (3_833, 7_667),
+        (4_000, 7_792),
     ]
     assert [(item.start_ms, item.end_ms) for item in plan.subtitle_cues] == [
         (0, 3_500),
-        (3_850, 7_650),
+        (4_000, 7_800),
     ]
     assert [item.playback_rate for item in plan.tracks[1].clips] == [1.0, 1.0]
 
@@ -532,20 +532,20 @@ def test_three_scene_real_narration_shifts_following_tracks_without_overlap(
     video_clips = plan.tracks[0].clips
     assert [(item.timeline_start_ms, item.timeline_end_ms) for item in video_clips] == [
         (0, 5_000),
-        (5_000, 9_000),
-        (9_000, 15_000),
+        (5_000, 10_000),
+        (10_000, 16_000),
     ]
     assert [(item.timeline_start_ms, item.timeline_end_ms) for item in plan.tracks[1].clips] == [
         (0, 5_000),
         (5_000, 9_000),
-        (9_000, 15_000),
+        (10_000, 16_000),
     ]
     assert [(item.start_ms, item.end_ms) for item in plan.subtitle_cues] == [
         (0, 5_000),
         (5_000, 9_000),
-        (9_000, 15_000),
+        (10_000, 16_000),
     ]
-    assert plan.output.expected_duration_ms == 15_000
+    assert plan.output.expected_duration_ms == 16_000
     assert video_clips[0].playback_mode == "once"
     assert video_clips[1].playback_mode == "once"
     assert plan.metadata["video_adaptations"] == {

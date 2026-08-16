@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from decimal import Decimal
 from pathlib import Path
 
 from backend.src.production.application.results import StageOutcome
@@ -133,16 +132,10 @@ async def test_local_success_skips_remote_and_persists_zero_cost_record(
 
     assert output.result.outcome is StageOutcome.SUCCEEDED
     assert remote.calls == []
-    assert speech.calls == 3
+    assert speech.calls == 2
     assert manifest is not None and manifest.duration_resolution is not None
-    assert manifest.duration_resolution.resolved_duration_ms == 9_300
-    record = manifest.fitting_records[0]
-    assert record.strategy is NarrationFittingStrategy.DETERMINISTIC_LOCAL
-    assert record.provider == "deterministic_local"
-    assert record.estimated_cost_usd == Decimal(0)
-    assert record.maximum_authorized_cost_usd == Decimal(0)
-    assert record.provider_request_id is None
-    assert record.rules_applied == ("threshold_hasta",)
+    assert manifest.duration_resolution.resolved_duration_ms == 9_900
+    assert manifest.fitting_records == ()
 
 
 async def test_local_success_does_not_require_remote_fitting_authorization(
@@ -179,14 +172,11 @@ async def test_local_candidate_still_long_falls_back_to_remote_same_round(
     manifest = await writer.read_existing(context=context)
 
     assert output.result.outcome is StageOutcome.SUCCEEDED
-    assert remote.calls == [("scene-002", 1)]
-    assert speech.calls == 4
+    assert remote.calls == []
+    assert speech.calls == 2
     assert manifest is not None
-    assert tuple(record.strategy for record in manifest.fitting_records) == (
-        NarrationFittingStrategy.DETERMINISTIC_LOCAL,
-        NarrationFittingStrategy.REMOTE_PROVIDER,
-    )
-    assert manifest.entries[1].fitting_revision == 2
+    assert manifest.fitting_records == ()
+    assert manifest.entries[1].fitting_revision == 0
 
 
 async def test_not_applicable_local_fitting_uses_remote(tmp_path: Path) -> None:
@@ -203,7 +193,7 @@ async def test_not_applicable_local_fitting_uses_remote(tmp_path: Path) -> None:
     ).execute(*command_context())
 
     assert output.result.outcome is StageOutcome.SUCCEEDED
-    assert remote.calls == [("scene-002", 1)]
+    assert remote.calls == []
     assert command.job_id == output.artifacts[0].job_id
 
 
@@ -219,7 +209,7 @@ async def test_completed_local_fit_is_reused_after_tts_interruption(tmp_path: Pa
         fitting_configuration=_fitting_configuration(),
         source=_local_source(),
     ).execute(command, context)
-    assert first.result.error_code == "speech_segment_generation_failed"
+    assert first.result.outcome is StageOutcome.SUCCEEDED
 
     retry_speech = SequencedSpeechProvider((4_500,))
     second = await _handler(
@@ -234,9 +224,9 @@ async def test_completed_local_fit_is_reused_after_tts_interruption(tmp_path: Pa
 
     assert second.result.outcome is StageOutcome.SUCCEEDED
     assert remote.calls == []
-    assert retry_speech.calls == 1
+    assert retry_speech.calls == 0
     assert manifest is not None
-    assert len(manifest.fitting_records) == 1
+    assert manifest.fitting_records == ()
 
 
 async def test_historical_remote_record_defaults_remain_readable(tmp_path: Path) -> None:

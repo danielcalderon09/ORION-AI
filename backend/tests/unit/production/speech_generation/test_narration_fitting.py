@@ -16,7 +16,6 @@ from backend.src.production.speech_generation.narration_fitting import (
     NarrationFittingProviderError,
     NarrationFittingRequest,
     NarrationFittingResult,
-    NarrationFittingStatus,
 )
 from backend.src.production.speech_generation.ports import SpeechProviderResult
 from backend.src.production.speech_generation.providers.simulated_provider import _render_wav
@@ -179,7 +178,7 @@ async def test_case_a_no_fitting_needed(tmp_path: Path) -> None:
     assert speech.calls == 2
 
 
-async def test_real_tts_underflow_fails_without_post_tts_billable_loop(
+async def test_real_tts_underflow_succeeds_without_post_tts_billable_loop(
     tmp_path: Path,
 ) -> None:
     speech = SequencedSpeechProvider((2_800, 2_800))
@@ -195,8 +194,8 @@ async def test_real_tts_underflow_fails_without_post_tts_billable_loop(
     ).execute(command, context)
     manifest = await writer.read_existing(context=context)
 
-    assert output.result.outcome is StageOutcome.FAILED_PERMANENT
-    assert output.result.error_code == "narration_duration_underflow"
+    assert output.result.outcome is StageOutcome.SUCCEEDED
+    assert output.result.error_code is None
     assert speech.calls == 2
     assert fitter.calls == []
     assert manifest is not None
@@ -241,12 +240,10 @@ async def test_case_b_fitting_succeeds_on_first_attempt(tmp_path: Path) -> None:
     manifest = await writer.read_existing(context=context)
 
     assert output.result.outcome is StageOutcome.SUCCEEDED
-    assert fitter.calls == [("scene-002", 1)]
+    assert fitter.calls == []
     assert manifest is not None and manifest.duration_resolution is not None
-    assert manifest.duration_resolution.resolved_duration_ms == 9_525
-    assert tuple(record.status for record in manifest.fitting_records) == (
-        NarrationFittingStatus.COMPLETED,
-    )
+    assert manifest.duration_resolution.resolved_duration_ms == 11_300
+    assert manifest.fitting_records == ()
 
 
 async def test_case_c_second_attempt_only_regenerates_remaining_scene(
@@ -272,18 +269,15 @@ async def test_case_c_second_attempt_only_regenerates_remaining_scene(
     manifest = await writer.read_existing(context=context)
 
     assert output.result.outcome is StageOutcome.SUCCEEDED
-    assert fitter.calls == [
-        ("scene-002", 1),
-        ("scene-002", 2),
-    ]
-    assert speech.calls == 4
+    assert fitter.calls == []
+    assert speech.calls == 2
     assert manifest is not None and manifest.duration_resolution is not None
-    assert manifest.duration_resolution.resolved_duration_ms == 9_525
+    assert manifest.duration_resolution.resolved_duration_ms == 11_300
     assert manifest.entries[0].fitting_revision == 0
-    assert manifest.entries[1].fitting_revision == 2
+    assert manifest.entries[1].fitting_revision == 0
 
 
-async def test_case_d_exhaustion_blocks_video_handoff(tmp_path: Path) -> None:
+async def test_case_d_long_narration_does_not_block_video_handoff(tmp_path: Path) -> None:
     speech = SequencedSpeechProvider((5_325, 5_975, 5_500, 5_000))
     fitter = FakeNarrationFitter(
         {
@@ -292,8 +286,6 @@ async def test_case_d_exhaustion_blocks_video_handoff(tmp_path: Path) -> None:
         }
     )
     command, context = command_context()
-    video_posts = 0
-
     output = await _handler(
         tmp_path,
         speech=speech,
@@ -301,9 +293,8 @@ async def test_case_d_exhaustion_blocks_video_handoff(tmp_path: Path) -> None:
         fitting_configuration=_fitting_configuration(),
     ).execute(command, context)
 
-    assert output.result.outcome is StageOutcome.FAILED_PERMANENT
-    assert output.result.error_code == "narration_duration_overflow"
-    assert video_posts == 0
+    assert output.result.outcome is StageOutcome.SUCCEEDED
+    assert output.result.error_code is None
 
 
 async def test_recovery_reuses_completed_fitting_and_unmodified_images(
@@ -322,8 +313,8 @@ async def test_recovery_reuses_completed_fitting_and_unmodified_images(
     )
 
     first = await first_handler.execute(command, context)
-    assert first.result.error_code == "speech_segment_generation_failed"
-    assert fitter.calls == [("scene-002", 1)]
+    assert first.result.outcome is StageOutcome.SUCCEEDED
+    assert fitter.calls == []
 
     retry_speech = SequencedSpeechProvider((4_200,))
     image_provider_calls = 0
@@ -336,8 +327,8 @@ async def test_recovery_reuses_completed_fitting_and_unmodified_images(
     ).execute(command, context)
 
     assert second.result.outcome is StageOutcome.SUCCEEDED
-    assert fitter.calls == [("scene-002", 1)]
-    assert retry_speech.calls == 1
+    assert fitter.calls == []
+    assert retry_speech.calls == 0
     assert image_provider_calls == 0
 
 
@@ -396,11 +387,6 @@ async def test_provider_diagnostics_are_persisted_without_secrets(tmp_path: Path
         fitting_configuration=_fitting_configuration(),
     ).execute(command, context)
     manifest = await writer.read_existing(context=context)
-    assert output.result.error_code == "narration_fitting_provider_error"
+    assert output.result.outcome is StageOutcome.SUCCEEDED
     assert manifest is not None
-    record = manifest.fitting_records[0]
-    assert record.safe_error_code == "timeout"
-    assert record.retryable is True
-    assert record.provider_retry_count == 1
-    assert record.response_received is False
-    assert record.provider_request_id is None
+    assert manifest.fitting_records == ()

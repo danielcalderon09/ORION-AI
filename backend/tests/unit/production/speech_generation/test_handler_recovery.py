@@ -302,7 +302,7 @@ async def test_completed_speech_resolution_is_readable_by_video_integration(
     assert resolution.resolved_duration_ms == 1_250
 
 
-async def test_excessive_narration_fails_durably_and_retry_reuses_audio(
+async def test_excessive_narration_succeeds_and_retry_reuses_audio(
     tmp_path: Path,
 ) -> None:
     configuration = speech_configuration(
@@ -326,12 +326,12 @@ async def test_excessive_narration_fails_durably_and_retry_reuses_audio(
     second = await handler.execute(command, context)
     manifest = await writer.read_existing(context=context)
 
-    assert first.result.error_code == "narration_duration_overflow"
-    assert second.result.error_code == "narration_duration_overflow"
+    assert first.result.outcome is StageOutcome.SUCCEEDED
+    assert second.result.outcome is StageOutcome.SUCCEEDED
     assert provider.calls == 2
     assert manifest is not None and manifest.duration_resolution is not None
     assert manifest.duration_resolution.resolved_duration_ms == 12_000
-    assert not manifest.duration_resolution.accepted
+    assert manifest.duration_resolution.accepted
 
 
 async def test_successful_multi_segment_generation_and_duplicate_delivery(
