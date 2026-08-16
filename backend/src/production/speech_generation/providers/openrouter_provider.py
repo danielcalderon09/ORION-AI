@@ -40,6 +40,10 @@ from backend.src.production.speech_generation.fingerprinting import (
     SpeechRemoteRequestFingerprintInput,
     speech_remote_request_fingerprint,
 )
+from backend.src.production.speech_generation.model_profiles import (
+    build_model_input,
+    validate_model_voice,
+)
 from backend.src.production.speech_generation.models import SpeechSegmentAudioMetadata
 from backend.src.production.speech_generation.ports import (
     SpeechProviderRequest,
@@ -99,6 +103,7 @@ class OpenRouterSpeechGenerationProvider:
         api_key: str,
         model: str,
         voice: str,
+        style_prompt: str | None = None,
         estimated_cost_usd: Decimal,
         maximum_authorized_cost_usd: Decimal,
         allow_billable_requests: bool,
@@ -115,6 +120,7 @@ class OpenRouterSpeechGenerationProvider:
     ) -> None:
         if not api_key.strip() or not model.strip() or not voice.strip():
             raise ValueError("OpenRouter speech credential, model, and voice are required")
+        validate_model_voice(model=model.strip(), voice=voice.strip())
         if not allow_billable_requests:
             raise SpeechBillableAuthorizationError("billable speech requests are disabled")
         if estimated_cost_usd <= 0 or maximum_authorized_cost_usd < estimated_cost_usd:
@@ -139,6 +145,7 @@ class OpenRouterSpeechGenerationProvider:
             raise ValueError("OpenRouter speech limits are invalid")
         self._model = model.strip()
         self._voice = voice.strip()
+        self._style_prompt = style_prompt.strip() if style_prompt else None
         self._estimated_cost = estimated_cost_usd
         self._maximum_cost = maximum_authorized_cost_usd
         self._store = remote_job_store
@@ -480,7 +487,11 @@ class OpenRouterSpeechGenerationProvider:
             f"{self._base_url}/audio/speech",
             json={
                 "model": self._model,
-                "input": request.segment.narration_text,
+                "input": build_model_input(
+                    model=self._model,
+                    text=request.segment.narration_text,
+                    style_prompt=self._style_prompt,
+                ),
                 "voice": self._voice,
                 "response_format": "pcm",
             },
@@ -520,6 +531,8 @@ class OpenRouterSpeechGenerationProvider:
             "provider_request_schema_version": "1.0.0",
             "response_format": "pcm",
         }
+        if self._style_prompt is not None:
+            options["style_prompt"] = self._style_prompt
         if replacement_permit is not None:
             options["replacement_submission_identity"] = (
                 replacement_permit.replacement_submission_identity

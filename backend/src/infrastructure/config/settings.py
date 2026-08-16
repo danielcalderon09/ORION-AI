@@ -175,6 +175,7 @@ class Settings(BaseSettings):
     ORION_SPEECH_GENERATION_REMOTE_PROVIDER: Literal["disabled", "openrouter"] = "disabled"
     ORION_SPEECH_GENERATION_REMOTE_MODEL: str | None = None
     ORION_SPEECH_GENERATION_REMOTE_VOICE: str | None = None
+    ORION_SPEECH_GENERATION_STYLE_PROMPT: str | None = None
     ORION_SPEECH_GENERATION_REMOTE_ESTIMATED_COST: Decimal | None = None
     ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST: Decimal | None = None
     ORION_SPEECH_GENERATION_MAX_REQUESTS_PER_JOB: int = 1
@@ -315,6 +316,7 @@ class Settings(BaseSettings):
     @field_validator(
         "ORION_SPEECH_GENERATION_REMOTE_MODEL",
         "ORION_SPEECH_GENERATION_REMOTE_VOICE",
+        "ORION_SPEECH_GENERATION_STYLE_PROMPT",
         "ORION_SPEECH_GENERATION_REMOTE_ESTIMATED_COST",
         "ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST",
         mode="before",
@@ -655,9 +657,10 @@ class Settings(BaseSettings):
             or self.ORION_SPEECH_GENERATION_REMOTE_VOICE is not None
             or self.ORION_SPEECH_GENERATION_REMOTE_ESTIMATED_COST is not None
             or self.ORION_SPEECH_GENERATION_REMOTE_MAX_ESTIMATED_COST is not None
+            or self.ORION_SPEECH_GENERATION_STYLE_PROMPT is not None
         ):
             raise ValueError(
-                "disabled remote speech cannot configure billing, model, voice, or cost"
+                "disabled remote speech cannot configure billing, model, voice, style, or cost"
             )
         fitting_enabled = self.ORION_NARRATION_FITTING_PROVIDER == "openrouter"
         if not 0 <= self.ORION_NARRATION_FITTING_MAX_ATTEMPTS <= 5:

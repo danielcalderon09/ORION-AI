@@ -44,12 +44,13 @@ def _request():
     return speech_requests(source_script(), configuration)[0]
 
 
-def _provider(transport, *, store=None, maximum=1, max_bytes=200_000):
+def _provider(transport, *, store=None, maximum=1, max_bytes=200_000, style_prompt=None):
     client = httpx.AsyncClient(transport=transport)
     return OpenRouterSpeechGenerationProvider(
         api_key="fake-key-never-real",
         model="hexgrad/kokoro-82m",
         voice="configured-spanish-voice",
+        style_prompt=style_prompt,
         estimated_cost_usd=Decimal("0.0001"),
         maximum_authorized_cost_usd=Decimal("0.001"),
         allow_billable_requests=True,
@@ -95,6 +96,39 @@ async def test_valid_pcm_becomes_wav_and_retains_safe_generation_id() -> None:
     assert records[0].fresh_submission_permitted is False
     assert records[0].remote_generation_id == "generation_test_1"
     assert "fake-key-never-real" not in records[0].model_dump_json()
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_gemini_style_prompt_is_sent_without_changing_audio_contract() -> None:
+    observed = {}
+
+    def handle(request):
+        observed["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            content=b"\x01\x00" * 4_800,
+            headers={"content-type": "audio/pcm"},
+        )
+
+    provider = OpenRouterSpeechGenerationProvider(
+        api_key="fake-key-never-real",
+        model="google/gemini-3.1-flash-tts-preview",
+        voice="Kore",
+        style_prompt="Spanish Latin American narrator; natural and cinematic.",
+        estimated_cost_usd=Decimal("0.0001"),
+        maximum_authorized_cost_usd=Decimal("0.001"),
+        allow_billable_requests=True,
+        remote_job_store=InMemoryRemoteSpeechJobStore(),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+        owns_client=True,
+    )
+    request = _request()
+    result = await provider.generate(request)
+    assert "Spanish Latin American narrator" in observed["payload"]["input"]
+    assert "Hola, mundo." in observed["payload"]["input"]
+    assert result.audio.sample_rate_hz == 24_000
+    assert result.audio.channel_count == 1
     await provider.close()
 
 

@@ -53,6 +53,7 @@ class SpeechRemotePreparationConfiguration(ContractModel):
     remote_provider: Literal["disabled", "openrouter"] = "disabled"
     remote_model: str | None = Field(default=None, min_length=1, max_length=300)
     remote_voice: str | None = Field(default=None, min_length=1, max_length=200)
+    style_prompt: str | None = Field(default=None, min_length=1, max_length=2_000)
     maximum_estimated_cost: Decimal | None = Field(
         default=None,
         gt=0,
@@ -87,6 +88,8 @@ class SpeechRemotePreparationConfiguration(ContractModel):
                 raise ValueError("disabled remote speech cannot authorize billing")
             if self.remote_model is not None or self.remote_voice is not None:
                 raise ValueError("disabled remote speech cannot select a model or voice")
+            if self.style_prompt is not None:
+                raise ValueError("disabled remote speech cannot configure a style prompt")
             if self.maximum_estimated_cost is not None or self.estimated_cost is not None:
                 raise ValueError("disabled remote speech cannot authorize a cost")
             return self
