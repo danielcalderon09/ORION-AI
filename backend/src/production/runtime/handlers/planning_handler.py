@@ -17,6 +17,7 @@ from backend.src.production.domain.enums import (
     ProductionStage,
 )
 from backend.src.production.planning.artifact_writer import PlanningArtifactWriter
+from backend.src.production.planning.content_intent import extract_content_intent
 from backend.src.production.planning.exceptions import (
     PlanningProviderAuthenticationError,
     PlanningProviderConfigurationError,
@@ -65,7 +66,10 @@ class PlanningHandler:
         try:
             request = self._request(command, context)
             response = await self._provider.generate_plan(request)
-            written = await self._writer.write_plan(context=context, plan=response.plan)
+            plan = response.plan.model_copy(
+                update={"explicit_narration": request.explicit_narration}
+            )
+            written = await self._writer.write_plan(context=context, plan=plan)
         except (
             PlanningProviderTimeoutError,
             PlanningProviderRateLimitError,
@@ -208,6 +212,7 @@ class PlanningHandler:
             aspect_ratio=configuration.aspect_ratio,
             correlation_id=context.correlation_id,
             attempt_number=command.attempt_number,
+            explicit_narration=extract_content_intent(context.job_prompt).explicit_narration,
         )
 
     def _failure(

@@ -73,6 +73,7 @@ class ProductionPlan(ContractModel):
     aspect_ratio: SupportedAspectRatio
     visual_style: str = Field(min_length=1, max_length=200)
     narrative_style: str = Field(min_length=1, max_length=200)
+    explicit_narration: str | None = Field(default=None, max_length=6_000)
     scenes: tuple[ProductionScenePlan, ...] = Field(min_length=1, max_length=50)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

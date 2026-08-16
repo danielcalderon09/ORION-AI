@@ -23,6 +23,7 @@ class PlanningProviderRequest(ContractModel):
     aspect_ratio: SupportedAspectRatio
     correlation_id: UUID
     attempt_number: int = Field(ge=1)
+    explicit_narration: str | None = Field(default=None, max_length=6_000)
 
 
 class PlanningProviderResponse(ContractModel):

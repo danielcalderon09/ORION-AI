@@ -1,5 +1,6 @@
 """Deterministic no-network ScriptingProvider used by default."""
 
+from backend.src.production.planning.content_intent import split_explicit_narration
 from backend.src.production.scripting.duration_policy import (
     allocate_narration_scene_word_budgets,
     narration_prompt_word_count_bounds,
@@ -33,14 +34,23 @@ class SimulatedScriptingProvider:
             scene_count=len(request.plan.scenes),
             maximum_total_words=maximum_total_words,
         )
+        explicit_chunks = (
+            split_explicit_narration(request.plan.explicit_narration, len(request.plan.scenes))
+            if request.plan.explicit_narration
+            else None
+        )
         scenes = tuple(
             ProductionScriptScene(
                 scene_number=index,
                 source_scene_number=source.scene_number,
                 heading=source.title,
-                narration=self._narration(
-                    source.narration,
-                    min(configuration.max_words_per_scene, scene_word_budgets[index - 1]),
+                narration=(
+                    explicit_chunks[index - 1]
+                    if explicit_chunks is not None
+                    else self._narration(
+                        source.narration,
+                        min(configuration.max_words_per_scene, scene_word_budgets[index - 1]),
+                    )
                 ),
                 estimated_duration_seconds=source.estimated_duration_seconds,
                 delivery_style=f"{configuration.tone}; {configuration.narration_density}",

@@ -1,5 +1,6 @@
 """Deterministic no-network PlanningProvider used by default."""
 
+from backend.src.production.planning.content_intent import split_explicit_narration
 from backend.src.production.planning.duration_allocation import (
     SceneDurationInput,
     allocate_scene_durations,
@@ -23,6 +24,8 @@ class SimulatedPlanningProvider:
         narrations = tuple(
             f"Narration for scene {index} about {short_topic}." for index in range(1, count + 1)
         )
+        if request.explicit_narration:
+            narrations = split_explicit_narration(request.explicit_narration, count)
         allocations = allocate_scene_durations(
             target_duration_ms=round(request.target_duration_seconds * 1_000),
             scenes=tuple(
@@ -62,6 +65,7 @@ class SimulatedPlanningProvider:
             aspect_ratio=request.aspect_ratio,
             visual_style=config.visual_style,
             narrative_style=config.narrative_style,
+            explicit_narration=request.explicit_narration,
             scenes=scenes,
             metadata={"simulated": True},
         )

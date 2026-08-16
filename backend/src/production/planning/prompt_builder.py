@@ -37,7 +37,14 @@ class PlanningPromptBuilder:
         configuration = request.configuration.model_dump(mode="json")
         user_payload = {
             "schema_version": "1.0.0",
-            "original_prompt": request.prompt,
+            "subject_content": request.explicit_narration or request.prompt,
+            "production_instructions": request.prompt,
+            "content_intent": {
+                "explicit_narration": request.explicit_narration,
+                "narration_authority": (
+                    "user_supplied" if request.explicit_narration else "model_generated"
+                ),
+            },
             "configuration": configuration,
             "target_duration_seconds": request.target_duration_seconds,
             "language": request.language,
@@ -48,7 +55,11 @@ class PlanningPromptBuilder:
             "the supplied production_plan schema. Do not emit markdown, HTML, shell "
             "commands, local paths, credentials, or commentary outside JSON. Scene numbers "
             "must start at 1 and be consecutive; scene durations must sum exactly to the "
-            "target duration."
+            "target duration. Separate audience-facing narrative content from production "
+            "instructions. Timing, format, scene count, camera, and visual style are not "
+            "spoken narration. If content_intent.explicit_narration is non-null, preserve "
+            "its meaning as the authoritative audience narration and copy it to "
+            "explicit_narration."
         )
         response_schema = self._strict_schema(ProductionPlan.model_json_schema())
         if not isinstance(response_schema, dict):

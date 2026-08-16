@@ -44,6 +44,7 @@ from backend.src.production.scripting.exceptions import (
 from backend.src.production.scripting.models import (
     ProductionScript,
     ensure_narrative_progression,
+    preserve_explicit_narration,
     validate_narration_repetition,
     validate_script_against_plan,
 )
@@ -401,6 +402,7 @@ class OpenRouterScriptingProvider:
                 failure=_pydantic_validation_failure(exc),
                 cause=exc,
             )
+        script = preserve_explicit_narration(script, request.plan)
         if script.schema_version != "1.0.0":
             await self._raise_structured_output_failure(
                 submitting,

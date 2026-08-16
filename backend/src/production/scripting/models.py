@@ -313,4 +313,33 @@ def validate_script_against_plan(
             abs_tol=0.1,
         ):
             raise ValueError("script scene duration does not match source scene")
+    if plan.explicit_narration is not None:
+        from backend.src.production.planning.content_intent import split_explicit_narration
+
+        expected_narration = split_explicit_narration(
+            plan.explicit_narration, len(script.scenes)
+        )
+        actual_narration = tuple(scene.narration for scene in script.scenes)
+        if tuple(" ".join(value.split()) for value in actual_narration) != tuple(
+            " ".join(value.split()) for value in expected_narration
+        ):
+            raise ValueError("script must preserve explicit user narration")
     return script
+
+
+def preserve_explicit_narration(
+    script: ProductionScript,
+    plan: ProductionPlan,
+) -> ProductionScript:
+    """Apply user-supplied narration after model structuring, without touching visuals."""
+
+    if plan.explicit_narration is None:
+        return script
+    from backend.src.production.planning.content_intent import split_explicit_narration
+
+    chunks = split_explicit_narration(plan.explicit_narration, len(script.scenes))
+    scenes = tuple(
+        scene.model_copy(update={"narration": chunk})
+        for scene, chunk in zip(script.scenes, chunks, strict=True)
+    )
+    return script.model_copy(update={"scenes": scenes})

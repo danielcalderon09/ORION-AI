@@ -5,6 +5,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
+from backend.src.production.planning.content_intent import split_explicit_narration
 from backend.src.production.scripting.configuration import ScriptingConfiguration
 from backend.src.production.scripting.duration_policy import (
     PUNCTUATION_ALLOWANCE_MS,
@@ -117,6 +118,29 @@ def test_prompt_is_deterministic_strict_and_excludes_internal_metadata(
     }
     with pytest.raises(ValueError, match="prompt limit"):
         ScriptingPromptBuilder(max_plan_bytes=10).build(scripting_request)
+
+
+@pytest.mark.asyncio
+async def test_explicit_narration_is_preserved_and_production_instructions_stay_out(
+    scripting_request,
+):
+    supplied = (
+        "Así podrían ser nuestras ciudades en el futuro. Torres inteligentes, "
+        "vehículos autónomos y tecnología conectando cada rincón."
+    )
+    plan = scripting_request.plan.model_copy(update={"explicit_narration": supplied})
+    request = scripting_request.model_copy(update={"plan": plan})
+    prompt = ScriptingPromptBuilder(max_plan_bytes=100_000).build(request)
+    payload = json.loads(prompt.user)
+    assert payload["narration_contract"]["explicit_narration"] == supplied
+    assert "Never mention the prompt" in prompt.system
+    script = (await SimulatedScriptingProvider().generate_script(request)).script
+    expected = split_explicit_narration(supplied, len(plan.scenes))
+    assert tuple(scene.narration for scene in script.scenes) == expected
+    assert "9 segundos" not in " ".join(scene.narration for scene in script.scenes)
+    assert all(scene.visual_intent == source.visual_description for scene, source in zip(
+        script.scenes, plan.scenes, strict=True
+    ))
 
 
 def test_four_second_prompt_exposes_conservative_short_narration_bound(

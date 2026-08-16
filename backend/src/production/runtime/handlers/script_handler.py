@@ -47,6 +47,7 @@ from backend.src.production.scripting.exceptions import (
 )
 from backend.src.production.scripting.models import (
     ensure_narrative_progression,
+    preserve_explicit_narration,
     validate_script_against_plan,
 )
 from backend.src.production.scripting.ports import (
@@ -105,7 +106,8 @@ class ScriptingHandler:
                     target_duration_seconds=source.plan.target_duration_seconds,
                 )
             )
-            script = ensure_narrative_progression(response.script)
+            script = preserve_explicit_narration(response.script, source.plan)
+            script = ensure_narrative_progression(script)
             script = validate_script_against_plan(script, source.plan)
             written = await self._writer.write_script(context=context, script=script)
         except (

@@ -34,7 +34,11 @@ class ScriptingPromptBuilder:
         "or provider commentary. Write in the requested language and preserve one ordered "
         "script scene per source scene, including source_scene_number and exact planned "
         "durations. Narration must be clear, non-empty, subtitle-compatible, naturally paced, "
-        "and suitable for voice-over. Treat the requested duration and supplied word counts as "
+        "and suitable for voice-over. Write only what the audience should hear. Never mention "
+        "the prompt, requested duration, scene count, production instructions, editing, camera "
+        "directions, generation process, or that a video is being created. If the source plan "
+        "contains explicit_narration, preserve that supplied meaning and do not replace it with "
+        "production commentary. Treat the requested duration and supplied word counts as "
         "conciseness guidance, not hard limits: preserve a coherent and complete narration even "
         "when that naturally requires more or less time. Per-scene word counts are guidance, not "
         "mandatory fill targets. Every scene must add "
@@ -78,6 +82,13 @@ class ScriptingPromptBuilder:
         user_payload = {
             "schema_version": "1.0.0",
             "source_plan": plan_payload,
+            "narration_contract": {
+                "explicit_narration": request.plan.explicit_narration,
+                "authority": (
+                    "user_supplied" if request.plan.explicit_narration else "model_generated"
+                ),
+                "spoken_content_only": True,
+            },
             "configuration": request.configuration.model_dump(mode="json"),
             "language": request.language,
             "narration_word_count_guidance": {

@@ -5,6 +5,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
+from backend.src.production.planning.content_intent import extract_content_intent
 from backend.src.production.planning.models import ProductionPlan, ProductionScenePlan
 from backend.src.production.planning.prompt_builder import PlanningPromptBuilder
 from backend.src.production.planning.serialization import serialize_production_plan
@@ -80,3 +81,19 @@ def test_prompt_builder_is_deterministic_and_contains_no_secrets(planning_reques
     assert "api_key" not in first.user.lower()
     assert first.response_schema["additionalProperties"] is False
     assert "maxLength" not in json.dumps(first.response_schema)
+
+
+def test_content_intent_extracts_explicit_narration_without_keyword_filtering() -> None:
+    prompt = (
+        "Crea un Short cinematográfico vertical futurista de aproximadamente 9 segundos "
+        "dividido en 3 escenas.\n\nNarración breve:\n"
+        "'Así podrían ser nuestras ciudades en el futuro. Torres inteligentes, "
+        "vehículos autónomos y tecnología conectando cada rincón.'\n\n"
+        "Escena 1: plano aéreo."
+    )
+    intent = extract_content_intent(prompt)
+    assert intent.narration_authority == "user_supplied"
+    assert intent.explicit_narration == (
+        "Así podrían ser nuestras ciudades en el futuro. Torres inteligentes, "
+        "vehículos autónomos y tecnología conectando cada rincón."
+    )
