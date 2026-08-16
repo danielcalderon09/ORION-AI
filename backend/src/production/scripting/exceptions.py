@@ -89,9 +89,5 @@ class ScriptingProviderContractError(ScriptingProviderError):
     pass
 
 
-class ScriptingProviderDurationPolicyExhaustedError(ScriptingProviderContractError):
-    """The bounded narration correction budget was exhausted."""
-
-
 class ScriptingProviderDurationPolicyBudgetError(ScriptingProviderConfigurationError):
     """A duration-policy retry was blocked by the job billable budget."""

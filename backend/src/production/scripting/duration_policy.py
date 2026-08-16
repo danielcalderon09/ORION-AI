@@ -5,20 +5,13 @@ from __future__ import annotations
 import math
 import re
 import unicodedata
-from dataclasses import dataclass
-from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from decimal import ROUND_FLOOR, Decimal
 
 from pydantic import Field
 
 from backend.src.production.domain.base import ContractModel
-from backend.src.production.domain.duration_resolution import (
-    NarrationDurationAssessment,
-    NarrationDurationStatus,
-    NarrationOccupancyPolicy,
-)
 from backend.src.production.scripting.models import (
     NarrativeRole,
-    ProductionScript,
     adaptive_narrative_roles,
 )
 
@@ -34,7 +27,7 @@ class ScriptingDurationAssessment(ContractModel):
     punctuation_count: int = Field(ge=0)
     estimated_duration_ms: int = Field(gt=0)
     target_duration_ms: int = Field(gt=0)
-    accepted: bool
+    within_target_duration: bool
 
 
 _WORDS = re.compile(r"\b[\wÀ-ÿ]+\b", re.UNICODE)
@@ -55,24 +48,13 @@ _ROLE_WORD_WEIGHTS: dict[NarrativeRole, float] = {
 }
 
 
-@dataclass(frozen=True, slots=True)
-class NarrationCompressionWordBand:
-    """Deterministic occupancy window for one bounded compression pass."""
-
-    minimum_duration_ms: int
-    ideal_duration_ms: int
-    maximum_duration_ms: int
-    minimum_total_words: int
-    maximum_total_words: int
-
-
 def narration_word_count_bounds(
     *,
     target_duration_seconds: float,
     scene_count: int,
     reading_speed_words_per_minute: int,
 ) -> tuple[int, int]:
-    """Return the exact total-narration bounds enforced for a script request."""
+    """Return deterministic word-count guidance for a script request."""
 
     if not 4 <= target_duration_seconds <= 60:
         raise ValueError("OpenRouter scripting supports local durations from 4 to 60 seconds")
@@ -161,197 +143,10 @@ def narration_prompt_word_count_bounds(
     return minimum, minimum
 
 
-def narration_compression_word_budget(
-    assessment: ScriptingDurationAssessment,
-    *,
-    scene_count: int,
-) -> int:
-    """Scale actual narration to target while retaining prompt punctuation headroom."""
-
-    minimum, theoretical_maximum = narration_word_count_bounds(
-        target_duration_seconds=assessment.target_duration_seconds,
-        scene_count=scene_count,
-        reading_speed_words_per_minute=assessment.reading_speed_words_per_minute,
-    )
-    _, conservative_maximum = narration_prompt_word_count_bounds(
-        target_duration_seconds=assessment.target_duration_seconds,
-        scene_count=scene_count,
-        reading_speed_words_per_minute=assessment.reading_speed_words_per_minute,
-    )
-    proportional_maximum = math.floor(
-        assessment.narration_word_count
-        * assessment.target_duration_ms
-        / assessment.estimated_duration_ms
-    )
-    headroom_adjusted = math.floor(
-        proportional_maximum * conservative_maximum / theoretical_maximum
-    )
-    strict_maximum = (
-        conservative_maximum - 1 if not assessment.accepted else conservative_maximum
-    )
-    return max(minimum, min(strict_maximum, headroom_adjusted))
-
-
-def narration_compression_word_band(
-    assessment: ScriptingDurationAssessment,
-    *,
-    scene_count: int,
-    occupancy_policy: NarrationOccupancyPolicy | None = None,
-) -> NarrationCompressionWordBand:
-    """Bound compression between minimum and soft-maximum occupancy.
-
-    The lower word bound reaches minimum occupancy even with no punctuation.
-    The upper bound retains the existing proportional compression cap and is
-    reduced, if necessary, to reserve deterministic punctuation headroom below
-    the soft maximum. Final duration-policy validation remains authoritative.
-    """
-
-    policy = occupancy_policy or NarrationOccupancyPolicy()
-    minimum_duration_ms = policy.duration_for_ratio(
-        assessment.target_duration_ms,
-        policy.minimum_occupancy_ratio,
-    )
-    ideal_duration_ms = policy.duration_for_ratio(
-        assessment.target_duration_ms,
-        policy.ideal_occupancy_ratio,
-    )
-    maximum_duration_ms = policy.duration_for_ratio(
-        assessment.target_duration_ms,
-        policy.soft_maximum_occupancy_ratio,
-    )
-    minimum_total_words = max(
-        scene_count * 2,
-        int(
-            (
-                Decimal(minimum_duration_ms * assessment.reading_speed_words_per_minute)
-                / Decimal(60_000)
-            ).to_integral_value(rounding=ROUND_CEILING)
-        ),
-    )
-    maximum_total_words = max(
-        minimum_total_words,
-        narration_compression_word_budget(
-            assessment,
-            scene_count=scene_count,
-        ),
-    )
-    while maximum_total_words >= minimum_total_words:
-        reserved_punctuation = max(
-            scene_count,
-            math.ceil(maximum_total_words / PROMPT_WORDS_PER_PUNCTUATION),
-        )
-        estimated_duration_ms = int(
-            (
-                Decimal(maximum_total_words * 60_000)
-                / Decimal(assessment.reading_speed_words_per_minute)
-            ).to_integral_value(rounding=ROUND_FLOOR)
-        ) + reserved_punctuation * PUNCTUATION_ALLOWANCE_MS
-        if estimated_duration_ms <= maximum_duration_ms:
-            break
-        maximum_total_words -= 1
-    if maximum_total_words < minimum_total_words:
-        raise ValueError("compression occupancy band cannot represent every scene safely")
-    return NarrationCompressionWordBand(
-        minimum_duration_ms=minimum_duration_ms,
-        ideal_duration_ms=ideal_duration_ms,
-        maximum_duration_ms=maximum_duration_ms,
-        minimum_total_words=minimum_total_words,
-        maximum_total_words=maximum_total_words,
-    )
-
-
-def narration_expansion_word_budget(
-    assessment: ScriptingDurationAssessment,
-    *,
-    scene_count: int,
-    occupancy_policy: NarrationOccupancyPolicy | None = None,
-) -> int:
-    """Target ideal occupancy with the same deterministic punctuation headroom."""
-
-    policy = occupancy_policy or NarrationOccupancyPolicy()
-    _, conservative_maximum = narration_prompt_word_count_bounds(
-        target_duration_seconds=assessment.target_duration_seconds,
-        scene_count=scene_count,
-        reading_speed_words_per_minute=assessment.reading_speed_words_per_minute,
-    )
-    ideal_duration_ms = policy.duration_for_ratio(
-        assessment.target_duration_ms, policy.ideal_occupancy_ratio
-    )
-    candidate = math.floor(
-        ideal_duration_ms * assessment.reading_speed_words_per_minute / 60_000
-    )
-    while candidate > assessment.narration_word_count:
-        reserved_punctuation = max(
-            scene_count,
-            math.ceil(candidate / PROMPT_WORDS_PER_PUNCTUATION),
-        )
-        estimated_duration_ms = int(
-            (
-                Decimal(candidate * 60_000)
-                / Decimal(assessment.reading_speed_words_per_minute)
-            ).to_integral_value(rounding=ROUND_FLOOR)
-        ) + reserved_punctuation * PUNCTUATION_ALLOWANCE_MS
-        if estimated_duration_ms <= ideal_duration_ms:
-            break
-        candidate -= 1
-    return min(conservative_maximum, max(assessment.narration_word_count + 1, candidate))
-
-
-def assess_scripting_occupancy(
-    assessment: ScriptingDurationAssessment,
-    *,
-    occupancy_policy: NarrationOccupancyPolicy | None = None,
-    calibration_ratio: Decimal = Decimal("1"),
-) -> NarrationDurationAssessment:
-    """Classify the deterministic estimate before any speech request."""
-
-    return (occupancy_policy or NarrationOccupancyPolicy()).assess(
-        narration_duration_ms=assessment.estimated_duration_ms,
-        target_duration_ms=assessment.target_duration_ms,
-        maximum_allowed_duration_ms=assessment.target_duration_ms,
-        calibration_ratio=calibration_ratio,
-    )
-
-
 def narration_word_count(value: str) -> int:
     """Count narration words with the authoritative tokenizer."""
 
     return len(_WORDS.findall(value))
-
-
-def validate_openrouter_duration_policy(
-    script: ProductionScript,
-    *,
-    reading_speed_words_per_minute: int,
-) -> ScriptingDurationAssessment:
-    """Reject clearly unusable narration without pretending to predict exact speech timing."""
-
-    assessment = assess_narration_duration(
-        narrations=tuple(scene.narration for scene in script.scenes),
-        target_duration_seconds=script.target_duration_seconds,
-        reading_speed_words_per_minute=reading_speed_words_per_minute,
-    )
-    counts = tuple(len(_WORDS.findall(scene.narration)) for scene in script.scenes)
-    if any(count < 2 for count in counts):
-        raise ValueError("every script scene requires meaningful narration")
-    minimum, maximum = narration_word_count_bounds(
-        target_duration_seconds=script.target_duration_seconds,
-        scene_count=len(script.scenes),
-        reading_speed_words_per_minute=reading_speed_words_per_minute,
-    )
-    total = assessment.narration_word_count
-    if total < minimum:
-        raise ValueError("script narration is insufficient for the requested duration")
-    if total > maximum:
-        raise ValueError("script narration exceeds the requested duration policy")
-    if not assessment.accepted:
-        raise ValueError("script narration exceeds the requested duration policy")
-    occupancy = assess_scripting_occupancy(assessment)
-    if occupancy.status is NarrationDurationStatus.TOO_SHORT:
-        raise ValueError("script narration is insufficient for the target occupancy")
-    return assessment.model_copy(
-        update={"minimum_word_count": minimum, "maximum_word_count": maximum}
-    )
 
 
 def assess_narration_duration(
@@ -397,22 +192,16 @@ def assess_narration_duration(
         punctuation_count=punctuation_count,
         estimated_duration_ms=estimated_duration_ms,
         target_duration_ms=target_duration_ms,
-        accepted=estimated_duration_ms <= target_duration_ms,
+        within_target_duration=estimated_duration_ms <= target_duration_ms,
     )
 
 
 __all__ = [
-    "NarrationCompressionWordBand",
     "ScriptingDurationAssessment",
     "allocate_narration_scene_word_budgets",
-    "assess_scripting_occupancy",
     "assess_narration_duration",
-    "narration_compression_word_budget",
-    "narration_compression_word_band",
-    "narration_expansion_word_budget",
     "narration_prompt_word_count_bounds",
     "narration_scene_word_budgets",
     "narration_word_count",
     "narration_word_count_bounds",
-    "validate_openrouter_duration_policy",
 ]

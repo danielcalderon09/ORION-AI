@@ -54,7 +54,6 @@ class Settings(BaseSettings):
     ORION_SCRIPTING_MAX_ESTIMATED_COST_USD: Decimal | None = None
     ORION_SCRIPTING_MAX_ESTIMATED_JOB_COST_USD: Decimal | None = None
     ORION_SCRIPTING_MAX_REQUESTS_PER_JOB: int = 2
-    ORION_SCRIPTING_MAX_DURATION_POLICY_RETRIES: int = 1
     ORION_SCRIPTING_TIMEOUT_SECONDS: float = 120.0
     ORION_SCRIPTING_MAX_TRANSPORT_ATTEMPTS: Literal[1] = 1
     ORION_SCRIPTING_RETRY_BASE_DELAY_SECONDS: float = 0.25
@@ -468,8 +467,6 @@ class Settings(BaseSettings):
             raise ValueError("OpenRouter scripting estimate exceeds authorization")
         if not 1 <= self.ORION_SCRIPTING_MAX_REQUESTS_PER_JOB <= 2:
             raise ValueError("ORION_SCRIPTING_MAX_REQUESTS_PER_JOB must be 1 or 2")
-        if not 0 <= self.ORION_SCRIPTING_MAX_DURATION_POLICY_RETRIES <= 1:
-            raise ValueError("ORION_SCRIPTING_MAX_DURATION_POLICY_RETRIES must be 0 or 1")
         if not 1 <= self.ORION_SCENE_PLANNING_MAX_TRANSPORT_ATTEMPTS <= 5:
             raise ValueError("ORION_SCENE_PLANNING_MAX_TRANSPORT_ATTEMPTS must be between 1 and 5")
         if not 1 <= self.ORION_SCENE_PLANNING_MAX_OUTPUT_TOKENS <= 100_000:

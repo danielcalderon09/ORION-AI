@@ -363,58 +363,60 @@ async def test_scene_count_mismatch_is_classified(scripting_request) -> None:
 
 
 @pytest.mark.asyncio
-async def test_duration_policy_error_is_classified(scripting_request) -> None:
+async def test_over_target_narration_is_accepted_as_duration_guidance(scripting_request) -> None:
     payload = await _valid_script(scripting_request)
-    for scene in payload["scenes"]:
-        scene["narration"] = " ".join("word" for _ in range(100))
-    provider, store = _provider(
-        lambda request: httpx.Response(200, json=_envelope(payload), request=request)
-    )
-    with pytest.raises(ScriptingProviderContractError):
-        await provider.generate_script(scripting_request)
+    for scene_index, scene in enumerate(payload["scenes"]):
+        scene["narration"] = " ".join(
+            f"term{scene_index}_{word_index}" for word_index in range(100)
+        )
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json=_envelope(payload), request=request)
+
+    provider, store = _provider(handler)
+    response = await provider.generate_script(scripting_request)
     record = _record(store)
-    assert record.validation_error_code is OpenRouterScriptingValidationErrorCode.DURATION_POLICY
-    assert record.validation_error_path == "scenes"
-    assert record.validation_error_message == (
-        "script narration exceeds the requested duration policy"
-    )
+    assert response.script.scenes[0].narration == payload["scenes"][0]["narration"]
+    assert record.status is OpenRouterScriptingRequestStatus.COMPLETED
+    assert record.validation_error_code is None
     assert record.metadata == {
-        "raw_response_persisted": False,
         "request_purpose": "production_script",
-        "word_count": 200,
-        "punctuation_count": 0,
-        "estimated_duration_ms": 80_000,
-        "requested_duration_ms": 20_000,
-        "excess_duration_ms": 60_000,
-        "duration_policy_retry_number": 0,
-        "effective_word_budget": 47,
+        "duration_policy": "target_duration_guidance_v1",
+        "narration_word_count": 200,
+        "narration_punctuation_count": 0,
+        "estimated_narration_duration_ms": 80_000,
+        "target_narration_duration_ms": 20_000,
+        "within_target_duration": False,
     }
-    assert record.script is None
+    assert record.script is not None
+    assert calls == 1
     await provider.close()
 
 
 @pytest.mark.asyncio
-async def test_observed_four_second_overlong_output_is_rejected_durably(
+async def test_observed_four_second_overlong_output_is_accepted_without_truncation(
     scripting_request,
 ) -> None:
     short_request = _four_second_request(scripting_request)
     payload = await _valid_script(short_request)
-    payload["scenes"][0]["narration"] = " ".join("word" for _ in range(17))
+    payload["scenes"][0]["narration"] = " ".join(
+        f"term{word_index}" for word_index in range(17)
+    )
     provider, store = _provider(
         lambda request: httpx.Response(200, json=_envelope(payload), request=request)
     )
 
-    with pytest.raises(ScriptingProviderContractError):
-        await provider.generate_script(short_request)
+    response = await provider.generate_script(short_request)
 
     record = _record(store)
-    assert record.status is OpenRouterScriptingRequestStatus.FAILED
+    assert record.status is OpenRouterScriptingRequestStatus.COMPLETED
     assert record.fresh_submission_permitted is False
-    assert record.validation_error_code is OpenRouterScriptingValidationErrorCode.DURATION_POLICY
-    assert record.validation_error_path == "scenes"
-    assert record.validation_error_message == (
-        "script narration exceeds the requested duration policy"
-    )
+    assert record.validation_error_code is None
+    assert response.script.scenes[0].narration == payload["scenes"][0]["narration"]
+    assert record.metadata["within_target_duration"] is False
     await provider.close()
 
 

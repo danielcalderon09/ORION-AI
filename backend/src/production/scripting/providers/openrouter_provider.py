@@ -10,12 +10,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from time import monotonic
-from typing import Literal, NoReturn
+from typing import NoReturn
 
 import httpx
 from pydantic import ValidationError
 
-from backend.src.production.domain.duration_resolution import NarrationDurationStatus
 from backend.src.production.infrastructure.openai_compatible import (
     OpenAICompatibleAuthenticationError,
     OpenAICompatibleProtocolError,
@@ -29,21 +28,13 @@ from backend.src.production.infrastructure.openai_compatible import (
     load_strict_json_object,
 )
 from backend.src.production.scripting.duration_policy import (
-    ScriptingDurationAssessment,
-    allocate_narration_scene_word_budgets,
     assess_narration_duration,
-    assess_scripting_occupancy,
-    narration_compression_word_band,
-    narration_expansion_word_budget,
-    narration_prompt_word_count_bounds,
-    validate_openrouter_duration_policy,
 )
 from backend.src.production.scripting.exceptions import (
     ScriptingProviderAuthenticationError,
     ScriptingProviderConfigurationError,
     ScriptingProviderContractError,
     ScriptingProviderDurationPolicyBudgetError,
-    ScriptingProviderDurationPolicyExhaustedError,
     ScriptingProviderRateLimitError,
     ScriptingProviderResponseError,
     ScriptingProviderTimeoutError,
@@ -55,22 +46,6 @@ from backend.src.production.scripting.models import (
     ensure_narrative_progression,
     validate_narration_repetition,
     validate_script_against_plan,
-)
-from backend.src.production.scripting.narration_compression import (
-    NarrationCompressionContractError,
-    NarrationCompressionFailureCode,
-    NarrationCompressionRequest,
-    merge_narration_compression,
-    narration_compression_request,
-    parse_narration_compression_response,
-)
-from backend.src.production.scripting.narration_expansion import (
-    NarrationExpansionContractError,
-    NarrationExpansionFailureCode,
-    NarrationExpansionRequest,
-    merge_narration_expansion,
-    narration_expansion_request,
-    parse_narration_expansion_response,
 )
 from backend.src.production.scripting.openrouter_billable_gate import (
     OpenRouterScriptingBillableGate,
@@ -117,14 +92,6 @@ class _ValidationFailure:
     message: str
 
 
-class _DurationPolicyRejectedError(ScriptingProviderContractError):
-    """Internal marker for the only contract failure eligible for one retry."""
-
-    def __init__(self, message: str, *, script: ProductionScript) -> None:
-        super().__init__(message)
-        self.script = script
-
-
 class OpenRouterScriptingProvider:
     """Submit at most once after a durable checkpoint and strict local validation."""
 
@@ -143,7 +110,6 @@ class OpenRouterScriptingProvider:
         max_output_tokens: int = 8192,
         temperature: float = 0.2,
         max_response_bytes: int = 2_000_000,
-        max_duration_policy_retries: int = 1,
         max_requests_per_job: int = 2,
         maximum_authorized_job_cost_usd: Decimal | None = None,
         http_referer: str | None = None,
@@ -170,10 +136,6 @@ class OpenRouterScriptingProvider:
         if max_output_tokens < 1 or not 0 <= temperature <= 2:
             raise ScriptingProviderConfigurationError(
                 "scripting output token or temperature setting is invalid"
-            )
-        if not 0 <= max_duration_policy_retries <= 1:
-            raise ScriptingProviderConfigurationError(
-                "scripting duration-policy retries must be 0 or 1"
             )
         if not 1 <= max_requests_per_job <= 2:
             raise ScriptingProviderConfigurationError(
@@ -222,127 +184,21 @@ class OpenRouterScriptingProvider:
         self._gate = gate or OpenRouterScriptingBillableGate()
         self._max_output_tokens = max_output_tokens
         self._temperature = temperature
-        self._max_duration_policy_retries = max_duration_policy_retries
         self._max_requests_per_job = max_requests_per_job
         self._maximum_authorized_job_cost_usd = maximum_authorized_job_cost_usd
         self._monotonic = monotonic_clock
         self._clock = clock
 
     async def generate_script(self, request: ScriptingProviderRequest) -> ScriptingProviderResponse:
-        previous_script: ProductionScript | None = None
-        for retry_number in range(self._max_duration_policy_retries + 1):
-            if retry_number > 0:
-                await self._authorize_duration_retry(request)
-            try:
-                return await self._generate_script_once(
-                    request,
-                    duration_retry_number=retry_number,
-                    previous_script=previous_script,
-                )
-            except _DurationPolicyRejectedError as exc:
-                previous_script = exc.script
-                if retry_number >= self._max_duration_policy_retries:
-                    raise ScriptingProviderDurationPolicyExhaustedError(
-                        "scripting duration-policy retry budget is exhausted"
-                    ) from exc
-        raise AssertionError("scripting duration retry loop did not return")
+        return await self._generate_script_once(request)
 
     async def _generate_script_once(
         self,
         request: ScriptingProviderRequest,
-        *,
-        duration_retry_number: int,
-        previous_script: ProductionScript | None,
     ) -> ScriptingProviderResponse:
-        request = request.model_copy(
-            update={"attempt_number": request.attempt_number + duration_retry_number}
-        )
-        compression_request: NarrationCompressionRequest | None = None
-        compression_band = None
-        expansion_request: NarrationExpansionRequest | None = None
-        source_assessment: ScriptingDurationAssessment | None = None
-        request_purpose: Literal[
-            "production_script", "narration_compression", "narration_expansion"
-        ] = "production_script"
-        source_script_sha256: str | None = None
-        _, effective_word_budget = narration_prompt_word_count_bounds(
-            target_duration_seconds=request.target_duration_seconds,
-            scene_count=len(request.plan.scenes),
-            reading_speed_words_per_minute=(
-                request.configuration.reading_speed_words_per_minute
-            ),
-        )
-        if duration_retry_number > 0:
-            assert previous_script is not None
-            source_assessment = assess_narration_duration(
-                narrations=tuple(scene.narration for scene in previous_script.scenes),
-                target_duration_seconds=request.target_duration_seconds,
-                reading_speed_words_per_minute=(
-                    request.configuration.reading_speed_words_per_minute
-                ),
-            )
-            source_occupancy = assess_scripting_occupancy(source_assessment)
-            if source_occupancy.status is NarrationDurationStatus.TOO_SHORT:
-                request_purpose = "narration_expansion"
-                effective_word_budget = narration_expansion_word_budget(
-                    source_assessment,
-                    scene_count=len(previous_script.scenes),
-                )
-            else:
-                request_purpose = "narration_compression"
-                compression_band = narration_compression_word_band(
-                    source_assessment,
-                    scene_count=len(previous_script.scenes),
-                )
-                effective_word_budget = compression_band.maximum_total_words
-            scene_word_budgets = allocate_narration_scene_word_budgets(
-                scene_count=len(previous_script.scenes),
-                maximum_total_words=effective_word_budget,
-            )
-            if request_purpose == "narration_expansion":
-                expansion_request = narration_expansion_request(
-                    job_id=request.job_id,
-                    source_script=previous_script,
-                    assessment=source_assessment,
-                    minimum_duration_ms=source_occupancy.minimum_duration_ms,
-                    ideal_duration_ms=source_occupancy.ideal_duration_ms,
-                    maximum_total_words=effective_word_budget,
-                    scene_word_budgets=scene_word_budgets,
-                )
-            else:
-                assert compression_band is not None
-                scene_minimum_word_budgets = allocate_narration_scene_word_budgets(
-                    scene_count=len(previous_script.scenes),
-                    maximum_total_words=compression_band.minimum_total_words,
-                )
-                compression_request = narration_compression_request(
-                    job_id=request.job_id,
-                    source_script=previous_script,
-                    assessment=source_assessment,
-                    minimum_duration_ms=compression_band.minimum_duration_ms,
-                    ideal_duration_ms=compression_band.ideal_duration_ms,
-                    maximum_duration_ms=compression_band.maximum_duration_ms,
-                    minimum_total_words=compression_band.minimum_total_words,
-                    maximum_total_words=effective_word_budget,
-                    scene_minimum_word_budgets=scene_minimum_word_budgets,
-                    scene_maximum_word_budgets=scene_word_budgets,
-                )
-            source_script_sha256 = hashlib.sha256(
-                serialize_production_script(previous_script)
-            ).hexdigest()
         try:
-            prompt = (
-                self._prompt_builder.build_compression(compression_request)
-                if compression_request is not None
-                else self._prompt_builder.build_expansion(expansion_request)
-                if expansion_request is not None
-                else self._prompt_builder.build(request)
-            )
-            fingerprint_input = self._fingerprint_input(
-                request,
-                request_purpose=request_purpose,
-                source_script_sha256=source_script_sha256,
-            )
+            prompt = self._prompt_builder.build(request)
+            fingerprint_input = self._fingerprint_input(request)
             fingerprint = openrouter_scripting_request_fingerprint(fingerprint_input)
         except (TypeError, ValueError) as exc:
             raise ScriptingProviderContractError(
@@ -352,15 +208,6 @@ class OpenRouterScriptingProvider:
             request=request,
             fingerprint_input=fingerprint_input,
             fingerprint=fingerprint,
-            duration_retry_number=duration_retry_number,
-            request_purpose=request_purpose,
-            metadata_update=(
-                _compression_source_metadata(compression_request)
-                if compression_request is not None
-                else _expansion_source_metadata(expansion_request)
-                if expansion_request is not None
-                else None
-            ),
         )
         if record.status is OpenRouterScriptingRequestStatus.COMPLETED:
             return self._response_from_record(record, recovered=True)
@@ -417,7 +264,7 @@ class OpenRouterScriptingProvider:
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": request_purpose,
+                    "name": "production_script",
                     "strict": True,
                     "schema": prompt.response_schema,
                 },
@@ -545,65 +392,15 @@ class OpenRouterScriptingProvider:
                 ),
                 cause=exc,
             )
-        if compression_request is None and expansion_request is None:
-            try:
-                script = ProductionScript.model_validate(script_payload)
-            except ValidationError as exc:
-                await self._raise_structured_output_failure(
-                    submitting,
-                    response_metadata=response_metadata,
-                    failure=_pydantic_validation_failure(exc),
-                    cause=exc,
-                )
-        elif compression_request is not None:
-            assert previous_script is not None
-            try:
-                compression = parse_narration_compression_response(
-                    script_payload,
-                    request=compression_request,
-                )
-                script = merge_narration_compression(
-                    source_script=previous_script,
-                    request=compression_request,
-                    response=compression,
-                )
-            except NarrationCompressionContractError as exc:
-                await self._raise_structured_output_failure(
-                    submitting,
-                    response_metadata=response_metadata,
-                    failure=_ValidationFailure(
-                        code=OpenRouterScriptingValidationErrorCode(exc.code.value),
-                        path=_compression_failure_path(exc),
-                        message=exc.safe_message,
-                    ),
-                    cause=exc,
-                    metadata_update=exc.safe_metadata,
-                )
-        else:
-            assert previous_script is not None
-            assert expansion_request is not None
-            try:
-                expansion = parse_narration_expansion_response(
-                    script_payload,
-                    request=expansion_request,
-                )
-                script = merge_narration_expansion(
-                    source_script=previous_script,
-                    request=expansion_request,
-                    response=expansion,
-                )
-            except NarrationExpansionContractError as exc:
-                await self._raise_structured_output_failure(
-                    submitting,
-                    response_metadata=response_metadata,
-                    failure=_ValidationFailure(
-                        code=OpenRouterScriptingValidationErrorCode(exc.code.value),
-                        path=_expansion_failure_path(exc),
-                        message=exc.safe_message,
-                    ),
-                    cause=exc,
-                    metadata_update=exc.safe_metadata,
-                )
+        try:
+            script = ProductionScript.model_validate(script_payload)
+        except ValidationError as exc:
+            await self._raise_structured_output_failure(
+                submitting,
+                response_metadata=response_metadata,
+                failure=_pydantic_validation_failure(exc),
+                cause=exc,
+            )
         if script.schema_version != "1.0.0":
             await self._raise_structured_output_failure(
                 submitting,
@@ -624,40 +421,13 @@ class OpenRouterScriptingProvider:
                 failure=_plan_contract_failure(exc),
                 cause=exc,
             )
-        rejection_assessment = assess_narration_duration(
+        assessment = assess_narration_duration(
             narrations=tuple(scene.narration for scene in script.scenes),
             target_duration_seconds=script.target_duration_seconds,
             reading_speed_words_per_minute=(
                 request.configuration.reading_speed_words_per_minute
             ),
         )
-        try:
-            assessment = validate_openrouter_duration_policy(
-                script,
-                reading_speed_words_per_minute=(
-                    request.configuration.reading_speed_words_per_minute
-                ),
-            )
-        except ValueError as exc:
-            failure = _ValidationFailure(
-                code=OpenRouterScriptingValidationErrorCode.DURATION_POLICY,
-                path="scenes",
-                message=_duration_policy_message(exc),
-            )
-            await self._mark_failed(
-                submitting,
-                "invalid_structured_output",
-                response_metadata=response_metadata,
-                validation_failure=failure,
-                metadata_update=_duration_rejection_metadata(
-                    rejection_assessment,
-                    duration_retry_number=duration_retry_number,
-                    effective_word_budget=effective_word_budget,
-                    source_assessment=source_assessment,
-                    request_purpose=request_purpose,
-                ),
-            )
-            raise _DurationPolicyRejectedError(failure.message, script=script) from exc
         try:
             validate_narration_repetition(script)
         except ValueError as exc:
@@ -687,29 +457,13 @@ class OpenRouterScriptingProvider:
                 "script_sha256": hashlib.sha256(serialize_production_script(script)).hexdigest(),
                 "script": script,
                 "metadata": {
-                    "request_purpose": request_purpose,
-                    "duration_policy": "estimated_speech_duration_v2",
+                    "request_purpose": "production_script",
+                    "duration_policy": "target_duration_guidance_v1",
                     "narration_word_count": assessment.narration_word_count,
                     "narration_punctuation_count": assessment.punctuation_count,
                     "estimated_narration_duration_ms": assessment.estimated_duration_ms,
                     "target_narration_duration_ms": assessment.target_duration_ms,
-                    **(
-                        _compression_result_metadata(
-                            source_assessment=source_assessment,
-                            compression_word_budget=effective_word_budget,
-                            compressed_assessment=assessment,
-                        )
-                        if source_assessment is not None
-                        and request_purpose == "narration_compression"
-                        else _expansion_result_metadata(
-                            source_assessment=source_assessment,
-                            expansion_word_budget=effective_word_budget,
-                            expanded_assessment=assessment,
-                        )
-                        if source_assessment is not None
-                        and request_purpose == "narration_expansion"
-                        else {}
-                    ),
+                    "within_target_duration": assessment.within_target_duration,
                 },
             }
         )
@@ -718,27 +472,6 @@ class OpenRouterScriptingProvider:
 
     async def close(self) -> None:
         await self._transport.close()
-
-    async def _authorize_duration_retry(
-        self,
-        request: ScriptingProviderRequest,
-    ) -> None:
-        records = await self._store.list_for_job(job_id=request.job_id)
-        submitted = tuple(item for item in records if item.submission_started_at is not None)
-        if len(submitted) >= self._max_requests_per_job:
-            raise ScriptingProviderDurationPolicyBudgetError(
-                "scripting duration-policy retry exceeds the job request limit"
-            )
-        assert self._policy.estimated_cost_usd is not None
-        if self._maximum_authorized_job_cost_usd is not None:
-            estimated_total = sum(
-                (item.estimated_cost_usd for item in submitted),
-                self._policy.estimated_cost_usd,
-            )
-            if estimated_total > self._maximum_authorized_job_cost_usd:
-                raise ScriptingProviderDurationPolicyBudgetError(
-                    "scripting duration-policy retry exceeds the job cost limit"
-                )
 
     def _authorize_submission_budget(
         self,
@@ -768,11 +501,6 @@ class OpenRouterScriptingProvider:
         request: ScriptingProviderRequest,
         fingerprint_input: OpenRouterScriptingFingerprintInput,
         fingerprint: str,
-        duration_retry_number: int,
-        request_purpose: Literal[
-            "production_script", "narration_compression", "narration_expansion"
-        ],
-        metadata_update: dict[str, bool | int | str] | None,
     ) -> tuple[
         OpenRouterScriptingRequestRecord,
         tuple[OpenRouterScriptingRequestRecord, ...],
@@ -811,17 +539,8 @@ class OpenRouterScriptingProvider:
         assert self._policy.maximum_authorized_cost_usd is not None
         metadata: dict[str, bool | int | str] = {
             "raw_response_persisted": False,
-            "request_purpose": request_purpose,
+            "request_purpose": "production_script",
         }
-        if duration_retry_number > 0:
-            metadata.update(
-                {
-                    "duration_policy_retry_number": duration_retry_number,
-                    "duration_policy_retry": True,
-                }
-            )
-        if metadata_update is not None:
-            metadata.update(metadata_update)
         prepared = OpenRouterScriptingRequestRecord(
             job_id=request.job_id,
             attempt_number=request.attempt_number,
@@ -846,11 +565,6 @@ class OpenRouterScriptingProvider:
     def _fingerprint_input(
         self,
         request: ScriptingProviderRequest,
-        *,
-        request_purpose: Literal[
-            "production_script", "narration_compression", "narration_expansion"
-        ],
-        source_script_sha256: str | None,
     ) -> OpenRouterScriptingFingerprintInput:
         return OpenRouterScriptingFingerprintInput(
             model=self._model,
@@ -865,13 +579,10 @@ class OpenRouterScriptingProvider:
                 request.configuration.model_dump(mode="json")
             ),
             prompt_template_version=self._prompt_builder.scripting_prompt_version,
-            prompt_template_sha256=self._prompt_builder.template_fingerprint(
-                request_purpose
-            ),
+            prompt_template_sha256=self._prompt_builder.template_fingerprint(),
             temperature=Decimal(str(self._temperature)),
             max_output_tokens=self._max_output_tokens,
-            request_purpose=request_purpose,
-            source_script_sha256=source_script_sha256,
+            request_purpose="production_script",
         )
 
     async def _mark_uncertain(
@@ -1164,140 +875,6 @@ def _plan_contract_failure(error: ValueError) -> _ValidationFailure:
         path=paths.get(message),
         message=message if message in paths else "script does not match production plan",
     )
-
-
-def _duration_policy_message(error: ValueError) -> str:
-    message = str(error)
-    allowed = {
-        "OpenRouter scripting supports local durations from 4 to 60 seconds",
-        "scripting reading speed is outside supported bounds",
-        "every script scene requires meaningful narration",
-        "script narration is insufficient for the requested duration",
-        "script narration is insufficient for the target occupancy",
-        "script narration exceeds the requested duration policy",
-    }
-    return message if message in allowed else "script violates the duration policy"
-
-
-def _duration_rejection_metadata(
-    assessment: ScriptingDurationAssessment,
-    *,
-    duration_retry_number: int,
-    effective_word_budget: int,
-    source_assessment: ScriptingDurationAssessment | None,
-    request_purpose: Literal[
-        "production_script", "narration_compression", "narration_expansion"
-    ],
-) -> dict[str, bool | int | str]:
-    metadata: dict[str, bool | int | str] = {
-        "word_count": assessment.narration_word_count,
-        "punctuation_count": assessment.punctuation_count,
-        "estimated_duration_ms": assessment.estimated_duration_ms,
-        "requested_duration_ms": assessment.target_duration_ms,
-        "excess_duration_ms": max(
-            0,
-            assessment.estimated_duration_ms - assessment.target_duration_ms,
-        ),
-        "duration_policy_retry_number": duration_retry_number,
-        "effective_word_budget": effective_word_budget,
-    }
-    if source_assessment is not None and request_purpose == "narration_compression":
-        metadata.update(
-            _compression_result_metadata(
-                source_assessment=source_assessment,
-                compression_word_budget=effective_word_budget,
-                compressed_assessment=assessment,
-            )
-        )
-    elif source_assessment is not None and request_purpose == "narration_expansion":
-        metadata.update(
-            _expansion_result_metadata(
-                source_assessment=source_assessment,
-                expansion_word_budget=effective_word_budget,
-                expanded_assessment=assessment,
-            )
-        )
-    return metadata
-
-
-def _compression_source_metadata(
-    request: NarrationCompressionRequest,
-) -> dict[str, bool | int | str]:
-    return {
-        "source_word_count": request.source_word_count,
-        "source_punctuation_count": request.source_punctuation_count,
-        "source_estimated_duration_ms": request.source_estimated_duration_ms,
-        "compression_minimum_word_budget": request.minimum_total_words,
-        "compression_word_budget": request.maximum_total_words,
-        "minimum_duration_ms": request.minimum_duration_ms,
-        "ideal_duration_ms": request.ideal_duration_ms,
-        "maximum_duration_ms": request.maximum_duration_ms,
-        "target_duration_ms": request.target_duration_ms,
-    }
-
-
-def _compression_result_metadata(
-    *,
-    source_assessment: ScriptingDurationAssessment,
-    compression_word_budget: int,
-    compressed_assessment: ScriptingDurationAssessment,
-) -> dict[str, bool | int | str]:
-    return {
-        "source_word_count": source_assessment.narration_word_count,
-        "source_punctuation_count": source_assessment.punctuation_count,
-        "source_estimated_duration_ms": source_assessment.estimated_duration_ms,
-        "compression_word_budget": compression_word_budget,
-        "compressed_word_count": compressed_assessment.narration_word_count,
-        "compressed_punctuation_count": compressed_assessment.punctuation_count,
-        "compressed_estimated_duration_ms": compressed_assessment.estimated_duration_ms,
-        "target_duration_ms": compressed_assessment.target_duration_ms,
-    }
-
-
-def _expansion_source_metadata(
-    request: NarrationExpansionRequest,
-) -> dict[str, bool | int | str]:
-    return {
-        "source_word_count": request.source_word_count,
-        "source_punctuation_count": request.source_punctuation_count,
-        "source_estimated_duration_ms": request.source_estimated_duration_ms,
-        "expansion_word_budget": request.maximum_total_words,
-        "minimum_duration_ms": request.minimum_duration_ms,
-        "ideal_duration_ms": request.ideal_duration_ms,
-        "target_duration_ms": request.target_duration_ms,
-    }
-
-
-def _expansion_result_metadata(
-    *,
-    source_assessment: ScriptingDurationAssessment,
-    expansion_word_budget: int,
-    expanded_assessment: ScriptingDurationAssessment,
-) -> dict[str, bool | int | str]:
-    return {
-        "source_word_count": source_assessment.narration_word_count,
-        "source_punctuation_count": source_assessment.punctuation_count,
-        "source_estimated_duration_ms": source_assessment.estimated_duration_ms,
-        "expansion_word_budget": expansion_word_budget,
-        "expanded_word_count": expanded_assessment.narration_word_count,
-        "expanded_punctuation_count": expanded_assessment.punctuation_count,
-        "expanded_estimated_duration_ms": expanded_assessment.estimated_duration_ms,
-        "target_duration_ms": expanded_assessment.target_duration_ms,
-    }
-
-
-def _expansion_failure_path(error: NarrationExpansionContractError) -> str:
-    if error.code is NarrationExpansionFailureCode.LANGUAGE_MISMATCH:
-        return "language"
-    if error.code is NarrationExpansionFailureCode.SOURCE_MISMATCH:
-        return "source_script_sha256"
-    return "scenes"
-
-
-def _compression_failure_path(error: NarrationCompressionContractError) -> str:
-    if error.code is NarrationCompressionFailureCode.SOURCE_MISMATCH:
-        return "source_script_sha256"
-    return "scenes"
 
 
 def _safe_decimal(value: object) -> Decimal | None:

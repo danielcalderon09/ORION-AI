@@ -38,7 +38,6 @@ from backend.src.production.scripting.exceptions import (
     ScriptingProviderConfigurationError,
     ScriptingProviderContractError,
     ScriptingProviderDurationPolicyBudgetError,
-    ScriptingProviderDurationPolicyExhaustedError,
     ScriptingProviderError,
     ScriptingProviderRateLimitError,
     ScriptingProviderResponseError,
@@ -265,10 +264,6 @@ class ScriptingHandler:
                 "scripting_duration_policy_budget",
             ),
             (ScriptingProviderConfigurationError, "scripting_provider_configuration"),
-            (
-                ScriptingProviderDurationPolicyExhaustedError,
-                "scripting_duration_policy_exhausted",
-            ),
             (ScriptingProviderContractError, "scripting_provider_contract"),
             (ScriptingProviderResponseError, "scripting_provider_response"),
             (ValidationError, "scripting_configuration_invalid"),

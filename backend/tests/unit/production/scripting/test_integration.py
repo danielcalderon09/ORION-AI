@@ -64,7 +64,7 @@ def fake_script_from_request(request):
     external = json.loads(request.content)
     prompt = json.loads(external["messages"][1]["content"])
     plan = prompt["source_plan"]
-    scene_budgets = prompt["narration_word_count_policy"]["maximum_words_per_scene"]
+    scene_budgets = prompt["narration_word_count_guidance"]["recommended_words_per_scene"]
 
     def narration_for(scene, budget):
         words = scene["narration"].split()

@@ -11,10 +11,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from backend.src.production.scripting.duration_policy import (
-    assess_narration_duration,
-    validate_openrouter_duration_policy,
-)
+from backend.src.production.scripting.duration_policy import assess_narration_duration
 from backend.src.production.scripting.models import ProductionScript, ProductionScriptScene
 from backend.src.production.scripting.openrouter_reconciliation import (
     OpenRouterScriptingRequestReconciler,
@@ -132,7 +129,7 @@ def test_historical_fingerprint_omits_new_compression_identity_fields() -> None:
 
 
 @pytest.mark.parametrize("duration", [15, 30, 60])
-def test_duration_policy_accepts_15_30_60_seconds(duration: int) -> None:
+def test_duration_guidance_assesses_15_30_60_seconds(duration: int) -> None:
     words = " ".join("palabra" for _ in range(int(duration * 2.5)))
     script = ProductionScript(
         source_plan_schema_version="1.0.0",
@@ -153,45 +150,18 @@ def test_duration_policy_accepts_15_30_60_seconds(duration: int) -> None:
             ),
         ),
     )
-    assessment = validate_openrouter_duration_policy(
-        script,
+    assessment = assess_narration_duration(
+        narrations=tuple(scene.narration for scene in script.scenes),
+        target_duration_seconds=script.target_duration_seconds,
         reading_speed_words_per_minute=150,
     )
     assert assessment.target_duration_seconds == duration
     assert assessment.narration_word_count == int(duration * 2.5)
-    assert assessment.accepted
+    assert assessment.within_target_duration
     assert assessment.estimated_duration_ms <= duration * 1_000
 
 
-def test_duration_policy_rejects_insufficient_and_excessive_narration() -> None:
-    def script(words: int) -> ProductionScript:
-        return ProductionScript(
-            source_plan_schema_version="1.0.0",
-            title="Marte",
-            language="es",
-            target_duration_seconds=30,
-            tone="claro",
-            opening_hook="Marte en treinta segundos.",
-            scenes=(
-                ProductionScriptScene(
-                    scene_number=1,
-                    source_scene_number=1,
-                    heading="Marte",
-                    narration=" ".join("palabra" for _ in range(words)),
-                    estimated_duration_seconds=30,
-                    delivery_style="natural",
-                    visual_intent="Marte",
-                ),
-            ),
-        )
-
-    with pytest.raises(ValueError, match="insufficient"):
-        validate_openrouter_duration_policy(script(2), reading_speed_words_per_minute=150)
-    with pytest.raises(ValueError, match="exceeds"):
-        validate_openrouter_duration_policy(script(200), reading_speed_words_per_minute=150)
-
-
-def test_reference_narration_is_rejected_before_tts() -> None:
+def test_reference_narration_is_measured_as_over_target_guidance() -> None:
     narrations = (
         "¡Hola! ¿Sabías que un video corto puede ser tu mejor aliado? Hoy te mostraremos "
         "cómo crear un short educativo impactante.",
@@ -215,7 +185,7 @@ def test_reference_narration_is_rejected_before_tts() -> None:
     assert assessment.estimated_duration_ms == 39_800
     assert assessment.estimated_duration_ms > 28_000
     assert assessment.target_duration_ms == 25_000
-    assert not assessment.accepted
+    assert not assessment.within_target_duration
 
 
 def test_global_duration_is_authoritative_not_equal_scene_allocation() -> None:
@@ -229,10 +199,10 @@ def test_global_duration_is_authoritative_not_equal_scene_allocation() -> None:
     )
 
     assert assessment.estimated_duration_ms == 6_000
-    assert assessment.accepted
+    assert assessment.within_target_duration
 
 
-def test_duration_assessment_accepts_exact_target_and_rejects_one_more_pause() -> None:
+def test_duration_assessment_reports_exact_target_and_one_more_pause() -> None:
     words = " ".join("palabra" for _ in range(61))
     exact = assess_narration_duration(
         narrations=(f"{words},;:.!",),
@@ -246,9 +216,42 @@ def test_duration_assessment_accepts_exact_target_and_rejects_one_more_pause() -
     )
 
     assert exact.estimated_duration_ms == 25_000
-    assert exact.accepted
+    assert exact.within_target_duration
     assert over.estimated_duration_ms == 25_120
-    assert not over.accepted
+    assert not over.within_target_duration
+
+
+@pytest.mark.parametrize(
+    ("word_count", "punctuation_count", "expected_duration_ms"),
+    ((64, 7, 26_440), (72, 10, 30_000)),
+)
+def test_valid_over_target_narration_is_measured_without_becoming_invalid(
+    word_count: int,
+    punctuation_count: int,
+    expected_duration_ms: int,
+) -> None:
+    assessment = assess_narration_duration(
+        narrations=(
+            " ".join(f"palabra{index}" for index in range(word_count))
+            + ("!" * punctuation_count),
+        ),
+        target_duration_seconds=25,
+        reading_speed_words_per_minute=150,
+    )
+
+    assert assessment.estimated_duration_ms == expected_duration_ms
+    assert assessment.within_target_duration is False
+
+
+def test_valid_under_target_narration_is_measured_without_minimum_occupancy_gate() -> None:
+    assessment = assess_narration_duration(
+        narrations=("Una narración breve pero completa explica el tema con claridad.",),
+        target_duration_seconds=25,
+        reading_speed_words_per_minute=150,
+    )
+
+    assert assessment.estimated_duration_ms < assessment.target_duration_ms
+    assert assessment.within_target_duration is True
 
 
 @pytest.mark.asyncio
