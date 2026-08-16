@@ -13,6 +13,7 @@ from backend.src.production.image_acquisition.models import (
     summarize_entries as summarize_image_entries,
 )
 from backend.src.production.video_clip_generation.exceptions import (
+    OpenRouterVideoInvalidRequestError,
     VideoClipNotFoundError,
     VideoClipProviderDependencyException,
     VideoClipProviderResponseException,
@@ -100,6 +101,46 @@ async def test_provider_failure_checkpoints_without_binary_write(
     manifest = await writer.read_existing(context=context)
     assert manifest is not None
     assert manifest.entries[0].status is entry_status
+
+
+@pytest.mark.asyncio
+async def test_provider_http_failure_preserves_safe_leaf_diagnostic(tmp_path) -> None:
+    source, _, _ = await durable_source(tmp_path)
+    error = OpenRouterVideoInvalidRequestError(
+        "OpenRouter video submit failed with HTTP 400",
+        diagnostic_phase="provider_submit",
+        diagnostic_code="video_reference_asset_invalid",
+        diagnostic_metadata={
+            "provider_http_status": 400,
+            "provider_operation": "submit",
+            "provider_error_code": "reference_image_unreachable",
+            "provider_error_body_bytes": 123,
+            "provider_error_body_sha256": "a" * 64,
+        },
+    )
+    error.http_status = 400
+    writer = InMemoryVideoClipManifestWriter()
+    component = handler(
+        tmp_path,
+        source,
+        CountingProvider(error=error),
+        writer=writer,
+    )
+    command, context = command_context()
+
+    output = await component.execute(command, context)
+
+    assert output.result.error_code == "video_reference_asset_invalid"
+    assert output.result.metadata["diagnostic_code"] == (
+        "video_reference_asset_invalid"
+    )
+    assert output.result.metadata["provider_http_status"] == 400
+    manifest = await writer.read_existing(context=context)
+    assert manifest is not None
+    entry = manifest.entries[0]
+    assert entry.error_code == "video_reference_asset_invalid"
+    assert entry.metadata["provider_error_code"] == "reference_image_unreachable"
+    assert "OpenRouter video submit failed" not in repr(entry.metadata)
 
 
 @pytest.mark.asyncio

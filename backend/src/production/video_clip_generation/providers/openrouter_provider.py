@@ -663,7 +663,14 @@ class OpenRouterVideoClipGenerationProvider:
                 "OpenRouter video submission outcome is uncertain"
             ) from exc
         if response.status_code != 202:
-            raise_for_openrouter_status(response.status_code, operation="submit")
+            raise_for_openrouter_status(
+                response.status_code,
+                operation="submit",
+                response_body=await _safe_error_body(
+                    response,
+                    maximum=self._config.max_response_bytes,
+                ),
+            )
             raise OpenRouterVideoInvalidResponseError(
                 "OpenRouter video submit did not return HTTP 202"
             )
@@ -743,7 +750,15 @@ class OpenRouterVideoClipGenerationProvider:
                 if retry_after is not None:
                     await self._polling.sleeper(self._polling.delay(attempts, retry_after))
                 continue
-            raise_for_openrouter_status(response.status_code, operation="poll")
+            if not 200 <= response.status_code < 300:
+                raise_for_openrouter_status(
+                    response.status_code,
+                    operation="poll",
+                    response_body=await _safe_error_body(
+                        response,
+                        maximum=self._config.max_response_bytes,
+                    ),
+                )
             try:
                 job = OpenRouterVideoJob.model_validate(
                     _strict_json(await _read_bounded(response, self._config.max_response_bytes))
@@ -791,7 +806,15 @@ class OpenRouterVideoClipGenerationProvider:
                     "Accept": "video/mp4",
                 },
             ) as response:
-                raise_for_openrouter_status(response.status_code, operation="download")
+                if not 200 <= response.status_code < 300:
+                    raise_for_openrouter_status(
+                        response.status_code,
+                        operation="download",
+                        response_body=await _safe_error_body(
+                            response,
+                            maximum=self._config.max_response_bytes,
+                        ),
+                    )
                 content_type = (
                     response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
                 )
@@ -1120,3 +1143,10 @@ def _retry_after(response: httpx.Response) -> float | None:
     except ValueError:
         return None
     return max(0.0, min(parsed, 300.0))
+
+
+async def _safe_error_body(response: httpx.Response, *, maximum: int) -> bytes | None:
+    try:
+        return await _read_bounded(response, maximum)
+    except (OpenRouterVideoInvalidResponseError, OpenRouterVideoResponseTooLargeError):
+        return None

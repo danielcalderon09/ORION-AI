@@ -1155,6 +1155,11 @@ class VideoClipGenerationHandler:
             "existing_request_count",
             "max_requests_per_job",
             "publication_id",
+            "provider_error_body_bytes",
+            "provider_error_body_sha256",
+            "provider_error_code",
+            "provider_http_status",
+            "provider_operation",
             "source_asset_provider",
             "source_asset_model",
             "source_asset_simulated",
@@ -1200,6 +1205,14 @@ def _pre_submission_error_code(error: OpenRouterVideoError) -> str | None:
         return "video_clip_source_invalid"
     if phase == "pre_submission":
         return "video_clip_provider_contract"
+    if phase in {"provider_submit", "provider_poll", "provider_download"}:
+        if error.diagnostic_code in {
+            "video_reference_asset_invalid",
+            "video_duration_invalid",
+            "video_request_dimensions_invalid",
+        }:
+            return error.diagnostic_code
+        return "video_provider_http_error"
     return None
 
 

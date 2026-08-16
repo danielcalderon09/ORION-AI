@@ -653,6 +653,95 @@ async def test_submit_http_classification(status: int, expected: type[Exception]
             await provider.generate_clip(openrouter_request())
 
 
+@pytest.mark.asyncio
+async def test_submit_http_error_preserves_only_safe_bounded_diagnostics() -> None:
+    secret = "https://published.example.test/frame.jpg?token=must-not-persist"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return response(request, 200, models_body())
+        return response(
+            request,
+            400,
+            {
+                "error": {
+                    "code": "reference_image_unreachable",
+                    "message": f"Could not fetch the frame image URL {secret}",
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://openrouter.ai",
+    ) as client:
+        provider, _, _ = provider_for(client)
+        with pytest.raises(OpenRouterVideoInvalidRequestError) as captured:
+            await provider.generate_clip(openrouter_request())
+
+    error = captured.value
+    assert error.diagnostic_phase == "provider_submit"
+    assert error.diagnostic_code == "video_reference_asset_invalid"
+    assert error.diagnostic_metadata["provider_http_status"] == 400
+    assert error.diagnostic_metadata["provider_operation"] == "submit"
+    assert error.diagnostic_metadata["provider_error_code"] == (
+        "reference_image_unreachable"
+    )
+    assert error.diagnostic_metadata["provider_error_body_bytes"] > 0
+    assert len(error.diagnostic_metadata["provider_error_body_sha256"]) == 64
+    assert secret not in repr(error.diagnostic_metadata)
+
+
+@pytest.mark.asyncio
+async def test_submit_unknown_http_error_uses_fail_closed_leaf_code() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return response(request, 200, models_body())
+        return response(request, 400, {"error": {"message": "redacted"}})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://openrouter.ai",
+    ) as client:
+        provider, _, _ = provider_for(client)
+        with pytest.raises(OpenRouterVideoInvalidRequestError) as captured:
+            await provider.generate_clip(openrouter_request())
+
+    assert captured.value.diagnostic_code == "video_provider_http_error"
+    assert captured.value.diagnostic_phase == "provider_submit"
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_code"),
+    [
+        ("Could not fetch the first frame image URL", "video_reference_asset_invalid"),
+        ("Requested duration is unsupported", "video_duration_invalid"),
+        ("Requested aspect ratio is unsupported", "video_request_dimensions_invalid"),
+        ("Requested model is unavailable", "video_provider_model_invalid"),
+        ("Video routing is incompatible with ZDR", "video_provider_zdr_incompatible"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_submit_http_error_has_stable_safe_leaf_classification(
+    message: str,
+    expected_code: str,
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return response(request, 200, models_body())
+        return response(request, 400, {"error": {"message": message}})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://openrouter.ai",
+    ) as client:
+        provider, _, _ = provider_for(client)
+        with pytest.raises(OpenRouterVideoInvalidRequestError) as captured:
+            await provider.generate_clip(openrouter_request())
+
+    assert captured.value.diagnostic_code == expected_code
+
+
 @pytest.mark.parametrize(
     "payload",
     [
