@@ -5,7 +5,8 @@ from __future__ import annotations
 import math
 import re
 import unicodedata
-from decimal import ROUND_FLOOR, Decimal
+from dataclasses import dataclass
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
 from pydantic import Field
 
@@ -52,6 +53,17 @@ _ROLE_WORD_WEIGHTS: dict[NarrativeRole, float] = {
     NarrativeRole.PAYOFF: 0.9,
     NarrativeRole.CONCLUSION: 0.9,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class NarrationCompressionWordBand:
+    """Deterministic occupancy window for one bounded compression pass."""
+
+    minimum_duration_ms: int
+    ideal_duration_ms: int
+    maximum_duration_ms: int
+    minimum_total_words: int
+    maximum_total_words: int
 
 
 def narration_word_count_bounds(
@@ -178,6 +190,74 @@ def narration_compression_word_budget(
         conservative_maximum - 1 if not assessment.accepted else conservative_maximum
     )
     return max(minimum, min(strict_maximum, headroom_adjusted))
+
+
+def narration_compression_word_band(
+    assessment: ScriptingDurationAssessment,
+    *,
+    scene_count: int,
+    occupancy_policy: NarrationOccupancyPolicy | None = None,
+) -> NarrationCompressionWordBand:
+    """Bound compression between minimum and soft-maximum occupancy.
+
+    The lower word bound reaches minimum occupancy even with no punctuation.
+    The upper bound retains the existing proportional compression cap and is
+    reduced, if necessary, to reserve deterministic punctuation headroom below
+    the soft maximum. Final duration-policy validation remains authoritative.
+    """
+
+    policy = occupancy_policy or NarrationOccupancyPolicy()
+    minimum_duration_ms = policy.duration_for_ratio(
+        assessment.target_duration_ms,
+        policy.minimum_occupancy_ratio,
+    )
+    ideal_duration_ms = policy.duration_for_ratio(
+        assessment.target_duration_ms,
+        policy.ideal_occupancy_ratio,
+    )
+    maximum_duration_ms = policy.duration_for_ratio(
+        assessment.target_duration_ms,
+        policy.soft_maximum_occupancy_ratio,
+    )
+    minimum_total_words = max(
+        scene_count * 2,
+        int(
+            (
+                Decimal(minimum_duration_ms * assessment.reading_speed_words_per_minute)
+                / Decimal(60_000)
+            ).to_integral_value(rounding=ROUND_CEILING)
+        ),
+    )
+    maximum_total_words = max(
+        minimum_total_words,
+        narration_compression_word_budget(
+            assessment,
+            scene_count=scene_count,
+        ),
+    )
+    while maximum_total_words >= minimum_total_words:
+        reserved_punctuation = max(
+            scene_count,
+            math.ceil(maximum_total_words / PROMPT_WORDS_PER_PUNCTUATION),
+        )
+        estimated_duration_ms = int(
+            (
+                Decimal(maximum_total_words * 60_000)
+                / Decimal(assessment.reading_speed_words_per_minute)
+            ).to_integral_value(rounding=ROUND_FLOOR)
+        ) + reserved_punctuation * PUNCTUATION_ALLOWANCE_MS
+        if estimated_duration_ms <= maximum_duration_ms:
+            break
+        maximum_total_words -= 1
+    if maximum_total_words < minimum_total_words:
+        raise ValueError("compression occupancy band cannot represent every scene safely")
+    return NarrationCompressionWordBand(
+        minimum_duration_ms=minimum_duration_ms,
+        ideal_duration_ms=ideal_duration_ms,
+        maximum_duration_ms=maximum_duration_ms,
+        minimum_total_words=minimum_total_words,
+        maximum_total_words=maximum_total_words,
+    )
 
 
 def narration_expansion_word_budget(
@@ -322,11 +402,13 @@ def assess_narration_duration(
 
 
 __all__ = [
+    "NarrationCompressionWordBand",
     "ScriptingDurationAssessment",
     "allocate_narration_scene_word_budgets",
     "assess_scripting_occupancy",
     "assess_narration_duration",
     "narration_compression_word_budget",
+    "narration_compression_word_band",
     "narration_expansion_word_budget",
     "narration_prompt_word_count_bounds",
     "narration_scene_word_budgets",

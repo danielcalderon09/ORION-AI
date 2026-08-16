@@ -8,6 +8,9 @@ from pydantic import ValidationError
 from backend.src.production.scripting.configuration import ScriptingConfiguration
 from backend.src.production.scripting.duration_policy import (
     PUNCTUATION_ALLOWANCE_MS,
+    allocate_narration_scene_word_budgets,
+    assess_narration_duration,
+    narration_compression_word_band,
     narration_prompt_word_count_bounds,
     narration_scene_word_budgets,
 )
@@ -83,7 +86,7 @@ def test_prompt_is_deterministic_strict_and_excludes_internal_metadata(
     builder = ScriptingPromptBuilder(max_plan_bytes=100_000)
     first = builder.build(scripting_request)
     assert first == builder.build(scripting_request)
-    assert first.version == "2.8.0"
+    assert first.version == "2.9.0"
     assert "Every scene must add new information" in first.system
     assert "omit a call to action" in first.system
     assert first.response_schema["additionalProperties"] is False
@@ -195,6 +198,75 @@ def test_25_second_prompt_budget_reserves_deterministic_punctuation_headroom() -
     assert sum(scene_budgets) == maximum
     reserved_punctuation = 12
     assert maximum * 400 + reserved_punctuation * PUNCTUATION_ALLOWANCE_MS <= 25_000
+
+
+def test_audited_compression_band_is_derived_from_occupancy_policy() -> None:
+    assessment = assess_narration_duration(
+        narrations=(
+            " ".join("palabra" for _ in range(32)) + "!!!",
+            " ".join("palabra" for _ in range(32)) + "!!!!",
+        ),
+        target_duration_seconds=25,
+        reading_speed_words_per_minute=150,
+    )
+
+    band = narration_compression_word_band(assessment, scene_count=2)
+
+    assert assessment.estimated_duration_ms == 26_440
+    assert (
+        band.minimum_duration_ms,
+        band.ideal_duration_ms,
+        band.maximum_duration_ms,
+    ) == (22_000, 23_500, 24_500)
+    assert (band.minimum_total_words, band.maximum_total_words) == (55, 56)
+    assert allocate_narration_scene_word_budgets(
+        scene_count=2,
+        maximum_total_words=band.minimum_total_words,
+    ) == (27, 28)
+    assert allocate_narration_scene_word_budgets(
+        scene_count=2,
+        maximum_total_words=band.maximum_total_words,
+    ) == (27, 29)
+
+
+@pytest.mark.parametrize(
+    ("target_seconds", "scene_count"),
+    ((15, 1), (25, 2), (30, 3), (50, 5)),
+)
+def test_compression_bands_scale_deterministically_across_durations_and_scenes(
+    target_seconds: int,
+    scene_count: int,
+) -> None:
+    words_per_scene = max(20, target_seconds * 5 // scene_count)
+    narrations = tuple(
+        " ".join("word" for _ in range(words_per_scene))
+        for _ in range(scene_count)
+    )
+    assessment = assess_narration_duration(
+        narrations=narrations,
+        target_duration_seconds=target_seconds,
+        reading_speed_words_per_minute=150,
+    )
+
+    first = narration_compression_word_band(assessment, scene_count=scene_count)
+    second = narration_compression_word_band(assessment, scene_count=scene_count)
+    minimums = allocate_narration_scene_word_budgets(
+        scene_count=scene_count,
+        maximum_total_words=first.minimum_total_words,
+    )
+    maximums = allocate_narration_scene_word_budgets(
+        scene_count=scene_count,
+        maximum_total_words=first.maximum_total_words,
+    )
+
+    assert first == second
+    assert first.minimum_total_words <= first.maximum_total_words
+    assert sum(minimums) == first.minimum_total_words
+    assert sum(maximums) == first.maximum_total_words
+    assert all(
+        minimum <= maximum
+        for minimum, maximum in zip(minimums, maximums, strict=True)
+    )
 
 
 @pytest.mark.parametrize("scene_count", [1, 2, 3, 5])

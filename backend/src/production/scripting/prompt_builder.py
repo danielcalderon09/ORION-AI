@@ -35,7 +35,7 @@ class ScriptingPrompt(ContractModel):
 
 
 class ScriptingPromptBuilder:
-    scripting_prompt_version = "2.8.0"
+    scripting_prompt_version = "2.9.0"
     structured_output_mode = "json_schema"
     system_instruction = (
         "Create a production-ready voice-over script from the supplied durable production "
@@ -66,9 +66,13 @@ class ScriptingPromptBuilder:
         "Compress only the supplied scene narrations. Return one JSON object matching "
         "narration_compression; do not return a ProductionScript, Markdown, explanations, or "
         "fields outside the schema. Preserve every source_scene_number exactly once and keep "
-        "the original meaning, facts, language, and order. Remove unnecessary wording without "
-        "introducing new facts. The combined narration MUST NOT exceed maximum_total_words; "
-        "this is a hard limit. Each scene narration MUST NOT exceed its maximum_words limit."
+        "the original meaning, essential narrative beats, facts, language, and order. Remove "
+        "redundancy, unnecessary adjectives, repeated explanations, and filler without "
+        "introducing new facts. Do not make the narration as short as possible or remove useful "
+        "information merely to minimize word count. The combined narration MUST remain between "
+        "minimum_total_words and maximum_total_words; both are hard limits. Each scene narration "
+        "MUST remain between its minimum_words and maximum_words limits. Compress only enough to "
+        "enter the supplied duration band and aim as close as practical to ideal_duration_ms."
     )
     expansion_system_instruction = (
         "Expand only the supplied scene narrations. Return one JSON object matching "
@@ -192,13 +196,16 @@ class ScriptingPromptBuilder:
 
         payload = request.model_dump(mode="json", exclude={"job_id"})
         payload["hard_limit_instruction"] = (
-            f"Your output narration MUST NOT exceed {request.maximum_total_words} total words. "
-            "The total word count is a hard limit."
+            f"Your revised narration MUST contain between {request.minimum_total_words} and "
+            f"{request.maximum_total_words} total words. Both bounds are mandatory hard limits. "
+            f"Keep its deterministic duration between {request.minimum_duration_ms} ms and "
+            f"{request.maximum_duration_ms} ms, aiming for {request.ideal_duration_ms} ms."
         )
         payload["output_constraints"] = (
             "Do not add explanations.",
             "Do not introduce new facts.",
             "Preserve meaning and order while removing unnecessary wording.",
+            "Do not remove useful information merely to minimize word count.",
         )
         user = json.dumps(
             payload,

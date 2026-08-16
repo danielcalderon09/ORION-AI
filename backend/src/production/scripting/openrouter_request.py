@@ -40,6 +40,26 @@ class OpenRouterScriptingValidationErrorCode(StrEnum):
     SCENE_COUNT_POLICY = "scene_count_policy"
     DURATION_POLICY = "duration_policy"
     NARRATION_COMPRESSION_CONTRACT = "narration_compression_contract"
+    NARRATION_COMPRESSION_SCHEMA_INVALID = "narration_compression_schema_invalid"
+    NARRATION_COMPRESSION_SCENE_MISSING = "narration_compression_scene_missing"
+    NARRATION_COMPRESSION_SCENE_DUPLICATE = "narration_compression_scene_duplicate"
+    NARRATION_COMPRESSION_SCENE_UNKNOWN = "narration_compression_scene_unknown"
+    NARRATION_COMPRESSION_EMPTY_NARRATION = "narration_compression_empty_narration"
+    NARRATION_COMPRESSION_UNSAFE_NARRATION = "narration_compression_unsafe_narration"
+    NARRATION_COMPRESSION_SCENE_BELOW_MINIMUM_WORD_BUDGET = (
+        "narration_compression_scene_below_minimum_word_budget"
+    )
+    NARRATION_COMPRESSION_SCENE_ABOVE_MAXIMUM_WORD_BUDGET = (
+        "narration_compression_scene_above_maximum_word_budget"
+    )
+    NARRATION_COMPRESSION_BELOW_MINIMUM_WORD_BUDGET = (
+        "narration_compression_below_minimum_word_budget"
+    )
+    NARRATION_COMPRESSION_ABOVE_MAXIMUM_WORD_BUDGET = (
+        "narration_compression_above_maximum_word_budget"
+    )
+    NARRATION_COMPRESSION_SOURCE_MISMATCH = "narration_compression_source_mismatch"
+    NARRATION_COMPRESSION_MERGE_INVALID = "narration_compression_merge_invalid"
     NARRATION_EXPANSION_CONTRACT = "narration_expansion_contract"
     NARRATION_EXPANSION_SCHEMA_INVALID = "narration_expansion_schema_invalid"
     NARRATION_EXPANSION_LANGUAGE_MISMATCH = "narration_expansion_language_mismatch"

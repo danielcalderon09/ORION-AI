@@ -33,7 +33,7 @@ from backend.src.production.scripting.duration_policy import (
     allocate_narration_scene_word_budgets,
     assess_narration_duration,
     assess_scripting_occupancy,
-    narration_compression_word_budget,
+    narration_compression_word_band,
     narration_expansion_word_budget,
     narration_prompt_word_count_bounds,
     validate_openrouter_duration_policy,
@@ -57,10 +57,12 @@ from backend.src.production.scripting.models import (
     validate_script_against_plan,
 )
 from backend.src.production.scripting.narration_compression import (
+    NarrationCompressionContractError,
+    NarrationCompressionFailureCode,
     NarrationCompressionRequest,
-    NarrationCompressionResponse,
     merge_narration_compression,
     narration_compression_request,
+    parse_narration_compression_response,
 )
 from backend.src.production.scripting.narration_expansion import (
     NarrationExpansionContractError,
@@ -256,6 +258,7 @@ class OpenRouterScriptingProvider:
             update={"attempt_number": request.attempt_number + duration_retry_number}
         )
         compression_request: NarrationCompressionRequest | None = None
+        compression_band = None
         expansion_request: NarrationExpansionRequest | None = None
         source_assessment: ScriptingDurationAssessment | None = None
         request_purpose: Literal[
@@ -287,10 +290,11 @@ class OpenRouterScriptingProvider:
                 )
             else:
                 request_purpose = "narration_compression"
-                effective_word_budget = narration_compression_word_budget(
+                compression_band = narration_compression_word_band(
                     source_assessment,
                     scene_count=len(previous_script.scenes),
                 )
+                effective_word_budget = compression_band.maximum_total_words
             scene_word_budgets = allocate_narration_scene_word_budgets(
                 scene_count=len(previous_script.scenes),
                 maximum_total_words=effective_word_budget,
@@ -306,12 +310,22 @@ class OpenRouterScriptingProvider:
                     scene_word_budgets=scene_word_budgets,
                 )
             else:
+                assert compression_band is not None
+                scene_minimum_word_budgets = allocate_narration_scene_word_budgets(
+                    scene_count=len(previous_script.scenes),
+                    maximum_total_words=compression_band.minimum_total_words,
+                )
                 compression_request = narration_compression_request(
                     job_id=request.job_id,
                     source_script=previous_script,
                     assessment=source_assessment,
+                    minimum_duration_ms=compression_band.minimum_duration_ms,
+                    ideal_duration_ms=compression_band.ideal_duration_ms,
+                    maximum_duration_ms=compression_band.maximum_duration_ms,
+                    minimum_total_words=compression_band.minimum_total_words,
                     maximum_total_words=effective_word_budget,
-                    scene_word_budgets=scene_word_budgets,
+                    scene_minimum_word_budgets=scene_minimum_word_budgets,
+                    scene_maximum_word_budgets=scene_word_budgets,
                 )
             source_script_sha256 = hashlib.sha256(
                 serialize_production_script(previous_script)
@@ -544,24 +558,26 @@ class OpenRouterScriptingProvider:
         elif compression_request is not None:
             assert previous_script is not None
             try:
-                compression = NarrationCompressionResponse.model_validate(script_payload)
+                compression = parse_narration_compression_response(
+                    script_payload,
+                    request=compression_request,
+                )
                 script = merge_narration_compression(
                     source_script=previous_script,
                     request=compression_request,
                     response=compression,
                 )
-            except (ValidationError, ValueError) as exc:
+            except NarrationCompressionContractError as exc:
                 await self._raise_structured_output_failure(
                     submitting,
                     response_metadata=response_metadata,
                     failure=_ValidationFailure(
-                        code=(
-                            OpenRouterScriptingValidationErrorCode.NARRATION_COMPRESSION_CONTRACT
-                        ),
-                        path="scenes",
-                        message="narration compression does not match the source script",
+                        code=OpenRouterScriptingValidationErrorCode(exc.code.value),
+                        path=_compression_failure_path(exc),
+                        message=exc.safe_message,
                     ),
                     cause=exc,
+                    metadata_update=exc.safe_metadata,
                 )
         else:
             assert previous_script is not None
@@ -1211,7 +1227,11 @@ def _compression_source_metadata(
         "source_word_count": request.source_word_count,
         "source_punctuation_count": request.source_punctuation_count,
         "source_estimated_duration_ms": request.source_estimated_duration_ms,
+        "compression_minimum_word_budget": request.minimum_total_words,
         "compression_word_budget": request.maximum_total_words,
+        "minimum_duration_ms": request.minimum_duration_ms,
+        "ideal_duration_ms": request.ideal_duration_ms,
+        "maximum_duration_ms": request.maximum_duration_ms,
         "target_duration_ms": request.target_duration_ms,
     }
 
@@ -1270,6 +1290,12 @@ def _expansion_failure_path(error: NarrationExpansionContractError) -> str:
     if error.code is NarrationExpansionFailureCode.LANGUAGE_MISMATCH:
         return "language"
     if error.code is NarrationExpansionFailureCode.SOURCE_MISMATCH:
+        return "source_script_sha256"
+    return "scenes"
+
+
+def _compression_failure_path(error: NarrationCompressionContractError) -> str:
+    if error.code is NarrationCompressionFailureCode.SOURCE_MISMATCH:
         return "source_script_sha256"
     return "scenes"
 

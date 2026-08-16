@@ -408,6 +408,37 @@ def test_historical_generic_expansion_contract_diagnostic_remains_readable() -> 
     assert "expected_scene_numbers" not in restored.metadata
 
 
+def test_historical_generic_compression_contract_diagnostic_remains_readable() -> None:
+    historical = prepared_record(
+        request_purpose="narration_compression",
+        source_script_sha256="6" * 64,
+    ).model_copy(
+        update={
+            "status": OpenRouterScriptingRequestStatus.FAILED,
+            "submission_started_at": NOW,
+            "terminal_at": NOW,
+            "fresh_submission_permitted": False,
+            "safe_error_code": "invalid_structured_output",
+            "validation_error_code": (
+                OpenRouterScriptingValidationErrorCode.NARRATION_COMPRESSION_CONTRACT
+            ),
+            "validation_error_path": "scenes",
+            "validation_error_message": (
+                "narration compression does not match the source script"
+            ),
+        }
+    )
+
+    restored = OpenRouterScriptingRequestRecord.model_validate_json(
+        historical.model_dump_json()
+    )
+
+    assert restored.validation_error_code is (
+        OpenRouterScriptingValidationErrorCode.NARRATION_COMPRESSION_CONTRACT
+    )
+    assert "minimum_total_words" not in restored.metadata
+
+
 def test_validation_diagnostics_are_closed_bounded_and_failed_only() -> None:
     failed = prepared_record().model_copy(
         update={

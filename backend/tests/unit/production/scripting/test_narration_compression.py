@@ -10,8 +10,22 @@ from decimal import Decimal
 import httpx
 import pytest
 
+from backend.src.production.scripting.duration_policy import (
+    allocate_narration_scene_word_budgets,
+    assess_narration_duration,
+    narration_compression_word_band,
+)
 from backend.src.production.scripting.exceptions import (
     ScriptingProviderContractError,
+)
+from backend.src.production.scripting.models import ProductionScript
+from backend.src.production.scripting.narration_compression import (
+    NarrationCompressionContractError,
+    NarrationCompressionFailureCode,
+    NarrationCompressionResponse,
+    NarrationCompressionScene,
+    merge_narration_compression,
+    narration_compression_request,
 )
 from backend.src.production.scripting.openrouter_billable_gate import (
     OpenRouterScriptingBillablePolicy,
@@ -96,6 +110,19 @@ async def _initial_script(request) -> dict[str, object]:
     return payload
 
 
+async def _audited_initial_script(request) -> dict[str, object]:
+    response = await SimulatedScriptingProvider().generate_script(request)
+    payload = response.script.model_dump(mode="json")
+    scenes = payload["scenes"]
+    assert isinstance(scenes, list)
+    for index, scene in enumerate(scenes):
+        assert isinstance(scene, dict)
+        scene["narration"] = " ".join("palabra" for _ in range(32)) + (
+            "!" * (3 + index)
+        )
+    return payload
+
+
 def _compression(
     script: dict[str, object],
     narrations: tuple[str, ...],
@@ -133,8 +160,8 @@ async def test_real_shaped_compression_uses_two_metered_requests_and_preserves_s
     compressed = _compression(
         initial,
         (
-            " ".join("palabra" for _ in range(26)) + ("!" * 6),
-            " ".join("palabra" for _ in range(25)) + ("!" * 7),
+            " ".join("palabra" for _ in range(27)) + ("!" * 6),
+            " ".join("palabra" for _ in range(28)) + ("!" * 7),
         ),
     )
     calls = 0
@@ -162,11 +189,18 @@ async def test_real_shaped_compression_uses_two_metered_requests_and_preserves_s
     assert user_payload["source_word_count"] == 106
     assert user_payload["source_punctuation_count"] == 13
     assert user_payload["source_estimated_duration_ms"] == 43_960
+    assert user_payload["minimum_duration_ms"] == 22_000
+    assert user_payload["ideal_duration_ms"] == 23_500
+    assert user_payload["maximum_duration_ms"] == 24_500
+    assert user_payload["minimum_total_words"] == 55
     assert user_payload["maximum_total_words"] == 56
+    assert [scene["minimum_words"] for scene in user_payload["scenes"]] == [27, 28]
     assert [scene["maximum_words"] for scene in user_payload["scenes"]] == [27, 29]
-    assert "MUST NOT exceed 56 total words" in compression_payload["messages"][0][
-        "content"
-    ] + compression_payload["messages"][1]["content"]
+    combined_prompt = compression_payload["messages"][0]["content"] + (
+        compression_payload["messages"][1]["content"]
+    )
+    assert "between 55 and 56 total words" in combined_prompt
+    assert "Do not make the narration as short as possible" in combined_prompt
     records = tuple(store.records.values())
     assert len(records) == 2
     assert {record.metadata["request_purpose"] for record in records} == {
@@ -179,8 +213,220 @@ async def test_real_shaped_compression_uses_two_metered_requests_and_preserves_s
     )
     completed = store.records[(request.job_id, 2)]
     assert completed.metadata["compression_word_budget"] == 56
-    assert completed.metadata["compressed_word_count"] == 51
-    assert completed.metadata["compressed_estimated_duration_ms"] == 21_960
+    assert completed.metadata["compressed_word_count"] == 55
+    assert completed.metadata["compressed_estimated_duration_ms"] == 23_560
+    assert len(user_payload["source_script_sha256"]) == 64
+    assert (
+        user_payload["source_script_sha256"]
+        == completed.fingerprint_input.source_script_sha256
+    )
+
+
+@pytest.mark.asyncio
+async def test_audited_64_word_compression_rejects_46_word_underflow_safely(
+    scripting_request,
+) -> None:
+    request = _request_25_seconds(scripting_request)
+    initial = await _audited_initial_script(request)
+    underflow = _compression(
+        initial,
+        (
+            " ".join("palabra" for _ in range(23)) + ("!" * 3),
+            " ".join("palabra" for _ in range(23)) + ("!" * 4),
+        ),
+    )
+    calls = 0
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        payload = initial if calls == 1 else underflow
+        return httpx.Response(200, json=_envelope(payload), request=http_request)
+
+    provider, store = _provider(handler)
+    try:
+        with pytest.raises(ScriptingProviderContractError):
+            await provider.generate_script(request)
+    finally:
+        await provider.close()
+
+    assert calls == 2
+    rejected = store.records[(request.job_id, 2)]
+    assert rejected.validation_error_code is not None
+    assert (
+        rejected.validation_error_code.value
+        == "narration_compression_below_minimum_word_budget"
+    )
+    assert rejected.metadata["minimum_total_words"] == 55
+    assert rejected.metadata["maximum_total_words"] == 56
+    assert rejected.metadata["received_total_word_count"] == 46
+    assert rejected.metadata["scene_word_bands"] == "1:27-27,2:28-29"
+    assert rejected.metadata["received_scene_word_counts"] == "1:23,2:23"
+    assert rejected.metadata["raw_response_persisted"] is False
+    assert "palabra" not in json.dumps(rejected.metadata)
+
+
+@pytest.mark.asyncio
+async def test_audited_64_word_compression_accepts_ideal_band(
+    scripting_request,
+) -> None:
+    request = _request_25_seconds(scripting_request)
+    initial = await _audited_initial_script(request)
+    compliant = _compression(
+        initial,
+        (
+            " ".join("palabra" for _ in range(27)) + ("!" * 3),
+            " ".join("palabra" for _ in range(28)) + ("!" * 4),
+        ),
+    )
+    calls = 0
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        payload = initial if calls == 1 else compliant
+        return httpx.Response(200, json=_envelope(payload), request=http_request)
+
+    provider, store = _provider(handler)
+    try:
+        result = await provider.generate_script(request)
+    finally:
+        await provider.close()
+
+    assert calls == 2
+    assert sum(len(scene.narration.split()) for scene in result.script.scenes) == 55
+    completed = store.records[(request.job_id, 2)]
+    assert completed.metadata["compressed_estimated_duration_ms"] == 22_840
+
+
+@pytest.mark.asyncio
+async def test_compression_above_global_band_fails_closed_after_two_requests(
+    scripting_request,
+) -> None:
+    request = _request_25_seconds(scripting_request)
+    initial = await _audited_initial_script(request)
+    overflow = _compression(
+        initial,
+        (
+            " ".join("palabra" for _ in range(28)),
+            " ".join("palabra" for _ in range(29)),
+        ),
+    )
+    calls = 0
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        payload = initial if calls == 1 else overflow
+        return httpx.Response(200, json=_envelope(payload), request=http_request)
+
+    provider, store = _provider(handler)
+    try:
+        with pytest.raises(ScriptingProviderContractError):
+            await provider.generate_script(request)
+    finally:
+        await provider.close()
+
+    assert calls == 2
+    rejected = store.records[(request.job_id, 2)]
+    assert rejected.validation_error_code is not None
+    assert (
+        rejected.validation_error_code.value
+        == "narration_compression_above_maximum_word_budget"
+    )
+    assert rejected.metadata["received_total_word_count"] == 57
+
+
+async def _compression_contract_fixture(scripting_request):
+    request = _request_25_seconds(scripting_request)
+    source = ProductionScript.model_validate(await _audited_initial_script(request))
+    assessment = assess_narration_duration(
+        narrations=tuple(scene.narration for scene in source.scenes),
+        target_duration_seconds=25,
+        reading_speed_words_per_minute=150,
+    )
+    band = narration_compression_word_band(assessment, scene_count=2)
+    contract = narration_compression_request(
+        job_id=request.job_id,
+        source_script=source,
+        assessment=assessment,
+        minimum_duration_ms=band.minimum_duration_ms,
+        ideal_duration_ms=band.ideal_duration_ms,
+        maximum_duration_ms=band.maximum_duration_ms,
+        minimum_total_words=band.minimum_total_words,
+        maximum_total_words=band.maximum_total_words,
+        scene_minimum_word_budgets=allocate_narration_scene_word_budgets(
+            scene_count=2,
+            maximum_total_words=band.minimum_total_words,
+        ),
+        scene_maximum_word_budgets=allocate_narration_scene_word_budgets(
+            scene_count=2,
+            maximum_total_words=band.maximum_total_words,
+        ),
+    )
+    return source, contract
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("counts", "expected_code"),
+    (
+        ((26, 29), NarrationCompressionFailureCode.SCENE_BELOW_MINIMUM),
+        ((28, 28), NarrationCompressionFailureCode.SCENE_ABOVE_MAXIMUM),
+    ),
+)
+async def test_compression_scene_bands_fail_closed_with_safe_codes(
+    scripting_request,
+    counts: tuple[int, int],
+    expected_code: NarrationCompressionFailureCode,
+) -> None:
+    source, contract = await _compression_contract_fixture(scripting_request)
+    response = NarrationCompressionResponse(
+        scenes=tuple(
+            NarrationCompressionScene(
+                source_scene_number=index,
+                narration=" ".join("palabra" for _ in range(count)),
+            )
+            for index, count in enumerate(counts, start=1)
+        )
+    )
+
+    with pytest.raises(NarrationCompressionContractError) as raised:
+        merge_narration_compression(
+            source_script=source,
+            request=contract,
+            response=response,
+        )
+
+    assert raised.value.code is expected_code
+    assert "palabra" not in json.dumps(raised.value.safe_metadata)
+
+
+@pytest.mark.asyncio
+async def test_compression_source_hash_mismatch_fails_closed(scripting_request) -> None:
+    source, contract = await _compression_contract_fixture(scripting_request)
+    response = NarrationCompressionResponse(
+        scenes=(
+            NarrationCompressionScene(
+                source_scene_number=1,
+                narration=" ".join("palabra" for _ in range(27)),
+            ),
+            NarrationCompressionScene(
+                source_scene_number=2,
+                narration=" ".join("palabra" for _ in range(28)),
+            ),
+        )
+    )
+    changed_source = source.model_copy(update={"title": f"{source.title} changed"})
+
+    with pytest.raises(NarrationCompressionContractError) as raised:
+        merge_narration_compression(
+            source_script=changed_source,
+            request=contract,
+            response=response,
+        )
+
+    assert raised.value.code is NarrationCompressionFailureCode.SOURCE_MISMATCH
 
 
 def _invalid_compression(

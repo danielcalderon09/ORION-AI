@@ -119,8 +119,8 @@ async def test_duration_policy_retry_accepts_second_output_and_preserves_arc(
     compressed = _compression(
         valid,
         (
-            " ".join("clear" for _ in range(22)) + ".",
-            " ".join("resolved" for _ in range(22)) + ".",
+            " ".join("clear" for _ in range(21)) + ".",
+            " ".join("resolved" for _ in range(23)) + ".",
         ),
     )
     responses = [overlong, compressed]
@@ -143,7 +143,7 @@ async def test_duration_policy_retry_accepts_second_output_and_preserves_arc(
     assert calls == 2
     assert result.script.narrative_arc is not None
     assert all(scene.story_beat is not None for scene in result.script.scenes)
-    assert "MUST NOT exceed 46 total words" in retry_prompt
+    assert "between 44 and 46 total words" in retry_prompt
     assert '"name":"narration_compression"' in retry_prompt
     assert "original_narration" in retry_prompt
     assert "visual_intent" not in retry_prompt
@@ -155,7 +155,9 @@ async def test_duration_policy_retry_accepts_second_output_and_preserves_arc(
     assert retry_user_payload["source_estimated_duration_ms"] == 40_000
     assert retry_user_payload["target_duration_ms"] == 20_000
     assert retry_user_payload["source_word_count"] == 100
+    assert retry_user_payload["minimum_total_words"] == 44
     assert retry_user_payload["maximum_total_words"] == 46
+    assert [scene["minimum_words"] for scene in retry_user_payload["scenes"]] == [21, 23]
     assert [scene["maximum_words"] for scene in retry_user_payload["scenes"]] == [22, 24]
     assert _without_narration(result.script.model_dump(mode="json")) == _without_narration(
         overlong
@@ -225,6 +227,10 @@ async def test_second_duration_policy_failure_is_exhausted_without_third_request
         "requested_duration_ms": 20_000,
         "excess_duration_ms": 4_400,
         "effective_word_budget": 46,
+        "compression_minimum_word_budget": 44,
+        "minimum_duration_ms": 17_600,
+        "ideal_duration_ms": 18_800,
+        "maximum_duration_ms": 19_600,
         "source_word_count": 100,
         "source_punctuation_count": 0,
         "source_estimated_duration_ms": 40_000,
